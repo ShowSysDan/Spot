@@ -11,7 +11,7 @@ from ..listeners import ListenerManager
 from ..models import Monitor
 from ..portalloc import PORT_RANGE_END, PORT_RANGE_START, allocate_port
 from ..storage import storage_overview
-from ..util import format_bytes, get_monitor_or_404, monitor_view
+from ..util import format_bytes, format_local, get_monitor_or_404, monitor_view
 
 bp = Blueprint("web", __name__)
 log = logging.getLogger("spot.web")
@@ -148,6 +148,8 @@ def storage():
         m["effective_retention_days"] = effective_retention(
             m["retention_days"], cfg.default_retention_days
         )
+        m["oldest_local"] = format_local(m["oldest"])
+        m["newest_local"] = format_local(m["newest"])
     return render_template("storage.html", overview=overview)
 
 

@@ -20,6 +20,28 @@ def parse_iso_ts(s: str) -> datetime:
     return dt
 
 
+def to_local(dt: datetime | None) -> datetime | None:
+    """Convert a UTC-stored datetime to the server's local timezone."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone()  # uses system local TZ (TZ env or /etc/localtime)
+
+
+def format_local(dt: datetime | None, fmt: str = "%Y-%m-%d %H:%M:%S %Z") -> str:
+    local = to_local(dt)
+    if local is None:
+        return "—"
+    return local.strftime(fmt).strip()
+
+
+def naive_local(dt: datetime | None) -> datetime | None:
+    """As to_local() but drops the tzinfo, so matplotlib renders the values verbatim."""
+    local = to_local(dt)
+    return local.replace(tzinfo=None) if local else None
+
+
 def get_monitor_or_404(s: Session, mid: int) -> Monitor:
     m = s.get(Monitor, mid)
     if not m:

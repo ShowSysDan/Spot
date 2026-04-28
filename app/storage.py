@@ -45,8 +45,8 @@ def per_monitor_stats(s: Session, schema: str) -> list[dict]:
             "unit": r.unit,
             "retention_days": r.retention_days,
             "count": cnt,
-            "oldest": r.oldest.isoformat() if r.oldest else None,
-            "newest": r.newest.isoformat() if r.newest else None,
+            "oldest": r.oldest,  # datetime; route formats for display
+            "newest": r.newest,
             "estimated_bytes": est,
         })
     return out

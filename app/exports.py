@@ -9,6 +9,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.dates as mdates
 from matplotlib.figure import Figure
+
+from .util import format_local, naive_local, to_local
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter, landscape
 from reportlab.lib.styles import getSampleStyleSheet
@@ -24,12 +26,14 @@ from reportlab.platypus import (
 
 
 def readings_to_csv(rows: Iterable[tuple[datetime, float | None, str | None]]) -> bytes:
+    """CSV with timestamps in the server's local timezone (ISO-8601 with offset)."""
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["timestamp_utc", "value", "label"])
+    w.writerow(["timestamp", "value", "label"])
     for ts, value, label in rows:
+        local = to_local(ts)
         w.writerow([
-            ts.isoformat() if ts else "",
+            local.isoformat() if local else "",
             "" if value is None else value,
             label or "",
         ])
@@ -46,18 +50,19 @@ def render_chart_png(monitor_name: str, unit: str,
     fig = Figure(figsize=(11, 5))
     ax = fig.subplots()
     if points:
-        xs = [p[0] for p in points]
+        xs = [naive_local(p[0]) for p in points]
         ys = [p[1] for p in points]
         ax.plot(xs, ys, linewidth=1.0, color="#1f5fa8")
     for ts, label in events:
-        ax.axvline(ts, color="#c0392b", linestyle="--", linewidth=0.8, alpha=0.7)
-        ax.annotate(label, xy=(ts, 1.0), xycoords=("data", "axes fraction"),
+        local_ts = naive_local(ts)
+        ax.axvline(local_ts, color="#c0392b", linestyle="--", linewidth=0.8, alpha=0.7)
+        ax.annotate(label, xy=(local_ts, 1.0), xycoords=("data", "axes fraction"),
                     xytext=(2, -10), textcoords="offset points",
                     fontsize=8, color="#c0392b", rotation=90,
                     verticalalignment="top")
     ax.set_title(monitor_name)
     ax.set_ylabel(unit)
-    ax.set_xlabel("Time (UTC)")
+    ax.set_xlabel(f"Time ({_local_tz_name()})")
     ax.grid(True, alpha=0.3)
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d %H:%M:%S"))
     fig.autofmt_xdate()
@@ -65,6 +70,12 @@ def render_chart_png(monitor_name: str, unit: str,
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=120)
     return buf.getvalue()
+
+
+def _local_tz_name() -> str:
+    """Short timezone name for the server (e.g. 'EDT', 'EST', 'UTC')."""
+    name = datetime.now().astimezone().tzname()
+    return name or "local"
 
 
 _OVERLAY_COLORS = ("#1f5fa8", "#c0392b", "#27ae60", "#8e44ad",
@@ -89,7 +100,7 @@ def render_overlay_chart_png(start: datetime, end: datetime,
     color_idx = 0
     for ax, unit in zip(axes, order):
         for m in groups[unit]:
-            xs = [p["ts"] for p in m["points"]]
+            xs = [naive_local(p["ts"]) for p in m["points"]]
             ys = [p["value"] for p in m["points"]]
             ax.plot(xs, ys, label=m["name"], linewidth=1.0,
                     color=_OVERLAY_COLORS[color_idx % len(_OVERLAY_COLORS)])
@@ -97,9 +108,9 @@ def render_overlay_chart_png(start: datetime, end: datetime,
         ax.set_ylabel(unit)
         ax.grid(True, alpha=0.3)
         ax.legend(loc="upper right", fontsize=8)
-    axes[-1].set_xlabel("Time (UTC)")
+    axes[-1].set_xlabel(f"Time ({_local_tz_name()})")
     axes[-1].xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d %H:%M:%S"))
-    fig.suptitle(f"Spot overlay  ({start.isoformat()} — {end.isoformat()})", fontsize=11)
+    fig.suptitle(f"Spot overlay  ({format_local(start)} — {format_local(end)})", fontsize=11)
     fig.autofmt_xdate()
     fig.tight_layout(rect=(0, 0, 1, 0.97))
     buf = io.BytesIO()
@@ -124,7 +135,7 @@ def render_overlay_pdf(start: datetime, end: datetime, monitors: list[dict]) -> 
     flow = [
         Paragraph("<b>Spot — overlay</b>", styles["Title"]),
         Paragraph(
-            f"Range: {start.isoformat()} &mdash; {end.isoformat()} (UTC)",
+            f"Range: {format_local(start)} &mdash; {format_local(end)}",
             styles["Normal"],
         ),
         Spacer(1, 0.15 * inch),
@@ -172,7 +183,7 @@ def render_pdf(monitor_name: str, unit: str, start: datetime, end: datetime,
     flow = [
         Paragraph(f"<b>Spot — {monitor_name}</b>", styles["Title"]),
         Paragraph(
-            f"Range: {start.isoformat()} &mdash; {end.isoformat()} (UTC) &nbsp;|&nbsp; Unit: {unit}",
+            f"Range: {format_local(start)} &mdash; {format_local(end)} &nbsp;|&nbsp; Unit: {unit}",
             styles["Normal"],
         ),
         Spacer(1, 0.15 * inch),
