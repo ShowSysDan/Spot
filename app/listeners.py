@@ -23,11 +23,13 @@ TCP_IDLE_TIMEOUT = 60.0
 class _BaseListener(threading.Thread):
     proto: str = ""
 
-    def __init__(self, monitor_id: int, monitor_name: str, port: int):
+    def __init__(self, monitor_id: int, monitor_name: str, port: int,
+                 value_regex: str | None = None):
         super().__init__(daemon=True, name=f"{self.proto}-{monitor_name}-{port}")
         self.monitor_id = monitor_id
         self.monitor_name = monitor_name
         self.port = port
+        self.value_regex = value_regex
         self._stop = threading.Event()
         self._sock: socket.socket | None = None
 
@@ -50,7 +52,8 @@ class _BaseListener(threading.Thread):
         if not text:
             return
         try:
-            ingest_raw(self.monitor_id, self.monitor_name, text, src)
+            ingest_raw(self.monitor_id, self.monitor_name, text, src,
+                       regex=self.value_regex)
         except MalformedData:
             pass  # already logged
         except Exception:
@@ -174,13 +177,13 @@ class ListenerManager:
         with session_scope() as s:
             for m in s.query(Monitor).filter(Monitor.enabled.is_(True)).all():
                 if m.listener_type in ("tcp", "udp") and m.port:
-                    self._spawn(m.id, m.name, m.listener_type, m.port)
+                    self._spawn(m.id, m.name, m.listener_type, m.port, m.value_regex)
 
     def start_monitor(self, monitor_id: int, name: str, listener_type: str,
-                      port: int | None) -> None:
+                      port: int | None, value_regex: str | None = None) -> None:
         if listener_type not in ("tcp", "udp") or not port:
             return
-        self._spawn(monitor_id, name, listener_type, port)
+        self._spawn(monitor_id, name, listener_type, port, value_regex)
 
     def stop_monitor(self, monitor_id: int) -> None:
         with self._lock:
@@ -198,13 +201,14 @@ class ListenerManager:
         for t in threads:
             t.join(timeout=3.0)
 
-    def _spawn(self, monitor_id: int, name: str, listener_type: str, port: int) -> None:
+    def _spawn(self, monitor_id: int, name: str, listener_type: str, port: int,
+               value_regex: str | None = None) -> None:
         with self._lock:
             existing = self._threads.get(monitor_id)
             if existing and existing.is_alive():
                 return
             cls = TCPListener if listener_type == "tcp" else UDPListener
-            t = cls(monitor_id, name, port)
+            t = cls(monitor_id, name, port, value_regex)
             self._threads[monitor_id] = t
         t.start()
 

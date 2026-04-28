@@ -37,6 +37,22 @@
     <small class="muted">Auto-assigned. To change, switch listener type to HTTP and back, or delete and re-create.</small>
   </label>
   {% endif %}
+  <label>Value extraction regex
+    <input type="text" name="value_regex"
+           value="{{ monitor.value_regex if monitor and monitor.value_regex else '' }}"
+           placeholder="optional — e.g. (?P&lt;value&gt;-?\d+(?:\.\d+)?)">
+    <small class="muted">
+      Applied to each incoming line/payload. The first capture group named
+      <code>value</code> (or the first group, or the whole match) becomes the
+      numeric value; an optional named group <code>label</code> becomes the annotation.
+      Leave blank to use the default parser
+      (<code>92.3</code>, <code>92.3,Show Start</code>, <code>{"value":92.3}</code>, etc.).
+      <br>Examples:
+      <code>(\d+(?:\.\d+)?)\s*dB</code> &nbsp;·&nbsp;
+      <code>(?P&lt;value&gt;-?\d+(?:\.\d+)?)</code> &nbsp;·&nbsp;
+      <code>—\s*(?P&lt;value&gt;-?\d+(?:\.\d+)?)</code>
+    </small>
+  </label>
   <label>Retention (days)
     <input type="number" name="retention_days" min="1"
            value="{{ monitor.retention_days if monitor and monitor.retention_days else '' }}"
