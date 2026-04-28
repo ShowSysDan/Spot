@@ -29,9 +29,12 @@ and lets you browse, query, graph, and export the data.
 - **Multi-monitor overlay** — plot multiple monitors over the same time range
   on one chart. Monitors that share a unit share a Y axis; differing units get
   their own axis (left/right alternating).
-- **Per-monitor retention** — each monitor can have a `retention_days` policy.
-  A janitor thread (default hourly) bulk-deletes expired readings; "Purge now"
-  is also available per monitor.
+- **Per-monitor retention** with **global default** — each monitor can set
+  its own `retention_days`; if blank, `SPOT_DEFAULT_RETENTION_DAYS` (env)
+  applies. A janitor thread (default hourly) bulk-deletes expired readings;
+  "Purge now" is also available per monitor.
+- **Delete all data** — per-monitor button to wipe all readings for a monitor
+  (the monitor itself is kept).
 - **Storage report** — `/storage` shows total schema bytes, the readings
   table size, and a per-monitor row count + estimated size.
 - **Syslog integration** — application errors, listener start/stop, retention
@@ -131,6 +134,7 @@ Set at least:
 | `SPOT_SECRET_KEY`     | Any random string                            |
 | `SPOT_INGEST_ALLOW`   | Optional CSV of allowed source IPs           |
 | `SPOT_JANITOR_INTERVAL_SECONDS` | Retention-cleanup interval (default `3600`) |
+| `SPOT_DEFAULT_RETENTION_DAYS` | Global default retention; blank = keep forever |
 
 ### 6. Smoke-test (foreground)
 
@@ -282,21 +286,31 @@ Direct URLs (also usable from cron / scripts):
 - `GET /data/monitor/<id>/export.csv?start=...&end=...`
 - `GET /data/monitor/<id>/export.pdf?start=...&end=...`
 - `GET /data/overlay?ids=1,2,3&start=...&end=...`    — series for many monitors
+- `GET /data/overlay/export.pdf?ids=1,2,3&start=...&end=...` — combined PDF
 
 Timestamps are ISO-8601 in UTC (e.g. `2026-04-28T00:00:00Z`).
 
 ### Multi-monitor overlay
 
 `/overlay` — pick monitors (Cmd/Ctrl-click to multi-select) and a UTC range.
-Each unit gets its own Y axis (alternating left/right). The "Export CSV" button
-opens one CSV per selected monitor.
+
+- **In-browser**: each unit gets its own Y axis (alternating left/right) on a
+  single chart.
+- **PDF export**: one panel per unit stacked vertically, sharing the X axis,
+  with a per-monitor min/max/avg summary table.
+- **CSV export**: one CSV per selected monitor.
 
 ### Retention & storage
 
 Each monitor has a `Retention (days)` field on its edit form. Leave blank to
-keep readings forever. The janitor thread runs every
+fall back to the global default `SPOT_DEFAULT_RETENTION_DAYS`; if that is
+also blank, readings are kept forever. The janitor thread runs every
 `SPOT_JANITOR_INTERVAL_SECONDS` (default 3600) and deletes expired readings;
 each pass logs `purged N rows monitor=… retention=…d` to syslog.
+
+The monitor detail page also has a **Delete all data** button that wipes all
+readings for that monitor (the monitor itself stays). It logs a warning to
+syslog with the row count deleted.
 
 `/storage` shows:
 

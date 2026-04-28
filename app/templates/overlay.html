@@ -20,6 +20,7 @@
   <label>End (UTC)   <input type="datetime-local" name="end" step="1" required></label>
   <button type="submit" class="primary">Plot</button>
   <button type="button" id="btn-csv">Export CSV</button>
+  <button type="button" id="btn-pdf">Export PDF</button>
 </form>
 
 <div class="chart-wrap"><canvas id="chart"></canvas></div>
@@ -116,6 +117,10 @@ if (form) {
         window.open(`/data/monitor/${id}/export.csv?${p.toString()}`, '_blank');
       }, idx * 200);
     });
+  });
+  document.getElementById('btn-pdf').addEventListener('click', () => {
+    if (!selectedIds().length) return;
+    window.location = `/data/overlay/export.pdf?${rangeQs()}`;
   });
 }
 </script>

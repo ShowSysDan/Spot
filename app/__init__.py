@@ -21,7 +21,7 @@ def create_app(config: Config | None = None) -> Flask:
     init_schema(cfg)
 
     manager = ListenerManager(cfg)
-    janitor = JanitorThread(cfg.janitor_interval_seconds)
+    janitor = JanitorThread(cfg.janitor_interval_seconds, cfg.default_retention_days)
     app.config["SPOT_LISTENERS"] = manager
     app.config["SPOT_JANITOR"] = janitor
 

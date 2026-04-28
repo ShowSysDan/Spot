@@ -67,6 +67,94 @@ def render_chart_png(monitor_name: str, unit: str,
     return buf.getvalue()
 
 
+_OVERLAY_COLORS = ("#1f5fa8", "#c0392b", "#27ae60", "#8e44ad",
+                   "#d68910", "#16a085", "#2c3e50", "#e91e63")
+
+
+def render_overlay_chart_png(start: datetime, end: datetime,
+                             monitors: list[dict]) -> bytes:
+    """Stack one panel per unit; each panel plots all monitors with that unit."""
+    groups: dict[str, list[dict]] = {}
+    order: list[str] = []
+    for m in monitors:
+        u = m["unit"]
+        if u not in groups:
+            groups[u] = []
+            order.append(u)
+        groups[u].append(m)
+
+    n = max(1, len(order))
+    fig = Figure(figsize=(11, 2.6 * n + 1.5))
+    axes = fig.subplots(n, 1, sharex=True, squeeze=False).flatten().tolist()
+    color_idx = 0
+    for ax, unit in zip(axes, order):
+        for m in groups[unit]:
+            xs = [p["ts"] for p in m["points"]]
+            ys = [p["value"] for p in m["points"]]
+            ax.plot(xs, ys, label=m["name"], linewidth=1.0,
+                    color=_OVERLAY_COLORS[color_idx % len(_OVERLAY_COLORS)])
+            color_idx += 1
+        ax.set_ylabel(unit)
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc="upper right", fontsize=8)
+    axes[-1].set_xlabel("Time (UTC)")
+    axes[-1].xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d %H:%M:%S"))
+    fig.suptitle(f"Spot overlay  ({start.isoformat()} — {end.isoformat()})", fontsize=11)
+    fig.autofmt_xdate()
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=120)
+    return buf.getvalue()
+
+
+def render_overlay_pdf(start: datetime, end: datetime, monitors: list[dict]) -> bytes:
+    """One-page PDF with the stacked overlay chart and a per-monitor summary table.
+
+    `monitors` is a list of {name, unit, points: [{ts: datetime, value: float}]}.
+    """
+    chart_png = render_overlay_chart_png(start, end, monitors)
+    out = io.BytesIO()
+    doc = SimpleDocTemplate(
+        out, pagesize=landscape(letter),
+        leftMargin=0.5 * inch, rightMargin=0.5 * inch,
+        topMargin=0.5 * inch, bottomMargin=0.5 * inch,
+        title="Spot — overlay",
+    )
+    styles = getSampleStyleSheet()
+    flow = [
+        Paragraph("<b>Spot — overlay</b>", styles["Title"]),
+        Paragraph(
+            f"Range: {start.isoformat()} &mdash; {end.isoformat()} (UTC)",
+            styles["Normal"],
+        ),
+        Spacer(1, 0.15 * inch),
+        Image(io.BytesIO(chart_png), width=10 * inch, height=4.5 * inch),
+        Spacer(1, 0.2 * inch),
+    ]
+
+    rows = [["Monitor", "Unit", "Samples", "Min", "Max", "Avg"]]
+    for m in monitors:
+        ys = [p["value"] for p in m["points"]]
+        if ys:
+            rows.append([m["name"], m["unit"], str(len(ys)),
+                         _fmt(min(ys)), _fmt(max(ys)), _fmt(sum(ys) / len(ys))])
+        else:
+            rows.append([m["name"], m["unit"], "0", "—", "—", "—"])
+    tbl = Table(rows, colWidths=[2.5 * inch, 1.0 * inch, 1.0 * inch,
+                                 1.0 * inch, 1.0 * inch, 1.0 * inch])
+    tbl.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.grey),
+        ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
+        ("FONT", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    flow.append(tbl)
+
+    doc.build(flow)
+    return out.getvalue()
+
+
 def render_pdf(monitor_name: str, unit: str, start: datetime, end: datetime,
                points: list[tuple[datetime, float]],
                events: list[tuple[datetime, str]],

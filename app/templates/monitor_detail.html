@@ -18,12 +18,18 @@
   <dd>
     {% if monitor.retention_days %}
       {{ monitor.retention_days }} day{{ '' if monitor.retention_days == 1 else 's' }}
-      <form method="post" action="{{ url_for('web.monitor_purge', mid=monitor.id) }}" class="inline"
-            onsubmit="return confirm('Purge readings older than {{ monitor.retention_days }} days now?');">
-        <button type="submit" class="link">Purge now</button>
-      </form>
+      <span class="muted">(per-monitor)</span>
+    {% elif monitor.default_retention_days %}
+      {{ monitor.default_retention_days }} day{{ '' if monitor.default_retention_days == 1 else 's' }}
+      <span class="muted">(global default)</span>
     {% else %}
       <span class="muted">keep forever</span>
+    {% endif %}
+    {% if monitor.effective_retention_days %}
+      <form method="post" action="{{ url_for('web.monitor_purge', mid=monitor.id) }}" class="inline"
+            onsubmit="return confirm('Purge readings older than {{ monitor.effective_retention_days }} days now?');">
+        <button type="submit" class="link">Purge now</button>
+      </form>
     {% endif %}
   </dd>
   <dt>Auth token</dt><dd><code>{{ monitor.auth_token }}</code></dd>
@@ -57,5 +63,9 @@ printf '92.3' | nc -u -w1 HOST {{ monitor.port }}
   <a class="button" href="{{ url_for('web.monitor_dashboard', mid=monitor.id) }}">Live dashboard</a>
   <a class="button" href="{{ url_for('web.monitor_query', mid=monitor.id) }}">Query &amp; export</a>
   <a class="button" href="{{ url_for('web.monitor_edit', mid=monitor.id) }}">Edit</a>
+  <form method="post" action="{{ url_for('web.monitor_clear_data', mid=monitor.id) }}" class="inline"
+        onsubmit="return confirm('Delete ALL readings for {{ monitor.name }}? This cannot be undone. The monitor itself will be kept.');">
+    <button type="submit" class="button danger-btn">Delete all data</button>
+  </form>
 </div>
 {% endblock %}

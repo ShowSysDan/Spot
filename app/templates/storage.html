@@ -24,6 +24,11 @@
 <p class="muted">
   Estimated bytes are a proportional split of the readings table size by row count.
   Accuracy is within a few percent unless one monitor's labels are unusually long.
+  {% if overview.default_retention_days %}
+    Global default retention: <strong>{{ overview.default_retention_days }} days</strong>.
+  {% else %}
+    No global default retention configured.
+  {% endif %}
 </p>
 
 <table class="grid">
@@ -39,7 +44,15 @@
     <tr>
       <td><a href="{{ url_for('web.monitor_detail', mid=m.id) }}">{{ m.name }}</a></td>
       <td>{{ m.unit }}</td>
-      <td>{% if m.retention_days %}{{ m.retention_days }}d{% else %}<span class="muted">∞</span>{% endif %}</td>
+      <td>
+        {% if m.retention_days %}
+          {{ m.retention_days }}d
+        {% elif m.effective_retention_days %}
+          {{ m.effective_retention_days }}d <span class="muted">(default)</span>
+        {% else %}
+          <span class="muted">∞</span>
+        {% endif %}
+      </td>
       <td class="num">{{ "{:,}".format(m.count) }}</td>
       <td class="num">{{ m.estimated_human }}</td>
       <td>{{ m.oldest or "—" }}</td>

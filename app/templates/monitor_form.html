@@ -35,8 +35,11 @@
   <label>Retention (days)
     <input type="number" name="retention_days" min="1"
            value="{{ monitor.retention_days if monitor and monitor.retention_days else '' }}"
-           placeholder="blank = keep forever">
-    <small class="muted">Readings older than this many days are deleted by the janitor (runs hourly).</small>
+           placeholder="{% if default_retention %}blank = use default ({{ default_retention }}d){% else %}blank = keep forever{% endif %}">
+    <small class="muted">
+      Readings older than this many days are deleted by the janitor (runs hourly).
+      {% if default_retention %}Global default if blank: <strong>{{ default_retention }} days</strong>.{% endif %}
+    </small>
   </label>
   <label class="checkbox">
     <input type="checkbox" name="enabled" {% if (not monitor) or monitor.enabled %}checked{% endif %}>

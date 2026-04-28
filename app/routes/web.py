@@ -4,7 +4,7 @@ import logging
 from flask import Blueprint, current_app, flash, redirect, render_template, request, url_for
 
 from ..db import session_scope
-from ..janitor import purge_monitor
+from ..janitor import clear_monitor, effective_retention, purge_monitor
 from ..listeners import ListenerManager
 from ..models import Monitor
 from ..storage import storage_overview
@@ -36,7 +36,8 @@ def monitor_new():
     if request.method == "POST":
         return _save_monitor(None)
     return render_template("monitor_form.html", monitor=None,
-                           listener_types=VALID_LISTENER_TYPES)
+                           listener_types=VALID_LISTENER_TYPES,
+                           default_retention=current_app.config["SPOT"].default_retention_days)
 
 
 @bp.route("/monitors/<int:mid>/edit", methods=["GET", "POST"])
@@ -46,7 +47,8 @@ def monitor_edit(mid: int):
     with session_scope() as s:
         data = monitor_view(get_monitor_or_404(s, mid))
     return render_template("monitor_form.html", monitor=data,
-                           listener_types=VALID_LISTENER_TYPES)
+                           listener_types=VALID_LISTENER_TYPES,
+                           default_retention=current_app.config["SPOT"].default_retention_days)
 
 
 @bp.route("/monitors/<int:mid>/delete", methods=["POST"])
@@ -78,9 +80,14 @@ def monitor_toggle(mid: int):
 
 @bp.route("/monitors/<int:mid>")
 def monitor_detail(mid: int):
+    cfg = current_app.config["SPOT"]
     with session_scope() as s:
         data = monitor_view(get_monitor_or_404(s, mid))
     data["listener_alive"] = _manager().status().get(mid, False)
+    data["effective_retention_days"] = effective_retention(
+        data["retention_days"], cfg.default_retention_days
+    )
+    data["default_retention_days"] = cfg.default_retention_days
     return render_template("monitor_detail.html", monitor=data)
 
 
@@ -100,15 +107,26 @@ def monitor_query(mid: int):
 
 @bp.route("/monitors/<int:mid>/purge", methods=["POST"])
 def monitor_purge(mid: int):
+    cfg = current_app.config["SPOT"]
     with session_scope() as s:
         m = get_monitor_or_404(s, mid)
         name = m.name
-        days = m.retention_days
-    if not days:
-        flash("No retention policy set on this monitor.", "error")
+        eff = effective_retention(m.retention_days, cfg.default_retention_days)
+    if not eff:
+        flash("No retention policy in effect (set per-monitor days or SPOT_DEFAULT_RETENTION_DAYS).", "error")
         return redirect(url_for("web.monitor_detail", mid=mid))
-    deleted = purge_monitor(mid, name, int(days))
-    flash(f"Purged {deleted} reading(s) older than {days} day(s).", "success")
+    deleted = purge_monitor(mid, name, eff)
+    flash(f"Purged {deleted} reading(s) older than {eff} day(s).", "success")
+    return redirect(url_for("web.monitor_detail", mid=mid))
+
+
+@bp.route("/monitors/<int:mid>/clear-data", methods=["POST"])
+def monitor_clear_data(mid: int):
+    with session_scope() as s:
+        m = get_monitor_or_404(s, mid)
+        name = m.name
+    deleted = clear_monitor(mid, name)
+    flash(f"Deleted all {deleted} reading(s) for {name}. Monitor kept.", "success")
     return redirect(url_for("web.monitor_detail", mid=mid))
 
 
@@ -120,8 +138,12 @@ def storage():
     overview["schema_human"] = format_bytes(overview["schema_bytes"])
     overview["readings_human"] = format_bytes(overview["readings_bytes"])
     overview["monitors_human"] = format_bytes(overview["monitors_bytes"])
+    overview["default_retention_days"] = cfg.default_retention_days
     for m in overview["monitors"]:
         m["estimated_human"] = format_bytes(m["estimated_bytes"])
+        m["effective_retention_days"] = effective_retention(
+            m["retention_days"], cfg.default_retention_days
+        )
     return render_template("storage.html", overview=overview)
 
 
