@@ -41,10 +41,13 @@ function rangeQs() {
 const ctx = document.getElementById('chart');
 const chart = new Chart(ctx, {
   type: 'line',
-  data: { datasets: [{ label: unit, data: [], borderColor: '#1f5fa8', borderWidth: 1, pointRadius: 0 }] },
+  data: { datasets: [{ label: unit, data: [], borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.12)', borderWidth: 1.2, pointRadius: 0, fill: true }] },
   options: {
     animation: false, parsing: false,
-    scales: { x: { type: 'time' }, y: { title: { display: true, text: unit } } },
+    scales: {
+      x: { type: 'time', grid: { color: '#2c313a' } },
+      y: { title: { display: true, text: unit }, grid: { color: '#2c313a' } }
+    },
     plugins: { legend: { display: false } }
   }
 });

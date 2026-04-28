@@ -5,10 +5,12 @@
 <div class="row">
   <label>Window
     <select id="window-sec">
-      <option value="30" selected>30 s</option>
+      <option value="30">30 s</option>
       <option value="60">1 min</option>
       <option value="300">5 min</option>
-      <option value="900">15 min</option>
+      <option value="900" selected>15 min</option>
+      <option value="1800">30 min</option>
+      <option value="3600">1 hr</option>
     </select>
   </label>
   <label>Refresh
@@ -31,13 +33,13 @@ const unit = {{ monitor.unit | tojson }};
 const ctx = document.getElementById('chart');
 const chart = new Chart(ctx, {
   type: 'line',
-  data: { datasets: [{ label: unit, data: [], borderColor: '#1f5fa8', borderWidth: 1, pointRadius: 0, tension: 0 }] },
+  data: { datasets: [{ label: unit, data: [], borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.12)', borderWidth: 1.2, pointRadius: 0, tension: 0, fill: true }] },
   options: {
     animation: false,
     parsing: false,
     scales: {
-      x: { type: 'time', time: { tooltipFormat: 'PPpp' } },
-      y: { title: { display: true, text: unit } }
+      x: { type: 'time', time: { tooltipFormat: 'PPpp' }, grid: { color: '#2c313a' } },
+      y: { title: { display: true, text: unit }, grid: { color: '#2c313a' } }
     },
     plugins: { legend: { display: false } }
   }
