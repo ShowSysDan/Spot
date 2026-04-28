@@ -43,7 +43,7 @@ class Config:
             db_password=os.getenv("SPOT_DB_PASSWORD", ""),
             db_schema=os.getenv("SPOT_DB_SCHEMA", "spot"),
             web_host=os.getenv("SPOT_WEB_HOST", "0.0.0.0"),
-            web_port=int(os.getenv("SPOT_WEB_PORT", "8080")),
+            web_port=int(os.getenv("SPOT_WEB_PORT", "6100")),
             syslog_address=os.getenv("SPOT_SYSLOG_ADDRESS", "/dev/log"),
             syslog_facility=os.getenv("SPOT_SYSLOG_FACILITY", "local0"),
             log_level=os.getenv("SPOT_LOG_LEVEL", "INFO"),

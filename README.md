@@ -127,7 +127,7 @@ Set at least:
 | `SPOT_DB_PASSWORD`    | Spot role password                           |
 | `SPOT_DB_SCHEMA`      | `spot` (or any name; will be created)        |
 | `SPOT_WEB_HOST`       | `0.0.0.0` (bind everywhere) or a specific IP |
-| `SPOT_WEB_PORT`       | e.g. `8080`                                  |
+| `SPOT_WEB_PORT`       | e.g. `6100`                                  |
 | `SPOT_SYSLOG_ADDRESS` | `/dev/log` for local rsyslog                 |
 | `SPOT_SYSLOG_FACILITY`| e.g. `local0`                                |
 | `SPOT_LOG_LEVEL`      | `INFO` / `DEBUG` / `WARNING`                 |
@@ -140,7 +140,7 @@ Set at least:
 
 ```bash
 .venv/bin/python run.py
-# Open http://<host>:8080/
+# Open http://<host>:6100/
 ```
 
 You should see the Spot home page. Stop with `Ctrl-C`.
@@ -169,7 +169,7 @@ If `~/Spot` isn't where you installed it, edit the unit (`WorkingDirectory`,
 Open `SPOT_WEB_PORT` plus any per-monitor TCP/UDP ports you configure:
 
 ```bash
-sudo ufw allow 8080/tcp        # web UI / HTTP ingest
+sudo ufw allow 6100/tcp        # web UI / HTTP ingest
 sudo ufw allow 5140/udp        # example UDP monitor
 sudo ufw allow 5141/tcp        # example TCP monitor
 ```
@@ -220,20 +220,20 @@ along with copy-paste push examples.
 # Numeric reading
 curl -X POST -H "Content-Type: application/json" \
   -d '{"value": 92.3}' \
-  http://HOST:8080/api/ingest/<TOKEN>
+  http://HOST:6100/api/ingest/<TOKEN>
 
 # Reading + label (annotation on a single sample)
 curl -X POST -H "Content-Type: application/json" \
   -d '{"value": 92.3, "label": "Show Start"}' \
-  http://HOST:8080/api/ingest/<TOKEN>
+  http://HOST:6100/api/ingest/<TOKEN>
 
 # Plain text body works too
 curl -X POST -H "Content-Type: text/plain" --data '92.3' \
-  http://HOST:8080/api/ingest/<TOKEN>
+  http://HOST:6100/api/ingest/<TOKEN>
 
 # Event marker only (no numeric value)
 curl -X POST -H "Content-Type: text/plain" --data 'Fire Alarm' \
-  http://HOST:8080/api/event/<TOKEN>
+  http://HOST:6100/api/event/<TOKEN>
 ```
 
 JSON payload shape:
