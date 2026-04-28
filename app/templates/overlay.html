@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}Overlay — Spot{% endblock %}
+{% block content %}
+<h1>Overlay</h1>
+<p class="muted">Plot multiple monitors over the same time range. Monitors that share a unit share a Y axis.</p>
+
+{% if not monitors %}
+  <p>No monitors yet. <a href="{{ url_for('web.monitor_new') }}">Add one</a>.</p>
+{% else %}
+<form id="qform" class="form inline-form">
+  <label>Monitors
+    <select name="ids" id="ids" multiple size="6" required>
+      {% for m in monitors %}
+      <option value="{{ m.id }}" data-unit="{{ m.unit }}">{{ m.name }} ({{ m.unit }})</option>
+      {% endfor %}
+    </select>
+    <small class="muted">Hold Cmd/Ctrl to select multiple.</small>
+  </label>
+  <label>Start (UTC) <input type="datetime-local" name="start" step="1" required></label>
+  <label>End (UTC)   <input type="datetime-local" name="end" step="1" required></label>
+  <button type="submit" class="primary">Plot</button>
+  <button type="button" id="btn-csv">Export CSV</button>
+</form>
+
+<div class="chart-wrap"><canvas id="chart"></canvas></div>
+{% endif %}
+
+<script>
+const form = document.getElementById('qform');
+if (form) {
+  (function setDefaults() {
+    const end = new Date();
+    const start = new Date(end.getTime() - 60 * 60 * 1000);
+    form.start.value = toLocalInput(start);
+    form.end.value = toLocalInput(end);
+  })();
+}
+
+function toLocalInput(d) {
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+}
+function toIso(s) { return s ? s + 'Z' : ''; }
+function selectedIds() {
+  return Array.from(document.getElementById('ids').selectedOptions).map(o => o.value);
+}
+function rangeQs() {
+  const p = new URLSearchParams();
+  p.set('ids', selectedIds().join(','));
+  p.set('start', toIso(form.start.value));
+  p.set('end',   toIso(form.end.value));
+  return p.toString();
+}
+
+const COLORS = ['#1f5fa8', '#c0392b', '#27ae60', '#8e44ad', '#d68910', '#16a085', '#2c3e50', '#e91e63'];
+let chart = null;
+
+async function runOverlay() {
+  if (!selectedIds().length) return;
+  const r = await fetch(`/data/overlay?${rangeQs()}`);
+  if (!r.ok) return;
+  const j = await r.json();
+
+  // Group monitors by unit so each unit gets one shared y-axis.
+  const unitOrder = [];
+  const unitToAxis = {};
+  for (const m of j.monitors) {
+    if (!(m.unit in unitToAxis)) {
+      const id = unitOrder.length === 0 ? 'y' : `y${unitOrder.length}`;
+      unitToAxis[m.unit] = id;
+      unitOrder.push(m.unit);
+    }
+  }
+  const scales = { x: { type: 'time' } };
+  unitOrder.forEach((unit, i) => {
+    const id = i === 0 ? 'y' : `y${i}`;
+    scales[id] = {
+      type: 'linear',
+      position: i % 2 === 0 ? 'left' : 'right',
+      title: { display: true, text: unit },
+      grid: { drawOnChartArea: i === 0 },
+    };
+  });
+
+  const datasets = j.monitors.map((m, i) => ({
+    label: `${m.name} (${m.unit})`,
+    data: m.points.map(p => ({ x: new Date(p.ts).valueOf(), y: p.value })),
+    borderColor: COLORS[i % COLORS.length],
+    borderWidth: 1.2,
+    pointRadius: 0,
+    tension: 0,
+    yAxisID: unitToAxis[m.unit],
+  }));
+
+  if (chart) chart.destroy();
+  chart = new Chart(document.getElementById('chart'), {
+    type: 'line',
+    data: { datasets },
+    options: { animation: false, parsing: false, scales,
+               plugins: { legend: { position: 'bottom' } } }
+  });
+}
+
+if (form) {
+  form.addEventListener('submit', e => { e.preventDefault(); runOverlay(); });
+  document.getElementById('btn-csv').addEventListener('click', () => {
+    const ids = selectedIds();
+    if (!ids.length) return;
+    // Per-monitor CSVs (one per id) — open each. Browsers will block multiple
+    // tabs without user gesture context, so trigger one at a time.
+    ids.forEach((id, idx) => {
+      setTimeout(() => {
+        const p = new URLSearchParams();
+        p.set('start', toIso(form.start.value));
+        p.set('end',   toIso(form.end.value));
+        window.open(`/data/monitor/${id}/export.csv?${p.toString()}`, '_blank');
+      }, idx * 200);
+    });
+  });
+}
+</script>
+{% endblock %}

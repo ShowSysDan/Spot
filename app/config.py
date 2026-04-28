@@ -23,6 +23,7 @@ class Config:
 
     secret_key: str
     ingest_allow: tuple[str, ...]
+    janitor_interval_seconds: int
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -43,6 +44,7 @@ class Config:
             log_level=os.getenv("SPOT_LOG_LEVEL", "INFO"),
             secret_key=os.getenv("SPOT_SECRET_KEY", "dev-secret"),
             ingest_allow=allow,
+            janitor_interval_seconds=int(os.getenv("SPOT_JANITOR_INTERVAL_SECONDS", "3600")),
         )
 
     @property

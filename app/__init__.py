@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import os
 from flask import Flask
 
 from .config import Config
 from .db import dispose_engine, init_engine, init_schema
+from .janitor import JanitorThread
 from .logging_config import configure_logging
 from .listeners import ListenerManager
 
@@ -21,7 +21,9 @@ def create_app(config: Config | None = None) -> Flask:
     init_schema(cfg)
 
     manager = ListenerManager(cfg)
+    janitor = JanitorThread(cfg.janitor_interval_seconds)
     app.config["SPOT_LISTENERS"] = manager
+    app.config["SPOT_JANITOR"] = janitor
 
     from .routes.web import bp as web_bp
     from .routes.api import bp as api_bp
@@ -32,11 +34,14 @@ def create_app(config: Config | None = None) -> Flask:
     app.register_blueprint(data_bp, url_prefix="/data")
 
     manager.start_enabled()
+    janitor.start()
 
     import atexit
 
     def _cleanup() -> None:
+        janitor.stop()
         manager.shutdown()
+        janitor.join(timeout=3.0)
         dispose_engine()
 
     atexit.register(_cleanup)

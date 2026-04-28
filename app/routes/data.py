@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from ..db import session_scope
 from ..exports import readings_to_csv, render_pdf
-from ..models import Reading
+from ..models import Monitor, Reading
 from ..util import get_monitor_or_404, parse_iso_ts, safe_filename
 
 bp = Blueprint("data", __name__)
@@ -125,6 +125,32 @@ def export_csv(mid: int):
         name = m.name
     body = readings_to_csv([(r.ts, r.value, r.label) for r in rows])
     return _attachment(body, "text/csv", "csv", name, start, end)
+
+
+@bp.route("/overlay")
+def overlay():
+    """Return series for multiple monitors over a range. ?ids=1,2,3&start=...&end=..."""
+    ids_raw = request.args.get("ids", "")
+    try:
+        ids = [int(x) for x in ids_raw.split(",") if x.strip()]
+    except ValueError:
+        abort(400, description="ids must be comma-separated integers")
+    if not ids:
+        return jsonify({"monitors": [], "start": None, "end": None})
+    start, end = _parse_range()
+    out = []
+    with session_scope() as s:
+        monitors = s.query(Monitor).filter(Monitor.id.in_(ids)).order_by(Monitor.name).all()
+        for m in monitors:
+            rows = _fetch_rows(s, m.id, start, end)
+            out.append({
+                "id": m.id,
+                "name": m.name,
+                "unit": m.unit,
+                "points": [{"ts": r.ts.isoformat(), "value": r.value}
+                           for r in rows if r.value is not None],
+            })
+    return jsonify({"start": start.isoformat(), "end": end.isoformat(), "monitors": out})
 
 
 @bp.route("/monitor/<int:mid>/export.pdf")

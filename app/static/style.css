@@ -41,6 +41,7 @@ h1 { margin-top: 0; }
 
 table.grid { width: 100%; border-collapse: collapse; background: var(--card); }
 table.grid th, table.grid td { padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); text-align: left; }
+table.grid th.num, table.grid td.num { text-align: right; font-variant-numeric: tabular-nums; }
 table.grid th { background: #fafaf7; }
 .actions { white-space: nowrap; }
 .actions a, .actions button { margin-right: 0.5rem; }

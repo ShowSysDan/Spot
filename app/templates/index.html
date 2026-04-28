@@ -9,7 +9,7 @@
   <thead>
     <tr>
       <th>Name</th><th>Unit</th><th>Listener</th><th>Port</th>
-      <th>Enabled</th><th>Listener thread</th><th>Actions</th>
+      <th>Retention</th><th>Enabled</th><th>Listener thread</th><th>Actions</th>
     </tr>
   </thead>
   <tbody>
@@ -20,6 +20,7 @@
       <td>{{ m.unit }}</td>
       <td>{{ m.listener_type|upper }}</td>
       <td>{{ m.port or "—" }}</td>
+      <td>{% if m.retention_days %}{{ m.retention_days }}d{% else %}<span class="muted">∞</span>{% endif %}</td>
       <td>{% if m.enabled %}<span class="ok">on</span>{% else %}<span class="off">off</span>{% endif %}</td>
       <td>
         {% if m.listener_type == 'http' %}<span class="muted">n/a</span>

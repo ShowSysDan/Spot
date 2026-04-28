@@ -41,5 +41,17 @@ def monitor_view(m: Monitor) -> dict[str, Any]:
         "port": m.port,
         "auth_token": m.auth_token,
         "enabled": m.enabled,
+        "retention_days": m.retention_days,
         "created_at": m.created_at.isoformat() if m.created_at else None,
     }
+
+
+def format_bytes(n: int | float | None) -> str:
+    if n is None:
+        return "—"
+    n = float(n)
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if n < 1024 or unit == "TiB":
+            return f"{n:.1f} {unit}" if unit != "B" else f"{int(n)} B"
+        n /= 1024
+    return f"{n:.1f} TiB"

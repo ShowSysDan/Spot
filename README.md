@@ -26,8 +26,16 @@ and lets you browse, query, graph, and export the data.
   15 min, with the latest reading and recent events.
 - **Query & export** — pick a UTC time range; see min/max/avg/count + event
   count; export the range to **CSV** or a one-page **PDF** with the chart.
-- **Syslog integration** — application errors, listener start/stop, and
-  malformed payloads are sent to syslog (configurable facility).
+- **Multi-monitor overlay** — plot multiple monitors over the same time range
+  on one chart. Monitors that share a unit share a Y axis; differing units get
+  their own axis (left/right alternating).
+- **Per-monitor retention** — each monitor can have a `retention_days` policy.
+  A janitor thread (default hourly) bulk-deletes expired readings; "Purge now"
+  is also available per monitor.
+- **Storage report** — `/storage` shows total schema bytes, the readings
+  table size, and a per-monitor row count + estimated size.
+- **Syslog integration** — application errors, listener start/stop, retention
+  purges, and malformed payloads are sent to syslog (configurable facility).
 - **Isolated schema** — Spot uses a single Postgres schema (default `spot`)
   inside a shared database; nothing leaks into `public`.
 
@@ -122,6 +130,7 @@ Set at least:
 | `SPOT_LOG_LEVEL`      | `INFO` / `DEBUG` / `WARNING`                 |
 | `SPOT_SECRET_KEY`     | Any random string                            |
 | `SPOT_INGEST_ALLOW`   | Optional CSV of allowed source IPs           |
+| `SPOT_JANITOR_INTERVAL_SECONDS` | Retention-cleanup interval (default `3600`) |
 
 ### 6. Smoke-test (foreground)
 
@@ -272,8 +281,33 @@ Direct URLs (also usable from cron / scripts):
 - `GET /data/monitor/<id>/recent?seconds=30`         — recent points
 - `GET /data/monitor/<id>/export.csv?start=...&end=...`
 - `GET /data/monitor/<id>/export.pdf?start=...&end=...`
+- `GET /data/overlay?ids=1,2,3&start=...&end=...`    — series for many monitors
 
 Timestamps are ISO-8601 in UTC (e.g. `2026-04-28T00:00:00Z`).
+
+### Multi-monitor overlay
+
+`/overlay` — pick monitors (Cmd/Ctrl-click to multi-select) and a UTC range.
+Each unit gets its own Y axis (alternating left/right). The "Export CSV" button
+opens one CSV per selected monitor.
+
+### Retention & storage
+
+Each monitor has a `Retention (days)` field on its edit form. Leave blank to
+keep readings forever. The janitor thread runs every
+`SPOT_JANITOR_INTERVAL_SECONDS` (default 3600) and deletes expired readings;
+each pass logs `purged N rows monitor=… retention=…d` to syslog.
+
+`/storage` shows:
+
+- total bytes used by the `spot` schema (all tables + indexes + toast)
+- bytes used by the `readings` table specifically
+- per-monitor row count, oldest/newest sample, and an *estimated* size
+  (proportional split of the readings table by row count — accurate to within
+  a few percent unless a monitor's labels are unusually long)
+
+Per-monitor "Purge now" buttons on the detail page run an immediate cleanup
+without waiting for the janitor.
 
 ---
 
@@ -281,10 +315,11 @@ Timestamps are ISO-8601 in UTC (e.g. `2026-04-28T00:00:00Z`).
 
 All Spot loggers are children of `spot.*`:
 
-- `spot.web`        — UI actions (monitor created/updated/deleted, toggled)
+- `spot.web`        — UI actions (monitor created/updated/deleted, toggled, purged)
 - `spot.api`        — HTTP ingest + allow-list rejections
 - `spot.listeners`  — TCP/UDP listener start/stop/bind errors
 - `spot.ingest`     — malformed payloads
+- `spot.janitor`    — retention purges (rows deleted per monitor per pass)
 - `spot.db`         — schema bring-up
 - `spot.data`       — query/export
 
@@ -301,6 +336,8 @@ Browser ──► Flask (web UI, /api/ingest, /api/event, /data/...)
                 ├── ListenerManager
                 │     ├── TCPListener thread (per enabled TCP monitor)
                 │     └── UDPListener thread (per enabled UDP monitor)
+                │
+                ├── JanitorThread (single, periodic retention enforcement)
                 │
                 └── SQLAlchemy (search_path = spot, public)
                               │

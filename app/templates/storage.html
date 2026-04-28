@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Storage — Spot{% endblock %}
+{% block content %}
+<h1>Storage</h1>
+
+<div class="summary">
+  <div class="card">
+    <h3>Schema <code>{{ overview.schema }}</code></h3>
+    <p>{{ overview.schema_human }}</p>
+    <small>tables + indexes + toast</small>
+  </div>
+  <div class="card">
+    <h3>Readings table</h3>
+    <p>{{ overview.readings_human }}</p>
+    <small>shared by all monitors</small>
+  </div>
+  <div class="card">
+    <h3>Monitors table</h3>
+    <p>{{ overview.monitors_human }}</p>
+  </div>
+</div>
+
+<h2>Per-monitor</h2>
+<p class="muted">
+  Estimated bytes are a proportional split of the readings table size by row count.
+  Accuracy is within a few percent unless one monitor's labels are unusually long.
+</p>
+
+<table class="grid">
+  <thead>
+    <tr>
+      <th>Monitor</th><th>Unit</th><th>Retention</th>
+      <th class="num">Rows</th><th class="num">Est. size</th>
+      <th>Oldest</th><th>Newest</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for m in overview.monitors %}
+    <tr>
+      <td><a href="{{ url_for('web.monitor_detail', mid=m.id) }}">{{ m.name }}</a></td>
+      <td>{{ m.unit }}</td>
+      <td>{% if m.retention_days %}{{ m.retention_days }}d{% else %}<span class="muted">∞</span>{% endif %}</td>
+      <td class="num">{{ "{:,}".format(m.count) }}</td>
+      <td class="num">{{ m.estimated_human }}</td>
+      <td>{{ m.oldest or "—" }}</td>
+      <td>{{ m.newest or "—" }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

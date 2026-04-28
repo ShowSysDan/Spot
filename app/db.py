@@ -67,14 +67,22 @@ def session_scope() -> Iterator[Session]:
 
 
 def init_schema(cfg: Config) -> None:
-    """Ensure the schema and tables exist. Idempotent."""
+    """Ensure the schema, tables, and idempotent column migrations are applied."""
     from .models import Base
     eng = get_engine()
+    sch = cfg.db_schema
     with eng.begin() as conn:
-        conn.exec_driver_sql(f'CREATE SCHEMA IF NOT EXISTS "{cfg.db_schema}"')
+        conn.exec_driver_sql(f'CREATE SCHEMA IF NOT EXISTS "{sch}"')
     # Apply schema to metadata before create_all
-    Base.metadata.schema = cfg.db_schema
+    Base.metadata.schema = sch
     for tbl in Base.metadata.tables.values():
-        tbl.schema = cfg.db_schema
+        tbl.schema = sch
     Base.metadata.create_all(eng)
-    log.info("Schema '%s' ready", cfg.db_schema)
+
+    # Idempotent column migrations for existing installs.
+    with eng.begin() as conn:
+        conn.exec_driver_sql(
+            f'ALTER TABLE IF EXISTS "{sch}".monitors '
+            f'ADD COLUMN IF NOT EXISTS retention_days INTEGER'
+        )
+    log.info("Schema '%s' ready", sch)

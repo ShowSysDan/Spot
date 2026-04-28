@@ -14,6 +14,18 @@
     {% endif %}
   </dd>
   <dt>Enabled</dt><dd>{% if monitor.enabled %}<span class="ok">yes</span>{% else %}<span class="off">no</span>{% endif %}</dd>
+  <dt>Retention</dt>
+  <dd>
+    {% if monitor.retention_days %}
+      {{ monitor.retention_days }} day{{ '' if monitor.retention_days == 1 else 's' }}
+      <form method="post" action="{{ url_for('web.monitor_purge', mid=monitor.id) }}" class="inline"
+            onsubmit="return confirm('Purge readings older than {{ monitor.retention_days }} days now?');">
+        <button type="submit" class="link">Purge now</button>
+      </form>
+    {% else %}
+      <span class="muted">keep forever</span>
+    {% endif %}
+  </dd>
   <dt>Auth token</dt><dd><code>{{ monitor.auth_token }}</code></dd>
 </dl>
 

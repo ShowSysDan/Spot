@@ -32,6 +32,12 @@
     <input type="number" name="port" min="1" max="65535"
            value="{{ monitor.port if monitor and monitor.port else '' }}">
   </label>
+  <label>Retention (days)
+    <input type="number" name="retention_days" min="1"
+           value="{{ monitor.retention_days if monitor and monitor.retention_days else '' }}"
+           placeholder="blank = keep forever">
+    <small class="muted">Readings older than this many days are deleted by the janitor (runs hourly).</small>
+  </label>
   <label class="checkbox">
     <input type="checkbox" name="enabled" {% if (not monitor) or monitor.enabled %}checked{% endif %}>
     Enabled
