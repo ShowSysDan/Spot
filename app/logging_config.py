@@ -50,17 +50,19 @@ def _build_syslog_handler(cfg: Config) -> logging.Handler | None:
 
 
 class _DropBadHTTPNoise(logging.Filter):
-    """Drop werkzeug 'code 400, message Bad HTTP …' records.
+    """Drop werkzeug 400-level 'Bad …' records.
 
     These come from non-HTTP traffic hitting the web port (port scanners,
     NetBIOS probes, accidental TLS handshakes). They aren't bugs in Spot.
+    Covers 'Bad HTTP/0.9 request type', 'Bad request version',
+    'Bad request syntax', and similar.
     """
     def filter(self, record: logging.LogRecord) -> bool:
         try:
             msg = record.getMessage()
         except Exception:
             return True
-        return not ("code 400" in msg and "Bad HTTP" in msg)
+        return not ("code 400" in msg and "Bad " in msg)
 
 
 def configure_logging(cfg: Config) -> None:
