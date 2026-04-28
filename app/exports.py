@@ -2,8 +2,17 @@ from __future__ import annotations
 
 import csv
 import io
+import os
 from datetime import datetime
 from typing import Iterable
+
+# Point matplotlib's cache at the install dir (writable under systemd's
+# ProtectHome=read-only) before importing matplotlib. setdefault() lets the
+# systemd unit override via Environment= if needed.
+_SPOT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_MPL_CACHE = os.path.join(_SPOT_ROOT, ".cache", "matplotlib")
+os.environ.setdefault("MPLCONFIGDIR", _MPL_CACHE)
+os.makedirs(os.environ["MPLCONFIGDIR"], exist_ok=True)
 
 import matplotlib
 matplotlib.use("Agg")
