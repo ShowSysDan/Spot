@@ -151,22 +151,44 @@ You should see the Spot home page. Stop with `Ctrl-C`.
 
 ### 7. Install as a systemd service
 
-A templated unit is provided at `spot.service`. The template token `%i`
-expands to the Linux user that should own the service (e.g. `dan`).
+A regular (non-templated) `spot.service` is provided. The bundled installer
+fills in the user and install path, drops the unit at
+`/etc/systemd/system/spot.service`, and enables it:
 
 ```bash
-sudo cp ~/Spot/spot.service /etc/systemd/system/spot@.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now spot@<user>.service
-sudo systemctl status spot@<user>.service
+cd ~/Spot
+sudo ./scripts/install-service.sh
+```
+
+By default the script uses the user that invoked `sudo` (so if you
+`sudo ./scripts/install-service.sh` as `cuelight`, the service runs as
+`cuelight`) and the current Spot directory. Override either:
+
+```bash
+sudo ./scripts/install-service.sh dan /home/dan/Spot
+# or
+SPOT_USER=dan SPOT_HOME=/home/dan/Spot sudo -E ./scripts/install-service.sh
+```
+
+After install:
+
+```bash
+sudo systemctl status spot
+sudo systemctl restart spot
+sudo journalctl -u spot -f
 ```
 
 The unit runs `gunicorn` with **a single worker and a thread pool**. This is
 important: the TCP/UDP listeners must live in one process so they don't
 double-bind ports. HTTP concurrency is provided by the threads.
 
-If `~/Spot` isn't where you installed it, edit the unit (`WorkingDirectory`,
-`EnvironmentFile`, and `ExecStart` paths) before copying it.
+To uninstall:
+
+```bash
+sudo systemctl disable --now spot
+sudo rm /etc/systemd/system/spot.service
+sudo systemctl daemon-reload
+```
 
 ### 8. Open firewall ports
 
