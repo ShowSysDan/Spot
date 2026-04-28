@@ -26,12 +26,17 @@
       <option value="{{ t }}" {% if monitor and monitor.listener_type == t %}selected{% endif %}>{{ t|upper }}</option>
       {% endfor %}
     </select>
-    <small class="muted">HTTP uses the shared web port. TCP/UDP open a dedicated port for this monitor.</small>
+    <small class="muted">
+      HTTP uses the shared web port. TCP/UDP get a dedicated port automatically
+      assigned from the 6101–6199 range on save.
+    </small>
   </label>
-  <label>Port (TCP/UDP only)
-    <input type="number" name="port" min="1" max="65535"
-           value="{{ monitor.port if monitor and monitor.port else '' }}">
+  {% if monitor and monitor.port %}
+  <label>Port
+    <input type="text" value="{{ monitor.port }}" readonly class="readonly-input">
+    <small class="muted">Auto-assigned. To change, switch listener type to HTTP and back, or delete and re-create.</small>
   </label>
+  {% endif %}
   <label>Retention (days)
     <input type="number" name="retention_days" min="1"
            value="{{ monitor.retention_days if monitor and monitor.retention_days else '' }}"

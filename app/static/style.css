@@ -54,6 +54,7 @@ button.link.danger { color: var(--danger); }
 .form input[type=text], .form input[type=number], .form input[type=datetime-local], .form select, .form textarea {
   padding: 0.45rem 0.55rem; border: 1px solid var(--border); border-radius: 4px; background: white; font: inherit;
 }
+.form input.readonly-input { background: #f3f3ee; color: var(--muted); cursor: not-allowed; }
 .form .checkbox { display: flex; align-items: center; gap: 0.5rem; }
 .form .row { display: flex; gap: 0.6rem; }
 .inline-form { grid-auto-flow: column; align-items: end; max-width: none; }

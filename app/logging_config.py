@@ -49,6 +49,20 @@ def _build_syslog_handler(cfg: Config) -> logging.Handler | None:
         return None
 
 
+class _DropBadHTTPNoise(logging.Filter):
+    """Drop werkzeug 'code 400, message Bad HTTP …' records.
+
+    These come from non-HTTP traffic hitting the web port (port scanners,
+    NetBIOS probes, accidental TLS handshakes). They aren't bugs in Spot.
+    """
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return True
+        return not ("code 400" in msg and "Bad HTTP" in msg)
+
+
 def configure_logging(cfg: Config) -> None:
     level = getattr(logging, cfg.log_level.upper(), logging.INFO)
     root = logging.getLogger()
@@ -67,5 +81,7 @@ def configure_logging(cfg: Config) -> None:
         root.addHandler(syslog_h)
 
     # Tame chatty loggers
-    logging.getLogger("werkzeug").setLevel(max(level, logging.WARNING))
+    werkzeug = logging.getLogger("werkzeug")
+    werkzeug.setLevel(max(level, logging.WARNING))
+    werkzeug.addFilter(_DropBadHTTPNoise())
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
