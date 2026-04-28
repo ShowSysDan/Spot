@@ -55,8 +55,8 @@
       </td>
       <td class="num">{{ "{:,}".format(m.count) }}</td>
       <td class="num">{{ m.estimated_human }}</td>
-      <td>{{ m.oldest or "—" }}</td>
-      <td>{{ m.newest or "—" }}</td>
+      <td>{{ m.oldest_local }}</td>
+      <td>{{ m.newest_local }}</td>
     </tr>
   {% endfor %}
   </tbody>

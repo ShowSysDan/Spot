@@ -4,8 +4,8 @@
 <h1>{{ monitor.name }} <span class="muted">query &amp; export</span></h1>
 
 <form id="qform" class="form inline-form">
-  <label>Start (UTC) <input type="datetime-local" name="start" step="1" required></label>
-  <label>End (UTC)   <input type="datetime-local" name="end" step="1" required></label>
+  <label>Start (local) <input type="datetime-local" name="start" step="1" required></label>
+  <label>End (local)   <input type="datetime-local" name="end" step="1" required></label>
   <button type="submit" class="primary">Query</button>
   <button type="button" id="btn-csv">Export CSV</button>
   <button type="button" id="btn-pdf">Export PDF</button>
@@ -27,10 +27,14 @@ const form = document.getElementById('qform');
 })();
 
 function toLocalInput(d) {
+  // datetime-local expects browser-local time (no Z, no offset).
   const pad = n => String(n).padStart(2, '0');
-  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
-function toIso(s) { return s ? s + 'Z' : ''; }
+function toIso(s) {
+  // Treat the input as browser-local time and convert to ISO-UTC for the server.
+  return s ? new Date(s).toISOString() : '';
+}
 function rangeQs() {
   const p = new URLSearchParams();
   p.set('start', toIso(form.start.value));
@@ -65,7 +69,7 @@ async function runQuery() {
 
 function renderSummary(s, events) {
   const fmt = v => v === null || v === undefined ? '—' : (typeof v === 'number' ? v.toFixed(4).replace(/\.?0+$/,'') : v);
-  const fmtAt = ts => ts ? new Date(ts).toISOString() : '—';
+  const fmtAt = ts => ts ? new Date(ts).toLocaleString() : '—';
   const div = document.getElementById('summary');
   div.innerHTML = `
     <div class="card"><h3>Samples</h3><p>${s.count}</p></div>

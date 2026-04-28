@@ -9,4 +9,5 @@ env/
 *.log
 instance/
 .pytest_cache/
+.cache/
 .DS_Store

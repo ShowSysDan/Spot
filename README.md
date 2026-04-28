@@ -348,7 +348,12 @@ Direct URLs (also usable from cron / scripts):
 - `GET /data/overlay?ids=1,2,3&start=...&end=...`    — series for many monitors
 - `GET /data/overlay/export.pdf?ids=1,2,3&start=...&end=...` — combined PDF
 
-Timestamps are ISO-8601 in UTC (e.g. `2026-04-28T00:00:00Z`).
+Timestamps in URLs accept ISO-8601 with offset (`2026-04-28T15:00:00-04:00`)
+or with `Z` for UTC (`2026-04-28T19:00:00Z`). The web UI's date pickers and
+all rendered output (storage page, PDF axes, CSV files) use the **server's
+local timezone**, set via `timedatectl set-timezone America/New_York`
+or by `Environment=TZ=America/New_York` in the systemd unit. Internally,
+Spot stores everything as UTC and converts only at the display layer.
 
 ### Multi-monitor overlay
 
