@@ -53,7 +53,7 @@ function rangeQs() {
   return p.toString();
 }
 
-const COLORS = ['#1f5fa8', '#c0392b', '#27ae60', '#8e44ad', '#d68910', '#16a085', '#2c3e50', '#e91e63'];
+const COLORS = ['#58a6ff', '#f85149', '#56d364', '#bc8cff', '#f0a056', '#3fdbb1', '#f778ba', '#7ce38b'];
 let chart = null;
 
 async function runOverlay() {
@@ -72,14 +72,14 @@ async function runOverlay() {
       unitOrder.push(m.unit);
     }
   }
-  const scales = { x: { type: 'time' } };
+  const scales = { x: { type: 'time', grid: { color: '#2c313a' } } };
   unitOrder.forEach((unit, i) => {
     const id = i === 0 ? 'y' : `y${i}`;
     scales[id] = {
       type: 'linear',
       position: i % 2 === 0 ? 'left' : 'right',
       title: { display: true, text: unit },
-      grid: { drawOnChartArea: i === 0 },
+      grid: { drawOnChartArea: i === 0, color: '#2c313a' },
     };
   });
 
