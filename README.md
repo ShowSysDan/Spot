@@ -19,6 +19,8 @@ and lets you browse, query, graph, and export the data.
     (JSON, form-encoded, or `text/plain`).
   - **TCP** — newline-terminated lines on a per-monitor port.
   - **UDP** — datagrams on a per-monitor port.
+  TCP/UDP ports are **auto-assigned** from the **6101–6199** range; Spot
+  vibe-checks bindability before claiming one. The user can't pick a port.
 - **Event markers** — push a label string (`"Show Start"`, `"Fire Alarm"`)
   with or without a numeric value. Events are stored alongside readings and
   rendered as vertical markers on the graph.
@@ -166,12 +168,12 @@ If `~/Spot` isn't where you installed it, edit the unit (`WorkingDirectory`,
 
 ### 8. Open firewall ports
 
-Open `SPOT_WEB_PORT` plus any per-monitor TCP/UDP ports you configure:
+Open `SPOT_WEB_PORT` plus the TCP/UDP monitor port range (6101–6199):
 
 ```bash
-sudo ufw allow 6100/tcp        # web UI / HTTP ingest
-sudo ufw allow 5140/udp        # example UDP monitor
-sudo ufw allow 5141/tcp        # example TCP monitor
+sudo ufw allow 6100/tcp           # web UI / HTTP ingest
+sudo ufw allow 6101:6199/tcp      # TCP monitors (auto-assigned in this range)
+sudo ufw allow 6101:6199/udp      # UDP monitors (auto-assigned in this range)
 ```
 
 ### 9. Syslog
@@ -208,9 +210,19 @@ migration.
 
 ### Add a monitor
 
-Go to **New Monitor**. Pick a name, the unit, the listener type, and (for
-TCP/UDP) the port. Save. The monitor's auth token appears on its detail page
-along with copy-paste push examples.
+Go to **New Monitor**. Pick a name, the unit, and the listener type. For
+TCP/UDP, Spot picks an available port in 6101–6199 for you on save (it
+actually binds the port to confirm it's free; if not it tries the next).
+The monitor's auth token and assigned port appear on its detail page, along
+with copy-paste push examples.
+
+Open firewall rules for whichever ports get assigned, e.g.:
+
+```bash
+sudo ufw allow 6100/tcp           # web UI / HTTP ingest
+sudo ufw allow 6101:6199/tcp      # TCP monitors
+sudo ufw allow 6101:6199/udp      # UDP monitors
+```
 
 ### Push data
 

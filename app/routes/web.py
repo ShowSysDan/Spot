@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import logging
 from flask import Blueprint, current_app, flash, redirect, render_template, request, url_for
+from sqlalchemy import select
 
 from ..db import session_scope
 from ..janitor import clear_monitor, effective_retention, purge_monitor
 from ..listeners import ListenerManager
 from ..models import Monitor
+from ..portalloc import PORT_RANGE_END, PORT_RANGE_START, allocate_port
 from ..storage import storage_overview
 from ..util import format_bytes, get_monitor_or_404, monitor_view
 
@@ -155,11 +157,11 @@ def overlay():
 
 
 def _save_monitor(mid: int | None):
+    cfg = current_app.config["SPOT"]
     name = (request.form.get("name") or "").strip()
     description = (request.form.get("description") or "").strip() or None
     unit = (request.form.get("unit") or "value").strip() or "value"
     listener_type = (request.form.get("listener_type") or "http").strip()
-    port_raw = (request.form.get("port") or "").strip()
     retention_raw = (request.form.get("retention_days") or "").strip()
     enabled = bool(request.form.get("enabled"))
 
@@ -170,18 +172,33 @@ def _save_monitor(mid: int | None):
         flash("Invalid listener type.", "error")
         return redirect(request.url)
 
+    # Look up the current port so we can keep it on edit if still valid.
+    existing_port: int | None = None
+    if mid is not None:
+        with session_scope() as s:
+            existing = get_monitor_or_404(s, mid)
+            existing_port = existing.port
+
     port: int | None = None
     if listener_type in ("tcp", "udp"):
-        if not port_raw:
-            flash("Port is required for TCP/UDP listeners.", "error")
-            return redirect(request.url)
-        try:
-            port = int(port_raw)
-            if not (1 <= port <= 65535):
-                raise ValueError
-        except ValueError:
-            flash("Port must be an integer 1-65535.", "error")
-            return redirect(request.url)
+        in_range = (existing_port is not None and
+                    PORT_RANGE_START <= existing_port <= PORT_RANGE_END)
+        if in_range:
+            port = existing_port
+        else:
+            with session_scope() as s:
+                taken = {p for (p,) in s.execute(
+                    select(Monitor.port).where(
+                        Monitor.port.is_not(None),
+                        Monitor.id != (mid or 0),
+                    )
+                ).all() if p is not None}
+            taken.add(cfg.web_port)
+            port = allocate_port(listener_type, taken)
+            if port is None:
+                flash(f"No port available in {PORT_RANGE_START}-{PORT_RANGE_END}; "
+                      "free a monitor first.", "error")
+                return redirect(request.url)
 
     retention_days: int | None = None
     if retention_raw:
