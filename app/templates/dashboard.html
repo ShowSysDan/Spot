@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}{{ monitor.name }} — Live — Spot{% endblock %}
+{% block content %}
+<h1>{{ monitor.name }} <span class="muted">live</span></h1>
+<div class="row">
+  <label>Window
+    <select id="window-sec">
+      <option value="30" selected>30 s</option>
+      <option value="60">1 min</option>
+      <option value="300">5 min</option>
+      <option value="900">15 min</option>
+    </select>
+  </label>
+  <label>Refresh
+    <select id="refresh-ms">
+      <option value="1000" selected>1 s</option>
+      <option value="2000">2 s</option>
+      <option value="5000">5 s</option>
+    </select>
+  </label>
+  <span id="latest" class="latest">—</span>
+</div>
+<div class="chart-wrap"><canvas id="chart"></canvas></div>
+
+<h2>Recent events</h2>
+<ul id="events" class="events"><li class="muted">none</li></ul>
+
+<script>
+const monitorId = {{ monitor.id }};
+const unit = {{ monitor.unit | tojson }};
+const ctx = document.getElementById('chart');
+const chart = new Chart(ctx, {
+  type: 'line',
+  data: { datasets: [{ label: unit, data: [], borderColor: '#1f5fa8', borderWidth: 1, pointRadius: 0, tension: 0 }] },
+  options: {
+    animation: false,
+    parsing: false,
+    scales: {
+      x: { type: 'time', time: { tooltipFormat: 'PPpp' } },
+      y: { title: { display: true, text: unit } }
+    },
+    plugins: { legend: { display: false } }
+  }
+});
+
+let timer = null;
+async function tick() {
+  const sec = parseInt(document.getElementById('window-sec').value, 10);
+  const r = await fetch(`/data/monitor/${monitorId}/recent?seconds=${sec}`);
+  if (!r.ok) return;
+  const j = await r.json();
+  chart.data.datasets[0].data = j.points.map(p => ({ x: new Date(p.ts).valueOf(), y: p.value }));
+  chart.update('none');
+  const last = j.points.length ? j.points[j.points.length - 1] : null;
+  document.getElementById('latest').textContent = last
+    ? `latest: ${last.value} ${unit} @ ${new Date(last.ts).toLocaleTimeString()}`
+    : 'no data in window';
+  const ev = document.getElementById('events');
+  if (j.events.length) {
+    ev.innerHTML = j.events.slice(-10).reverse().map(e =>
+      `<li><time>${new Date(e.ts).toLocaleTimeString()}</time> — ${escapeHtml(e.label)}</li>`
+    ).join('');
+  } else {
+    ev.innerHTML = '<li class="muted">none</li>';
+  }
+}
+function escapeHtml(s) { return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function reset() {
+  if (timer) clearInterval(timer);
+  const ms = parseInt(document.getElementById('refresh-ms').value, 10);
+  timer = setInterval(tick, ms);
+}
+document.getElementById('window-sec').addEventListener('change', tick);
+document.getElementById('refresh-ms').addEventListener('change', reset);
+tick(); reset();
+</script>
+{% endblock %}

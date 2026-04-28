@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Spot — Monitors{% endblock %}
+{% block content %}
+<h1>Monitors</h1>
+{% if not monitors %}
+  <p>No monitors yet. <a href="{{ url_for('web.monitor_new') }}">Add one</a>.</p>
+{% else %}
+<table class="grid">
+  <thead>
+    <tr>
+      <th>Name</th><th>Unit</th><th>Listener</th><th>Port</th>
+      <th>Enabled</th><th>Listener thread</th><th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for m in monitors %}
+    <tr>
+      <td><a href="{{ url_for('web.monitor_detail', mid=m.id) }}">{{ m.name }}</a>
+          {% if m.description %}<div class="muted">{{ m.description }}</div>{% endif %}</td>
+      <td>{{ m.unit }}</td>
+      <td>{{ m.listener_type|upper }}</td>
+      <td>{{ m.port or "—" }}</td>
+      <td>{% if m.enabled %}<span class="ok">on</span>{% else %}<span class="off">off</span>{% endif %}</td>
+      <td>
+        {% if m.listener_type == 'http' %}<span class="muted">n/a</span>
+        {% elif m.listener_alive %}<span class="ok">running</span>
+        {% else %}<span class="off">stopped</span>
+        {% endif %}
+      </td>
+      <td class="actions">
+        <a href="{{ url_for('web.monitor_dashboard', mid=m.id) }}">Dashboard</a>
+        <a href="{{ url_for('web.monitor_query', mid=m.id) }}">Query</a>
+        <a href="{{ url_for('web.monitor_edit', mid=m.id) }}">Edit</a>
+        <form method="post" action="{{ url_for('web.monitor_toggle', mid=m.id) }}" class="inline">
+          <button type="submit" class="link">{{ 'Disable' if m.enabled else 'Enable' }}</button>
+        </form>
+        <form method="post" action="{{ url_for('web.monitor_delete', mid=m.id) }}" class="inline"
+              onsubmit="return confirm('Delete monitor {{ m.name }} and all its data?');">
+          <button type="submit" class="link danger">Delete</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

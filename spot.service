@@ -1,0 +1,36 @@
+[Unit]
+Description=Spot — Data acquisition, down to the last spot
+After=network.target postgresql.service
+Wants=network.target
+
+[Service]
+Type=simple
+# Replace with the user that owns the install directory.
+User=%i
+Group=%i
+# Install path (override with `systemctl edit spot@<user>.service` if needed).
+WorkingDirectory=/home/%i/Spot
+EnvironmentFile=/home/%i/Spot/.env
+# Single worker, multiple threads: TCP/UDP listeners must run in one process
+# to avoid duplicate port binds. HTTP concurrency comes from the thread pool.
+ExecStart=/home/%i/Spot/.venv/bin/gunicorn \
+    --workers 1 \
+    --threads 8 \
+    --worker-class gthread \
+    --timeout 60 \
+    --bind ${SPOT_WEB_HOST}:${SPOT_WEB_PORT} \
+    wsgi:app
+Restart=on-failure
+RestartSec=5
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/%i/Spot
+# Send stdout/stderr to journald (in addition to the in-app syslog handler).
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

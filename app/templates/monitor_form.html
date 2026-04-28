@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}{{ "Edit" if monitor else "New" }} Monitor — Spot{% endblock %}
+{% block content %}
+<h1>{{ "Edit" if monitor else "New" }} Monitor</h1>
+<form method="post" class="form">
+  <label>Name
+    <input type="text" name="name" required value="{{ monitor.name if monitor else '' }}">
+  </label>
+  <label>Description
+    <textarea name="description" rows="2">{{ monitor.description if monitor and monitor.description else '' }}</textarea>
+  </label>
+  <label>Unit
+    <input list="units" type="text" name="unit" required
+           value="{{ monitor.unit if monitor else 'value' }}"
+           placeholder="dB, °F, °C, %, lux, …">
+    <datalist id="units">
+      <option value="dB"><option value="dBA"><option value="dBC">
+      <option value="°F"><option value="°C">
+      <option value="%"><option value="lux"><option value="ppm">
+      <option value="hPa"><option value="m/s"><option value="V"><option value="A">
+    </datalist>
+  </label>
+  <label>Listener type
+    <select name="listener_type">
+      {% for t in listener_types %}
+      <option value="{{ t }}" {% if monitor and monitor.listener_type == t %}selected{% endif %}>{{ t|upper }}</option>
+      {% endfor %}
+    </select>
+    <small class="muted">HTTP uses the shared web port. TCP/UDP open a dedicated port for this monitor.</small>
+  </label>
+  <label>Port (TCP/UDP only)
+    <input type="number" name="port" min="1" max="65535"
+           value="{{ monitor.port if monitor and monitor.port else '' }}">
+  </label>
+  <label class="checkbox">
+    <input type="checkbox" name="enabled" {% if (not monitor) or monitor.enabled %}checked{% endif %}>
+    Enabled
+  </label>
+  <div class="row">
+    <button type="submit" class="primary">Save</button>
+    <a href="{{ url_for('web.index') }}" class="button">Cancel</a>
+  </div>
+</form>
+{% endblock %}

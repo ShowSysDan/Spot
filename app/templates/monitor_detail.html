@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}{{ monitor.name }} — Spot{% endblock %}
+{% block content %}
+<h1>{{ monitor.name }}</h1>
+{% if monitor.description %}<p class="muted">{{ monitor.description }}</p>{% endif %}
+
+<dl class="meta">
+  <dt>Unit</dt><dd>{{ monitor.unit }}</dd>
+  <dt>Listener</dt>
+  <dd>
+    {{ monitor.listener_type|upper }}{% if monitor.port %} on port <strong>{{ monitor.port }}</strong>{% endif %}
+    {% if monitor.listener_type != 'http' %}
+      &nbsp;— {% if monitor.listener_alive %}<span class="ok">running</span>{% else %}<span class="off">stopped</span>{% endif %}
+    {% endif %}
+  </dd>
+  <dt>Enabled</dt><dd>{% if monitor.enabled %}<span class="ok">yes</span>{% else %}<span class="off">no</span>{% endif %}</dd>
+  <dt>Auth token</dt><dd><code>{{ monitor.auth_token }}</code></dd>
+</dl>
+
+<h2>Push examples</h2>
+<pre class="code">{% if monitor.listener_type == 'http' -%}
+# Numeric reading
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"value": 92.3}' \
+  http://HOST:WEB_PORT/api/ingest/{{ monitor.auth_token }}
+
+# Reading with label
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"value": 92.3, "label": "Show Start"}' \
+  http://HOST:WEB_PORT/api/ingest/{{ monitor.auth_token }}
+
+# Event marker only
+curl -X POST -H "Content-Type: text/plain" \
+  --data 'Fire Alarm' \
+  http://HOST:WEB_PORT/api/event/{{ monitor.auth_token }}
+{%- elif monitor.listener_type == 'tcp' -%}
+# Newline-terminated lines: "value", "value,label", or just "label"
+printf '92.3\n92.5,Show Start\nFire Alarm\n' | nc HOST {{ monitor.port }}
+{%- else -%}
+# UDP datagrams: "value", "value,label", or just "label"
+printf '92.3' | nc -u -w1 HOST {{ monitor.port }}
+{%- endif %}</pre>
+
+<div class="row">
+  <a class="button" href="{{ url_for('web.monitor_dashboard', mid=monitor.id) }}">Live dashboard</a>
+  <a class="button" href="{{ url_for('web.monitor_query', mid=monitor.id) }}">Query &amp; export</a>
+  <a class="button" href="{{ url_for('web.monitor_edit', mid=monitor.id) }}">Edit</a>
+</div>
+{% endblock %}

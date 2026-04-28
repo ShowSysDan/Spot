@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}{{ monitor.name }} — Query — Spot{% endblock %}
+{% block content %}
+<h1>{{ monitor.name }} <span class="muted">query &amp; export</span></h1>
+
+<form id="qform" class="form inline-form">
+  <label>Start (UTC) <input type="datetime-local" name="start" step="1" required></label>
+  <label>End (UTC)   <input type="datetime-local" name="end" step="1" required></label>
+  <button type="submit" class="primary">Query</button>
+  <button type="button" id="btn-csv">Export CSV</button>
+  <button type="button" id="btn-pdf">Export PDF</button>
+</form>
+
+<div id="summary" class="summary"></div>
+<div class="chart-wrap"><canvas id="chart"></canvas></div>
+
+<script>
+const monitorId = {{ monitor.id }};
+const unit = {{ monitor.unit | tojson }};
+const form = document.getElementById('qform');
+
+(function setDefaults() {
+  const end = new Date();
+  const start = new Date(end.getTime() - 60 * 60 * 1000);
+  form.start.value = toLocalInput(start);
+  form.end.value = toLocalInput(end);
+})();
+
+function toLocalInput(d) {
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+}
+function toIso(s) { return s ? s + 'Z' : ''; }
+function rangeQs() {
+  const p = new URLSearchParams();
+  p.set('start', toIso(form.start.value));
+  p.set('end',   toIso(form.end.value));
+  return p.toString();
+}
+
+const ctx = document.getElementById('chart');
+const chart = new Chart(ctx, {
+  type: 'line',
+  data: { datasets: [{ label: unit, data: [], borderColor: '#1f5fa8', borderWidth: 1, pointRadius: 0 }] },
+  options: {
+    animation: false, parsing: false,
+    scales: { x: { type: 'time' }, y: { title: { display: true, text: unit } } },
+    plugins: { legend: { display: false } }
+  }
+});
+
+async function runQuery() {
+  const qs = rangeQs();
+  const [series, summary] = await Promise.all([
+    fetch(`/data/monitor/${monitorId}/series?${qs}`).then(r => r.json()),
+    fetch(`/data/monitor/${monitorId}/summary?${qs}`).then(r => r.json()),
+  ]);
+  chart.data.datasets[0].data = series.points.map(p => ({ x: new Date(p.ts).valueOf(), y: p.value }));
+  chart.update();
+  renderSummary(summary, series.events);
+}
+
+function renderSummary(s, events) {
+  const fmt = v => v === null || v === undefined ? '—' : (typeof v === 'number' ? v.toFixed(4).replace(/\.?0+$/,'') : v);
+  const fmtAt = ts => ts ? new Date(ts).toISOString() : '—';
+  const div = document.getElementById('summary');
+  div.innerHTML = `
+    <div class="card"><h3>Samples</h3><p>${s.count}</p></div>
+    <div class="card"><h3>Min</h3><p>${fmt(s.min)} ${unit}<br><small>${fmtAt(s.min_at)}</small></p></div>
+    <div class="card"><h3>Max</h3><p>${fmt(s.max)} ${unit}<br><small>${fmtAt(s.max_at)}</small></p></div>
+    <div class="card"><h3>Average</h3><p>${fmt(s.avg)} ${unit}</p></div>
+    <div class="card"><h3>Events</h3><p>${s.events}${events.length ? '<br><small>' + events.slice(0,3).map(e => escapeHtml(e.label)).join(', ') + (events.length>3?'…':'') + '</small>' : ''}</p></div>
+  `;
+}
+function escapeHtml(s) { return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+form.addEventListener('submit', e => { e.preventDefault(); runQuery(); });
+document.getElementById('btn-csv').addEventListener('click', () => {
+  window.location = `/data/monitor/${monitorId}/export.csv?${rangeQs()}`;
+});
+document.getElementById('btn-pdf').addEventListener('click', () => {
+  window.location = `/data/monitor/${monitorId}/export.pdf?${rangeQs()}`;
+});
+
+runQuery();
+</script>
+{% endblock %}

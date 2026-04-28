@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{% block title %}Spot{% endblock %}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='logo.svg') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a href="{{ url_for('web.index') }}" class="brand">
+      <img src="{{ url_for('static', filename='logo.svg') }}" alt="Spot" class="logo">
+      <span class="brand-name">Spot</span>
+      <span class="brand-tag">Data acquisition, down to the last spot.</span>
+    </a>
+    <nav>
+      <a href="{{ url_for('web.index') }}">Monitors</a>
+      <a href="{{ url_for('web.monitor_new') }}">New Monitor</a>
+    </nav>
+  </header>
+  <main>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="flashes">
+        {% for cat, msg in messages %}
+          <div class="flash flash-{{ cat }}">{{ msg }}</div>
+        {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+  <footer>
+    <small>Spot &middot; Flask &middot; Postgres schema <code>spot</code></small>
+  </footer>
+</body>
+</html>
