@@ -13,7 +13,9 @@ and lets you browse, query, graph, and export the data.
 
 - **Monitor management** — add, edit, enable/disable, and delete monitors
   through the web UI. Each monitor has a name, free-form unit (`dB`, `°F`,
-  `°C`, `%`, custom…), a listener type, and an auto-generated auth token.
+  `°C`, `%`, custom…), a listener type, an auto-generated auth token, and
+  an optional **value-extraction regex** for sources that ship pre-formatted
+  text (e.g. `47.5dB`, `7:47:32 AM — 47.5dB`).
 - **Three ingest protocols per monitor:**
   - **HTTP** — `POST /api/ingest/<token>` on the shared web port
     (JSON, form-encoded, or `text/plain`).
@@ -223,6 +225,30 @@ sudo ufw allow 6100/tcp           # web UI / HTTP ingest
 sudo ufw allow 6101:6199/tcp      # TCP monitors
 sudo ufw allow 6101:6199/udp      # UDP monitors
 ```
+
+### Value-extraction regex
+
+Some sources push numbers wrapped in formatting (e.g. `7:47:32 AM — 47.5dB`).
+On the monitor's edit form, set **Value extraction regex** to pull the number
+out. The regex is `re.search`-applied to each line/payload, then:
+
+1. If a named group `(?P<value>…)` matches, that's the numeric value.
+2. Otherwise the first capturing group is used.
+3. Otherwise the whole match is used.
+4. An optional named group `(?P<label>…)` becomes the annotation.
+
+Useful patterns:
+
+| Incoming                   | Pattern                                    |
+|----------------------------|--------------------------------------------|
+| `47.5dB`                   | `(\d+(?:\.\d+)?)\s*dB`                     |
+| `7:47:32 AM — 47.5dB`      | `(?P<value>-?\d+(?:\.\d+)?)\s*dB`          |
+| `temp=72.4F`               | `temp=(?P<value>-?\d+(?:\.\d+)?)`          |
+| Just any first number      | `(?P<value>-?\d+(?:\.\d+)?)`               |
+
+Leave blank to use the default free-form parser
+(`92.3`, `92.3,Show Start`, `Fire Alarm`, JSON, etc.).
+A bad regex match goes to syslog as `malformed data … err=regex did not match …`.
 
 ### Push data
 

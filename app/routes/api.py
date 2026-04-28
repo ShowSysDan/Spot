@@ -24,7 +24,7 @@ def _allowlist():
         abort(403)
 
 
-def _resolve_monitor(token: str) -> tuple[int, str]:
+def _resolve_monitor(token: str) -> tuple[int, str, str | None]:
     with session_scope() as s:
         m = s.query(Monitor).filter(
             Monitor.auth_token == token,
@@ -32,13 +32,13 @@ def _resolve_monitor(token: str) -> tuple[int, str]:
         ).one_or_none()
         if not m:
             abort(404, description="unknown or disabled monitor")
-        return m.id, m.name
+        return m.id, m.name, m.value_regex
 
 
 @bp.route("/ingest/<token>", methods=["POST"])
 def ingest(token: str):
     """Ingest a single reading or event for the monitor identified by token."""
-    monitor_id, monitor_name = _resolve_monitor(token)
+    monitor_id, monitor_name, regex = _resolve_monitor(token)
 
     ts: datetime | None = None
     value: float | None = None
@@ -71,7 +71,8 @@ def ingest(token: str):
 
     try:
         if raw_text is not None:
-            rid = ingest_raw(monitor_id, monitor_name, raw_text, f"http:{src}")
+            rid = ingest_raw(monitor_id, monitor_name, raw_text, f"http:{src}",
+                             regex=regex)
         else:
             if value is None and not label:
                 raise MalformedData("must provide value or label")
@@ -85,7 +86,7 @@ def ingest(token: str):
 @bp.route("/event/<token>", methods=["POST"])
 def event(token: str):
     """Convenience endpoint: post a label-only event marker."""
-    monitor_id, monitor_name = _resolve_monitor(token)
+    monitor_id, monitor_name, _ = _resolve_monitor(token)
     label: str | None = None
     ctype = (request.content_type or "").lower()
     if "application/json" in ctype:

@@ -42,6 +42,7 @@ def monitor_view(m: Monitor) -> dict[str, Any]:
         "auth_token": m.auth_token,
         "enabled": m.enabled,
         "retention_days": m.retention_days,
+        "value_regex": m.value_regex,
         "created_at": m.created_at.isoformat() if m.created_at else None,
     }
 

@@ -85,4 +85,8 @@ def init_schema(cfg: Config) -> None:
             f'ALTER TABLE IF EXISTS "{sch}".monitors '
             f'ADD COLUMN IF NOT EXISTS retention_days INTEGER'
         )
+        conn.exec_driver_sql(
+            f'ALTER TABLE IF EXISTS "{sch}".monitors '
+            f'ADD COLUMN IF NOT EXISTS value_regex TEXT'
+        )
     log.info("Schema '%s' ready", sch)

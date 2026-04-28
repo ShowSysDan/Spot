@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -15,19 +16,47 @@ class MalformedData(ValueError):
     pass
 
 
-def parse_payload(raw: str) -> tuple[Optional[float], Optional[str]]:
+def _apply_regex(text: str, pattern: str) -> tuple[Optional[float], Optional[str]]:
+    try:
+        rx = re.compile(pattern)
+    except re.error as e:
+        raise MalformedData(f"invalid regex: {e}") from e
+    m = rx.search(text)
+    if not m:
+        raise MalformedData(f"regex did not match: {text[:80]!r}")
+    groups = m.groupdict()
+    raw_value = groups.get("value")
+    if raw_value is None and m.groups():
+        raw_value = m.group(1)
+    if raw_value is None:
+        raw_value = m.group(0)
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError) as e:
+        raise MalformedData(f"regex value not numeric: {raw_value!r}") from e
+    label = groups.get("label")
+    return value, (label.strip() if label else None)
+
+
+def parse_payload(raw: str, regex: str | None = None) -> tuple[Optional[float], Optional[str]]:
     """Parse a message into (value, label).
 
-    Accepted forms:
+    If `regex` is set, it is applied to the raw text. The pattern may use
+    a named group `(?P<value>…)` (preferred) or its first capturing group
+    to identify the numeric value, plus an optional `(?P<label>…)` for an
+    annotation. Without a regex, the legacy free-form parser is used:
       - "92.3"                     -> value only
       - "92.3,Show Start"          -> value + label
-      - "92.3 Show Start"          -> value + label (space separator)
+      - "92.3 Show Start"          -> value + label
       - "Fire Alarm"               -> label-only event marker (value=None)
       - {"value": 92.3, "label": "Show Start"}  -> JSON
     """
     text = (raw or "").strip()
     if not text:
         raise MalformedData("empty payload")
+
+    if regex:
+        return _apply_regex(text, regex)
 
     # JSON form
     if text.startswith("{"):
@@ -82,9 +111,10 @@ def store_reading(monitor_id: int, value: Optional[float], label: Optional[str],
         return r.id
 
 
-def ingest_raw(monitor_id: int, monitor_name: str, raw: str, source: str) -> int:
+def ingest_raw(monitor_id: int, monitor_name: str, raw: str, source: str,
+               regex: str | None = None) -> int:
     try:
-        v, lbl = parse_payload(raw)
+        v, lbl = parse_payload(raw, regex)
         rid = store_reading(monitor_id, v, lbl)
         log.debug("ingest ok monitor=%s src=%s value=%s label=%s id=%s",
                   monitor_name, source, v, lbl, rid)

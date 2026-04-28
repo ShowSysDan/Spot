@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from flask import Blueprint, current_app, flash, redirect, render_template, request, url_for
 from sqlalchemy import select
 
@@ -72,7 +73,8 @@ def monitor_toggle(mid: int):
         m.enabled = not m.enabled
         info = monitor_view(m)
     if info["enabled"]:
-        _manager().start_monitor(info["id"], info["name"], info["listener_type"], info["port"])
+        _manager().start_monitor(info["id"], info["name"], info["listener_type"],
+                                 info["port"], info["value_regex"])
         log.info("monitor enabled: %s id=%d", info["name"], info["id"])
     else:
         _manager().stop_monitor(info["id"])
@@ -163,7 +165,15 @@ def _save_monitor(mid: int | None):
     unit = (request.form.get("unit") or "value").strip() or "value"
     listener_type = (request.form.get("listener_type") or "http").strip()
     retention_raw = (request.form.get("retention_days") or "").strip()
+    value_regex = (request.form.get("value_regex") or "").strip() or None
     enabled = bool(request.form.get("enabled"))
+
+    if value_regex:
+        try:
+            re.compile(value_regex)
+        except re.error as e:
+            flash(f"Invalid regex: {e}", "error")
+            return redirect(request.url)
 
     if not name:
         flash("Name is required.", "error")
@@ -214,7 +224,7 @@ def _save_monitor(mid: int | None):
         if mid is None:
             m = Monitor(name=name, description=description, unit=unit,
                         listener_type=listener_type, port=port, enabled=enabled,
-                        retention_days=retention_days)
+                        retention_days=retention_days, value_regex=value_regex)
             s.add(m)
             s.flush()
         else:
@@ -226,6 +236,7 @@ def _save_monitor(mid: int | None):
             m.port = port
             m.enabled = enabled
             m.retention_days = retention_days
+            m.value_regex = value_regex
         info = monitor_view(m)
         action = "created" if mid is None else "updated"
         log.info("monitor %s: %s id=%d type=%s port=%s",
@@ -234,7 +245,8 @@ def _save_monitor(mid: int | None):
     if mid is not None:
         _manager().stop_monitor(info["id"])
     if info["enabled"]:
-        _manager().start_monitor(info["id"], info["name"], info["listener_type"], info["port"])
+        _manager().start_monitor(info["id"], info["name"], info["listener_type"],
+                                 info["port"], info["value_regex"])
 
     flash("Monitor saved.", "success")
     return redirect(url_for("web.monitor_detail", mid=info["id"]))
