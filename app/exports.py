@@ -255,27 +255,31 @@ def _dark_styles():
     title = ParagraphStyle("DarkTitle", parent=base["Title"],
                            fontName="Helvetica-Bold",
                            textColor=_FG, alignment=0,
-                           fontSize=22, leading=26,
-                           spaceBefore=2, spaceAfter=2)
+                           fontSize=18, leading=21,
+                           spaceBefore=0, spaceAfter=1)
     body = ParagraphStyle("DarkBody", parent=base["Normal"],
-                          textColor=_FG, fontSize=10, leading=14)
+                          textColor=_FG, fontSize=10, leading=13)
     muted = ParagraphStyle("DarkMuted", parent=base["Normal"],
-                           textColor=_MUTED, fontSize=9.5, leading=13)
+                           textColor=_MUTED, fontSize=9.5, leading=12)
     section = ParagraphStyle("DarkSection", parent=base["Normal"],
                              fontName="Helvetica-Bold",
-                             textColor=_ACCENT, fontSize=8.5, leading=12,
-                             spaceBefore=0, spaceAfter=2)
+                             textColor=_ACCENT, fontSize=8.5, leading=11,
+                             spaceBefore=0, spaceAfter=1)
     return title, body, muted, section
 
 
 def _section_label(text: str, section_style) -> Paragraph:
-    """Tracked-out uppercase section label tinted with the accent color."""
-    spaced = "  ".join(text.upper())
-    return Paragraph(spaced, section_style)
+    """Tracked-out uppercase section label tinted with the accent color.
+
+    Spaces letters within each word and uses non-breaking spaces between
+    words so ReportLab's whitespace collapse doesn't fuse the words.
+    """
+    words = [" ".join(w) for w in text.upper().split()]
+    return Paragraph("&nbsp;&nbsp;&nbsp;&nbsp;".join(words), section_style)
 
 
 def _accent_rule(color=_ACCENT, thickness: float = 1.5,
-                 space_before: float = 6, space_after: float = 10) -> HRFlowable:
+                 space_before: float = 3, space_after: float = 6) -> HRFlowable:
     return HRFlowable(width="100%", thickness=thickness, color=color,
                       lineCap="round",
                       spaceBefore=space_before, spaceAfter=space_after)
@@ -283,23 +287,23 @@ def _accent_rule(color=_ACCENT, thickness: float = 1.5,
 
 def _brand_block() -> Table:
     """Logo + SPOT wordmark + tagline lockup that anchors every report."""
-    logo = _logo_drawing(0.95)
+    logo = _logo_drawing(0.7)
     wordmark = Paragraph(
-        f'<font name="Helvetica-Bold" size="28" color="{_FG_HEX}">'
+        f'<font name="Helvetica-Bold" size="22" color="{_FG_HEX}">'
         f'<b>S P O T</b></font>',
-        ParagraphStyle("Wordmark", fontName="Helvetica-Bold", fontSize=28,
-                       textColor=_FG, leading=30, alignment=0),
+        ParagraphStyle("Wordmark", fontName="Helvetica-Bold", fontSize=22,
+                       textColor=_FG, leading=24, alignment=0),
     )
     tagline = Paragraph(
-        f'<font name="Helvetica-Oblique" size="10.5" color="{_MUTED_HEX}">'
+        f'<font name="Helvetica-Oblique" size="9.5" color="{_MUTED_HEX}">'
         f'<i>{_TAGLINE}</i></font>',
-        ParagraphStyle("Tagline", fontName="Helvetica-Oblique", fontSize=10.5,
-                       textColor=_MUTED, leading=14, alignment=0,
-                       spaceBefore=2),
+        ParagraphStyle("Tagline", fontName="Helvetica-Oblique", fontSize=9.5,
+                       textColor=_MUTED, leading=12, alignment=0,
+                       spaceBefore=1),
     )
     block = Table(
         [[logo, [wordmark, tagline]]],
-        colWidths=[1.1 * inch, None],
+        colWidths=[0.85 * inch, None],
     )
     block.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
@@ -307,7 +311,7 @@ def _brand_block() -> Table:
         ("RIGHTPADDING", (0, 0), (-1, -1), 0),
         ("TOPPADDING", (0, 0), (-1, -1), 0),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-        ("LEFTPADDING", (1, 0), (1, 0), 14),
+        ("LEFTPADDING", (1, 0), (1, 0), 12),
     ]))
     return block
 
@@ -378,12 +382,12 @@ def _stat_tile(label: str, value: str, value_pt: int = 22,
         ("BOX", (0, 0), (-1, -1), 0.5, _BORDER),
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 8),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-        ("TOPPADDING", (0, 0), (0, 0), 10),
-        ("BOTTOMPADDING", (0, 0), (0, 0), 2),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (0, 0), 6),
+        ("BOTTOMPADDING", (0, 0), (0, 0), 1),
         ("TOPPADDING", (0, 1), (0, 1), 0),
-        ("BOTTOMPADDING", (0, 1), (0, 1), 12),
+        ("BOTTOMPADDING", (0, 1), (0, 1), 8),
     ]
     if primary:
         cmds.append(("LINEABOVE", (0, 0), (-1, 0), 2.5, _ACCENT))
@@ -414,6 +418,20 @@ def _dark_table_style(header_row: bool = True, font_size: int = 9) -> TableStyle
     return TableStyle(cmds)
 
 
+def _join_monitor_names(monitors: list[dict], char_cap: int = 60) -> str:
+    """'Foo, Bar + 2 more' style title summarizing the monitors in a report."""
+    names = [m.get("name", "") for m in monitors if m.get("name")]
+    if not names:
+        return "Report"
+    out = ""
+    for i, n in enumerate(names):
+        candidate = (out + ", " if out else "") + n
+        if len(candidate) > char_cap and i > 0:
+            return f"{out} + {len(names) - i} more"
+        out = candidate
+    return out
+
+
 def render_overlay_pdf(start: datetime, end: datetime, monitors: list[dict]) -> bytes:
     """Branded one-page PDF: stacked overlay chart + per-monitor summary table.
 
@@ -424,24 +442,25 @@ def render_overlay_pdf(start: datetime, end: datetime, monitors: list[dict]) -> 
     doc = SimpleDocTemplate(
         out, pagesize=landscape(letter),
         leftMargin=0.5 * inch, rightMargin=0.5 * inch,
-        topMargin=0.45 * inch, bottomMargin=0.7 * inch,
-        title="Spot — overlay report",
+        topMargin=0.35 * inch, bottomMargin=0.55 * inch,
+        title="Spot report",
     )
     title_style, _body, _muted, section_style = _dark_styles()
 
+    units = sorted({m.get("unit", "") for m in monitors if m.get("unit")})
     flow = [
         _brand_block(),
         _accent_rule(),
-        _section_label("Report", section_style),
-        Paragraph("<b>Multi-Monitor Overlay</b>", title_style),
+        Paragraph(f"<b>{_join_monitor_names(monitors)}</b>", title_style),
         _meta_line([
             ("Range", f"{format_local(start)} &nbsp;&rarr;&nbsp; {format_local(end)}"),
             ("Monitors", str(len(monitors))),
+            ("Units", ", ".join(units) if units else "—"),
         ]),
-        Spacer(1, 0.18 * inch),
+        Spacer(1, 0.08 * inch),
         _section_label("Timeseries", section_style),
-        Image(io.BytesIO(chart_png), width=10 * inch, height=4.4 * inch),
-        Spacer(1, 0.18 * inch),
+        Image(io.BytesIO(chart_png), width=10 * inch, height=4.0 * inch),
+        Spacer(1, 0.08 * inch),
         _section_label("Per-monitor summary", section_style),
     ]
 
@@ -455,7 +474,7 @@ def render_overlay_pdf(start: datetime, end: datetime, monitors: list[dict]) -> 
             rows.append([m["name"], m["unit"], "0", "—", "—", "—"])
     tbl = Table(rows, colWidths=[2.5 * inch, 1.0 * inch, 1.0 * inch,
                                  1.0 * inch, 1.0 * inch, 1.0 * inch])
-    tbl.setStyle(_dark_table_style(header_row=True, font_size=14))
+    tbl.setStyle(_dark_table_style(header_row=True, font_size=12))
     flow.append(tbl)
 
     doc.build(flow, onFirstPage=_draw_dark_page, onLaterPages=_draw_dark_page)
@@ -472,7 +491,7 @@ def render_pdf(monitor_name: str, unit: str, start: datetime, end: datetime,
     doc = SimpleDocTemplate(
         out, pagesize=landscape(letter),
         leftMargin=0.5 * inch, rightMargin=0.5 * inch,
-        topMargin=0.45 * inch, bottomMargin=0.7 * inch,
+        topMargin=0.35 * inch, bottomMargin=0.55 * inch,
         title=f"Spot — {monitor_name}",
     )
     title_style, _body, _muted, section_style = _dark_styles()
@@ -480,27 +499,25 @@ def render_pdf(monitor_name: str, unit: str, start: datetime, end: datetime,
     flow = [
         _brand_block(),
         _accent_rule(),
-        _section_label("Monitor report", section_style),
         Paragraph(f"<b>{monitor_name}</b>", title_style),
         _meta_line([
             ("Range", f"{format_local(start)} &nbsp;&rarr;&nbsp; {format_local(end)}"),
             ("Unit", unit),
         ]),
-        Spacer(1, 0.18 * inch),
+        Spacer(1, 0.08 * inch),
         _section_label("Timeseries", section_style),
-        Image(io.BytesIO(chart_png), width=10 * inch, height=4.4 * inch),
-        Spacer(1, 0.18 * inch),
+        Image(io.BytesIO(chart_png), width=10 * inch, height=4.0 * inch),
+        Spacer(1, 0.08 * inch),
         _section_label("Summary", section_style),
-        Spacer(1, 0.04 * inch),
     ]
 
     stat_row = Table(
         [[
-            _stat_tile("Samples", str(summary.get("count", 0)), value_pt=18),
-            _stat_tile("Min",     _fmt(summary.get("min")),     value_pt=28, primary=True),
-            _stat_tile("Max",     _fmt(summary.get("max")),     value_pt=28, primary=True),
-            _stat_tile("Average", _fmt(summary.get("avg")),     value_pt=28, primary=True),
-            _stat_tile("Events",  str(summary.get("events", 0)), value_pt=18),
+            _stat_tile("Samples", str(summary.get("count", 0)), value_pt=16),
+            _stat_tile("Min",     _fmt(summary.get("min")),     value_pt=24, primary=True),
+            _stat_tile("Max",     _fmt(summary.get("max")),     value_pt=24, primary=True),
+            _stat_tile("Average", _fmt(summary.get("avg")),     value_pt=24, primary=True),
+            _stat_tile("Events",  str(summary.get("events", 0)), value_pt=16),
         ]],
         colWidths=[1.5 * inch, 2.05 * inch, 2.05 * inch, 2.05 * inch, 1.5 * inch],
     )
