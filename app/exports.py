@@ -321,22 +321,23 @@ def _stat_tile(label: str, value: str, value_pt: int = 22) -> Table:
     return tile
 
 
-def _dark_table_style(header_row: bool = True) -> TableStyle:
+def _dark_table_style(header_row: bool = True, font_size: int = 9) -> TableStyle:
+    pad = max(4, font_size // 2)
     cmds = [
         ("BOX", (0, 0), (-1, -1), 0.5, _BORDER),
         ("INNERGRID", (0, 0), (-1, -1), 0.25, _BORDER),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("TEXTCOLOR", (0, 0), (-1, -1), _FG),
         ("BACKGROUND", (0, 0), (-1, -1), _CARD_2),
-        ("FONT", (0, 0), (-1, -1), "Helvetica", 9),
-        ("LEFTPADDING", (0, 0), (-1, -1), 6),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("FONT", (0, 0), (-1, -1), "Helvetica", font_size),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, -1), pad),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), pad),
     ]
     if header_row:
         cmds.extend([
-            ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 9),
+            ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", font_size),
             ("BACKGROUND", (0, 0), (-1, 0), _CARD),
             ("TEXTCOLOR", (0, 0), (-1, 0), _ACCENT),
         ])
@@ -378,7 +379,7 @@ def render_overlay_pdf(start: datetime, end: datetime, monitors: list[dict]) -> 
             rows.append([m["name"], m["unit"], "0", "—", "—", "—"])
     tbl = Table(rows, colWidths=[2.5 * inch, 1.0 * inch, 1.0 * inch,
                                  1.0 * inch, 1.0 * inch, 1.0 * inch])
-    tbl.setStyle(_dark_table_style(header_row=True))
+    tbl.setStyle(_dark_table_style(header_row=True, font_size=15))
     flow.append(tbl)
 
     doc.build(flow, onFirstPage=_draw_dark_page, onLaterPages=_draw_dark_page)
