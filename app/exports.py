@@ -24,6 +24,12 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter, landscape
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
+from reportlab.graphics.shapes import (
+    Circle,
+    Drawing,
+    Ellipse,
+    Rect,
+)
 from reportlab.platypus import (
     Image,
     Paragraph,
@@ -171,24 +177,76 @@ def render_overlay_chart_png(start: datetime, end: datetime,
     return buf.getvalue()
 
 
-def _logo_drawing(height_inch: float = 0.45):
+def _logo_drawing(height_inch: float = 0.55):
     """Load the app logo as a reportlab Drawing scaled to the given height.
 
-    Returns None if svglib isn't available or the SVG can't be parsed.
+    Tries svglib for a faithful render; falls back to a hand-drawn reportlab
+    Drawing so the logo always appears even when svglib isn't installed.
     """
-    if svg2rlg is None or not os.path.exists(_LOGO_PATH):
-        return None
-    try:
-        d = svg2rlg(_LOGO_PATH)
-    except Exception:
-        return None
-    if d is None or not d.height:
-        return None
-    target = height_inch * inch
-    s = target / d.height
-    d.width *= s
-    d.height *= s
-    d.scale(s, s)
+    if svg2rlg is not None and os.path.exists(_LOGO_PATH):
+        try:
+            d = svg2rlg(_LOGO_PATH)
+        except Exception:
+            d = None
+        if d is not None and d.height:
+            s = (height_inch * inch) / d.height
+            d.width *= s
+            d.height *= s
+            d.scale(s, s)
+            return d
+    return _logo_fallback(height_inch)
+
+
+def _logo_fallback(height_inch: float = 0.55) -> Drawing:
+    """Hand-drawn Spot dalmatian logo using reportlab.graphics primitives.
+
+    Uses no external libraries so the PDF logo works on any deployment.
+    SVG coords (y-down) are flipped into reportlab's y-up cartesian system.
+    """
+    s = (height_inch * inch) / 64.0
+    d = Drawing(64 * s, 64 * s)
+    body = colors.HexColor("#e6e8eb")
+    spot = colors.HexColor("#1a1a1a")
+    white = colors.HexColor("#ffffff")
+
+    def x(v: float) -> float:
+        return v * s
+
+    def y(v: float) -> float:
+        return (64.0 - v) * s
+
+    # Tail
+    d.add(Ellipse(x(45), y(45), 4 * s, 2 * s, fillColor=body, strokeColor=None))
+    # Front legs (rounded rects)
+    d.add(Rect(x(25) - 2 * s, y(60), 4 * s, 9 * s,
+               rx=1.5 * s, ry=1.5 * s, fillColor=body, strokeColor=None))
+    d.add(Rect(x(35) - 2 * s, y(60), 4 * s, 9 * s,
+               rx=1.5 * s, ry=1.5 * s, fillColor=body, strokeColor=None))
+    # Body
+    d.add(Ellipse(x(32), y(42), 11 * s, 12 * s, fillColor=body, strokeColor=None))
+    # Body spots (paint before head so head sits on top cleanly)
+    for cx, cy, r in [
+        (25, 35, 1.6), (32, 35, 1.5), (38, 36, 1.5),
+        (24, 41, 1.5), (32, 42, 1.7), (39, 43, 1.4),
+        (28, 47, 1.5), (35, 47, 1.6), (30, 52, 1.4),
+        (38, 50, 1.3), (26, 50, 1.3),
+    ]:
+        d.add(Circle(x(cx), y(cy), r * s, fillColor=spot, strokeColor=None))
+    # Head + snout
+    d.add(Ellipse(x(32), y(20), 9 * s, 8 * s, fillColor=body, strokeColor=None))
+    d.add(Ellipse(x(32), y(27), 5.5 * s, 4 * s, fillColor=body, strokeColor=None))
+    # Head spot
+    d.add(Circle(x(32), y(13), 1.4 * s, fillColor=spot, strokeColor=None))
+    # Ears (dark, droopy ovals)
+    d.add(Ellipse(x(23.5), y(20), 3 * s, 5.5 * s, fillColor=spot, strokeColor=None))
+    d.add(Ellipse(x(40.5), y(20), 3 * s, 5.5 * s, fillColor=spot, strokeColor=None))
+    # Eyes + catchlights
+    d.add(Circle(x(28.5), y(18), 1.9 * s, fillColor=spot, strokeColor=None))
+    d.add(Circle(x(35.5), y(18), 1.9 * s, fillColor=spot, strokeColor=None))
+    d.add(Circle(x(27.9), y(17.4), 0.6 * s, fillColor=white, strokeColor=None))
+    d.add(Circle(x(34.9), y(17.4), 0.6 * s, fillColor=white, strokeColor=None))
+    # Nose
+    d.add(Ellipse(x(32), y(26), 3 * s, 2 * s, fillColor=spot, strokeColor=None))
     return d
 
 
@@ -215,24 +273,52 @@ def _draw_dark_page(canvas, doc) -> None:
 def _header_flowable(title_html: str, subtitle_html: str, title_style,
                      body_style) -> Table:
     """Logo + title/subtitle row used at the top of every PDF page."""
-    logo = _logo_drawing(0.55)
-    left_cell = logo if logo is not None else Paragraph("", body_style)
+    logo = _logo_drawing(0.7)
     right_cell = [
         Paragraph(title_html, title_style),
         Paragraph(subtitle_html, body_style),
     ]
     tbl = Table(
-        [[left_cell, right_cell]],
-        colWidths=[0.7 * inch, None],
+        [[logo, right_cell]],
+        colWidths=[0.85 * inch, None],
     )
     tbl.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("LEFTPADDING", (0, 0), (0, 0), 0),
+        ("RIGHTPADDING", (0, 0), (0, 0), 0),
+        ("LEFTPADDING", (1, 0), (1, 0), 10),
         ("TOPPADDING", (0, 0), (-1, -1), 0),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
     ]))
     return tbl
+
+
+def _stat_tile(label: str, value: str, value_pt: int = 22) -> Table:
+    """A single stat card: small muted label above a large bold value."""
+    label_p = Paragraph(
+        f'<font color="{_MUTED_HEX}" size="9">{label.upper()}</font>',
+        ParagraphStyle("StatLabel", fontName="Helvetica", alignment=1,
+                       leading=11, textColor=_MUTED),
+    )
+    value_p = Paragraph(
+        f'<font color="{_FG_HEX}" size="{value_pt}"><b>{value}</b></font>',
+        ParagraphStyle("StatValue", fontName="Helvetica-Bold", alignment=1,
+                       leading=value_pt + 2, textColor=_FG),
+    )
+    tile = Table([[label_p], [value_p]], colWidths=[None])
+    tile.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), _CARD_2),
+        ("BOX", (0, 0), (-1, -1), 0.5, _BORDER),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (0, 0), 8),
+        ("BOTTOMPADDING", (0, 0), (0, 0), 2),
+        ("TOPPADDING", (0, 1), (0, 1), 0),
+        ("BOTTOMPADDING", (0, 1), (0, 1), 10),
+    ]))
+    return tile
 
 
 def _dark_table_style(header_row: bool = True) -> TableStyle:
@@ -255,24 +341,6 @@ def _dark_table_style(header_row: bool = True) -> TableStyle:
             ("TEXTCOLOR", (0, 0), (-1, 0), _ACCENT),
         ])
     return TableStyle(cmds)
-
-
-def _dark_keyvalue_style() -> TableStyle:
-    return TableStyle([
-        ("BOX", (0, 0), (-1, -1), 0.5, _BORDER),
-        ("INNERGRID", (0, 0), (-1, -1), 0.25, _BORDER),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("TEXTCOLOR", (0, 0), (-1, -1), _FG),
-        ("BACKGROUND", (0, 0), (-1, -1), _CARD_2),
-        ("BACKGROUND", (0, 0), (0, -1), _CARD),
-        ("TEXTCOLOR", (0, 0), (0, -1), _ACCENT),
-        ("FONT", (0, 0), (0, -1), "Helvetica-Bold", 9),
-        ("FONT", (1, 0), (1, -1), "Helvetica", 9),
-        ("LEFTPADDING", (0, 0), (-1, -1), 6),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-    ])
 
 
 def render_overlay_pdf(start: datetime, end: datetime, monitors: list[dict]) -> bytes:
@@ -342,16 +410,24 @@ def render_pdf(monitor_name: str, unit: str, start: datetime, end: datetime,
         Spacer(1, 0.2 * inch),
     ]
 
-    rows = [
-        ["Samples", str(summary.get("count", 0))],
-        ["Min", _fmt(summary.get("min"))],
-        ["Max", _fmt(summary.get("max"))],
-        ["Average", _fmt(summary.get("avg"))],
-        ["Events", str(summary.get("events", 0))],
-    ]
-    tbl = Table(rows, colWidths=[1.5 * inch, 2.0 * inch])
-    tbl.setStyle(_dark_keyvalue_style())
-    flow.append(tbl)
+    stat_row = Table(
+        [[
+            _stat_tile("Samples", str(summary.get("count", 0)), value_pt=18),
+            _stat_tile("Min",     _fmt(summary.get("min")),     value_pt=28),
+            _stat_tile("Max",     _fmt(summary.get("max")),     value_pt=28),
+            _stat_tile("Average", _fmt(summary.get("avg")),     value_pt=28),
+            _stat_tile("Events",  str(summary.get("events", 0)), value_pt=18),
+        ]],
+        colWidths=[1.6 * inch, 2.0 * inch, 2.0 * inch, 2.0 * inch, 1.6 * inch],
+    )
+    stat_row.setStyle(TableStyle([
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    flow.append(stat_row)
 
     doc.build(flow, onFirstPage=_draw_dark_page, onLaterPages=_draw_dark_page)
     return out.getvalue()
