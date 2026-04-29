@@ -160,7 +160,7 @@ def render_overlay_chart_png(start: datetime, end: datetime,
                     color=_OVERLAY_COLORS[color_idx % len(_OVERLAY_COLORS)])
             color_idx += 1
         ax.set_ylabel(unit)
-        legend = ax.legend(loc="upper right", fontsize=8,
+        legend = ax.legend(loc="upper right", fontsize=14,
                            facecolor=_CARD_HEX, edgecolor=_BORDER_HEX,
                            labelcolor=_FG_HEX)
         if legend is not None:
@@ -273,14 +273,14 @@ def _draw_dark_page(canvas, doc) -> None:
 def _header_flowable(title_html: str, subtitle_html: str, title_style,
                      body_style) -> Table:
     """Logo + title/subtitle row used at the top of every PDF page."""
-    logo = _logo_drawing(0.7)
+    logo = _logo_drawing(1.0)
     right_cell = [
         Paragraph(title_html, title_style),
         Paragraph(subtitle_html, body_style),
     ]
     tbl = Table(
         [[logo, right_cell]],
-        colWidths=[0.85 * inch, None],
+        colWidths=[1.15 * inch, None],
     )
     tbl.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
