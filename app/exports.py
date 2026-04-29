@@ -462,6 +462,7 @@ def render_overlay_pdf(start: datetime, end: datetime, monitors: list[dict]) -> 
         Image(io.BytesIO(chart_png), width=10 * inch, height=4.0 * inch),
         Spacer(1, 0.08 * inch),
         _section_label("Per-monitor summary", section_style),
+        Spacer(1, 0.08 * inch),
     ]
 
     rows = [["Monitor", "Unit", "Samples", "Min", "Max", "Avg"]]
