@@ -77,6 +77,8 @@ class Monitor(Base):
     modbus_register_address: Mapped[int | None] = mapped_column(Integer, nullable=True)
     modbus_data_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
+    decimal_places: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     readings: Mapped[list["Reading"]] = relationship(
         "Reading", back_populates="monitor", cascade="all, delete-orphan", passive_deletes=True
     )

@@ -108,6 +108,16 @@
       {% if default_retention %}Global default if blank: <strong>{{ default_retention }} days</strong>.{% endif %}
     </small>
   </label>
+  <label>Decimal places
+    <input type="number" name="decimal_places" min="0" max="10"
+           value="{{ monitor.decimal_places if monitor and monitor.decimal_places is not none else '' }}"
+           placeholder="blank = full precision">
+    <small class="muted">
+      Round each numeric reading to this many decimal places before storing.
+      Useful for noisy float32 sources (e.g. <code>48.941001892089844 %</code>
+      → <code>48.9 %</code> at 1 decimal). Leave blank to keep full precision.
+    </small>
+  </label>
   <label class="checkbox">
     <input type="checkbox" name="enabled" {% if (not monitor) or monitor.enabled %}checked{% endif %}>
     Enabled

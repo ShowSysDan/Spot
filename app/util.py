@@ -96,6 +96,7 @@ def monitor_view(m: Monitor) -> dict[str, Any]:
         "modbus_register_address": m.modbus_register_address,
         "modbus_data_type": m.modbus_data_type,
         "modbus_device_name": m.modbus_device.name if m.modbus_device else None,
+        "decimal_places": m.decimal_places,
     }
 
 

@@ -6,8 +6,10 @@ import re
 from datetime import datetime, timezone
 from typing import Optional
 
+from sqlalchemy import select
+
 from .db import session_scope
-from .models import Reading
+from .models import Monitor, Reading
 
 log = logging.getLogger("spot.ingest")
 
@@ -100,6 +102,12 @@ def store_reading(monitor_id: int, value: Optional[float], label: Optional[str],
     if value is None and not label:
         raise MalformedData("reading must have a value or label")
     with session_scope() as s:
+        if value is not None:
+            decimals = s.execute(
+                select(Monitor.decimal_places).where(Monitor.id == monitor_id)
+            ).scalar()
+            if decimals is not None:
+                value = round(float(value), int(decimals))
         r = Reading(
             monitor_id=monitor_id,
             ts=ts or datetime.now(timezone.utc),
