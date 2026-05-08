@@ -348,6 +348,7 @@ Direct URLs (also usable from cron / scripts):
 - `GET /data/monitor/<id>/series?start=...&end=...` — JSON points + events
 - `GET /data/monitor/<id>/summary?start=...&end=...` — min/max/avg/count
 - `GET /data/monitor/<id>/recent?seconds=30`         — recent points
+- `GET /data/monitor/<id>/latest`                    — only the most recent reading (`{ts, value, label}`)
 - `GET /data/monitor/<id>/export.csv?start=...&end=...`
 - `GET /data/monitor/<id>/export.pdf?start=...&end=...`
 - `GET /data/overlay?ids=1,2,3&start=...&end=...`    — series for many monitors

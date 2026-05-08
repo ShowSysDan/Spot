@@ -105,6 +105,30 @@ def recent(mid: int):
     })
 
 
+@bp.route("/monitor/<int:mid>/latest")
+def latest(mid: int):
+    """Most recent reading with a non-null value, regardless of how old it is.
+
+    Returns null fields if the monitor has no value-bearing readings yet.
+    """
+    with session_scope() as s:
+        get_monitor_or_404(s, mid)
+        row = s.execute(
+            select(Reading.ts, Reading.value, Reading.label)
+            .where(Reading.monitor_id == mid)
+            .where(Reading.value.is_not(None))
+            .order_by(Reading.ts.desc())
+            .limit(1)
+        ).first()
+    if not row:
+        return jsonify({"ts": None, "value": None, "label": None})
+    return jsonify({
+        "ts": row.ts.isoformat(),
+        "value": row.value,
+        "label": row.label,
+    })
+
+
 @bp.route("/monitor/<int:mid>/summary")
 def summary(mid: int):
     start, end = _parse_range()
