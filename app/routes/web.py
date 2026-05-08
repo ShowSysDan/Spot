@@ -550,8 +550,9 @@ def _save_monitor(mid: int | None):
             m.decimal_places = decimal_places
         info = monitor_view(m)
         action = "created" if mid is None else "updated"
-        log.info("monitor %s: %s id=%d type=%s port=%s",
-                 action, info["name"], info["id"], info["listener_type"], info["port"])
+        log.info("monitor %s: %s id=%d type=%s port=%s decimals=%s retention=%s",
+                 action, info["name"], info["id"], info["listener_type"], info["port"],
+                 info["decimal_places"], info["retention_days"])
 
     if mid is not None:
         _manager().stop_monitor(info["id"])
