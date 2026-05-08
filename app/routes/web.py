@@ -396,6 +396,7 @@ def _create_temp_humidity_monitors(s, device: ModbusDevice) -> None:
             modbus_device_id=device.id,
             modbus_register_address=spec["address"],
             modbus_data_type="float32",
+            decimal_places=1,
         ))
         log.info("modbus auto-created monitor: %s (device=%s, register=%d)",
                  spec["name"], device.name, spec["address"])
@@ -432,6 +433,7 @@ def _save_monitor(mid: int | None):
     listener_type = (request.form.get("listener_type") or "http").strip()
     retention_raw = (request.form.get("retention_days") or "").strip()
     value_regex = (request.form.get("value_regex") or "").strip() or None
+    decimals_raw = (request.form.get("decimal_places") or "").strip()
     enabled = bool(request.form.get("enabled"))
 
     if value_regex:
@@ -504,6 +506,16 @@ def _save_monitor(mid: int | None):
             flash("Retention must be a positive integer (days), or blank for keep-forever.", "error")
             return redirect(request.url)
 
+    decimal_places: int | None = None
+    if decimals_raw:
+        try:
+            decimal_places = int(decimals_raw)
+            if decimal_places < 0 or decimal_places > 10:
+                raise ValueError
+        except ValueError:
+            flash("Decimal places must be 0–10, or blank for full precision.", "error")
+            return redirect(request.url)
+
     with session_scope() as s:
         if listener_type == "modbus":
             err = _validate_modbus_monitor(
@@ -518,7 +530,8 @@ def _save_monitor(mid: int | None):
                         retention_days=retention_days, value_regex=value_regex,
                         modbus_device_id=modbus_device_id,
                         modbus_register_address=modbus_register_address,
-                        modbus_data_type=modbus_data_type)
+                        modbus_data_type=modbus_data_type,
+                        decimal_places=decimal_places)
             s.add(m)
             s.flush()
         else:
@@ -534,6 +547,7 @@ def _save_monitor(mid: int | None):
             m.modbus_device_id = modbus_device_id
             m.modbus_register_address = modbus_register_address
             m.modbus_data_type = modbus_data_type
+            m.decimal_places = decimal_places
         info = monitor_view(m)
         action = "created" if mid is None else "updated"
         log.info("monitor %s: %s id=%d type=%s port=%s",

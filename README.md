@@ -13,9 +13,11 @@ and lets you browse, query, graph, and export the data.
 
 - **Monitor management** — add, edit, enable/disable, and delete monitors
   through the web UI. Each monitor has a name, free-form unit (`dB`, `°F`,
-  `°C`, `%`, custom…), a listener type, an auto-generated auth token, and
-  an optional **value-extraction regex** for sources that ship pre-formatted
-  text (e.g. `47.5dB`, `7:47:32 AM — 47.5dB`).
+  `°C`, `%`, custom…), a listener type, an auto-generated auth token, an
+  optional **value-extraction regex** for sources that ship pre-formatted
+  text (e.g. `47.5dB`, `7:47:32 AM — 47.5dB`), and an optional
+  **decimal-places** setting that rounds each numeric reading at ingest
+  time (handy for noisy float32 sources from Modbus devices).
 - **Four ingest protocols per monitor:**
   - **HTTP** — `POST /api/ingest/<token>` on the shared web port
     (JSON, form-encoded, or `text/plain`).
@@ -389,7 +391,9 @@ Go to the **Modbus** tab → **New Modbus device** and fill in:
 | Auto-create temp/humidity | on  | One-click: also creates two Monitors — `<name> Temperature` (°F, register `start`, `float32`) and `<name> Humidity` (%, register `start+2`, `float32`). |
 
 Saving with **Auto-create** ticked is the one-form path for the common
-Monigear-style temp+humidity sensor. Untick it to add Monitors manually
+Monigear-style temp+humidity sensor. The two auto-created Monitors default
+to **1 decimal place** of rounding so the dashboard shows `48.9 %` instead
+of `48.941001892089844 %`. Untick auto-create to add Monitors manually
 afterwards from the device's detail page.
 
 #### Add a Monitor that reads a Modbus value

@@ -102,6 +102,10 @@ def init_schema(cfg: Config) -> None:
             f'ALTER TABLE IF EXISTS "{sch}".monitors '
             f'ADD COLUMN IF NOT EXISTS modbus_data_type VARCHAR(16)'
         )
+        conn.exec_driver_sql(
+            f'ALTER TABLE IF EXISTS "{sch}".monitors '
+            f'ADD COLUMN IF NOT EXISTS decimal_places INTEGER'
+        )
         # listener_type widened from VARCHAR(8) to VARCHAR(16) to fit "modbus".
         conn.exec_driver_sql(
             f'ALTER TABLE IF EXISTS "{sch}".monitors '

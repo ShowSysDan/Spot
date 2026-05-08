@@ -49,6 +49,14 @@
     {% if monitor.value_regex %}<code>{{ monitor.value_regex }}</code>
     {% else %}<span class="muted">none (default parser)</span>{% endif %}
   </dd>
+  <dt>Rounding</dt>
+  <dd>
+    {% if monitor.decimal_places is not none %}
+      {{ monitor.decimal_places }} decimal place{{ '' if monitor.decimal_places == 1 else 's' }}
+    {% else %}
+      <span class="muted">full precision</span>
+    {% endif %}
+  </dd>
   <dt>Auth token</dt><dd><code>{{ monitor.auth_token }}</code></dd>
 </dl>
 
