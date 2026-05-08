@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Modbus Devices — Spot{% endblock %}
+{% block content %}
+<h1>Modbus Devices</h1>
+<p class="muted">
+  Modbus TCP sensors that Spot polls on a fixed interval. Each device can have
+  one or more <a href="{{ url_for('web.index') }}">Monitors</a> bound to it,
+  one per value (e.g. temperature and humidity).
+</p>
+
+{% if not devices %}
+  <p>No Modbus devices yet. <a href="{{ url_for('web.modbus_new') }}">Add one</a>.</p>
+{% else %}
+<table class="grid">
+  <thead>
+    <tr>
+      <th>Name</th><th>Host</th><th>Slave</th><th>Interval</th>
+      <th>Word order</th><th>Registers</th><th>Monitors</th>
+      <th>Enabled</th><th>Poller</th><th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for d in devices %}
+    <tr>
+      <td><a href="{{ url_for('web.modbus_detail', did=d.id) }}">{{ d.name }}</a>
+          {% if d.description %}<div class="muted">{{ d.description }}</div>{% endif %}</td>
+      <td>{{ d.host }}:{{ d.port }}</td>
+      <td>{{ d.slave_id }}</td>
+      <td>{{ d.poll_interval_seconds }}s</td>
+      <td><code>{{ d.word_order }}</code></td>
+      <td>{{ d.register_start }}–{{ d.register_start + d.register_count - 1 }}
+          <span class="muted">({{ d.register_count }})</span></td>
+      <td>{{ d.monitor_count }}</td>
+      <td>{% if d.enabled %}<span class="ok">on</span>{% else %}<span class="off">off</span>{% endif %}</td>
+      <td>
+        {% if not d.enabled %}<span class="muted">n/a</span>
+        {% elif d.alive %}<span class="ok">running</span>
+        {% else %}<span class="off">stopped</span>
+        {% endif %}
+      </td>
+      <td class="actions">
+        <a href="{{ url_for('web.modbus_detail', did=d.id) }}">Detail</a>
+        <a href="{{ url_for('web.modbus_edit', did=d.id) }}">Edit</a>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<p style="margin-top:1rem;"><a class="button" href="{{ url_for('web.modbus_new') }}">New Modbus device</a></p>
+{% endblock %}

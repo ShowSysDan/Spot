@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}{{ "Edit" if device else "New" }} Modbus Device — Spot{% endblock %}
+{% block content %}
+<h1>{{ "Edit" if device else "New" }} Modbus Device</h1>
+<form method="post" class="form">
+  <label>Name
+    <input type="text" name="name" required value="{{ device.name if device else '' }}"
+           placeholder="e.g. MDF Sensor">
+  </label>
+  <label>Description
+    <textarea name="description" rows="2">{{ device.description if device and device.description else '' }}</textarea>
+  </label>
+
+  <label>Host (IP or DNS)
+    <input type="text" name="host" required value="{{ device.host if device else '' }}"
+           placeholder="10.201.3.202">
+  </label>
+  <label>TCP port
+    <input type="number" name="port" min="1" max="65535"
+           value="{{ device.port if device else default_port }}">
+    <small class="muted">Modbus TCP standard port is {{ default_port }}.</small>
+  </label>
+  <label>Slave / unit ID
+    <input type="number" name="slave_id" min="0" max="255"
+           value="{{ device.slave_id if device else 0 }}">
+    <small class="muted">0 works for most simple devices that don't use unit addressing.</small>
+  </label>
+
+  <label>Poll interval (seconds)
+    <input type="number" name="poll_interval_seconds" min="{{ min_poll_interval }}"
+           value="{{ device.poll_interval_seconds if device else 10 }}">
+    <small class="muted">How often Spot reads the device. Minimum {{ min_poll_interval }}s.</small>
+  </label>
+  <label>Read timeout (seconds)
+    <input type="number" name="timeout_seconds" min="1"
+           value="{{ device.timeout_seconds if device else 5 }}">
+  </label>
+
+  <label>Word order
+    <select name="word_order">
+      {% for w in word_orders %}
+      <option value="{{ w }}"
+        {% if (device and device.word_order == w) or (not device and w == 'CDAB') %}selected{% endif %}>
+        {{ w }}{% if w == 'CDAB' %} (Monigear default){% endif %}{% if w == 'ABCD' %} (straight big-endian){% endif %}
+      </option>
+      {% endfor %}
+    </select>
+    <small class="muted">
+      Byte/word ordering for multi-register decodes (float32, int32, uint32). If
+      values come back as nonsense, try a different order.
+    </small>
+  </label>
+
+  <label>Register start
+    <input type="number" name="register_start" min="0" max="65535"
+           value="{{ device.register_start if device else 0 }}">
+    <small class="muted">First holding register to read (Function Code 3).</small>
+  </label>
+  <label>Register count
+    <input type="number" name="register_count" min="1" max="125"
+           value="{{ device.register_count if device else 4 }}">
+    <small class="muted">
+      How many 16-bit registers to read per cycle. Monigear: <strong>4</strong>
+      (registers 0–3 = temp + humidity floats).
+    </small>
+  </label>
+
+  <label class="checkbox">
+    <input type="checkbox" name="enabled" {% if (not device) or device.enabled %}checked{% endif %}>
+    Enabled
+  </label>
+
+  {% if not device %}
+  <label class="checkbox">
+    <input type="checkbox" name="auto_create_temp_humidity" checked>
+    Auto-create Temperature (°F) and Humidity (%) monitors for this device
+  </label>
+  <small class="muted" style="margin-top:-0.6rem;">
+    Adds two Monitors bound to this device: one at the start register (°F) and
+    one at start+2 (%), both as <code>float32</code>. Uncheck if this isn't a
+    standard temp+humidity sensor — you can add monitors manually from the
+    device detail page afterwards.
+  </small>
+  {% endif %}
+
+  <div class="row">
+    <button type="submit" class="primary">Save</button>
+    <a href="{{ url_for('web.modbus_list') }}" class="button">Cancel</a>
+  </div>
+</form>
+{% endblock %}

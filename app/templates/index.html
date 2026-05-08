@@ -23,7 +23,7 @@
       <td>{% if m.retention_days %}{{ m.retention_days }}d{% else %}<span class="muted">∞</span>{% endif %}</td>
       <td>{% if m.enabled %}<span class="ok">on</span>{% else %}<span class="off">off</span>{% endif %}</td>
       <td>
-        {% if m.listener_type == 'http' %}<span class="muted">n/a</span>
+        {% if m.listener_type in ('http', 'modbus') %}<span class="muted">n/a</span>
         {% elif m.listener_alive %}<span class="ok">running</span>
         {% else %}<span class="off">stopped</span>
         {% endif %}

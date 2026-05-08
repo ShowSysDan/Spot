@@ -9,10 +9,22 @@
   <dt>Listener</dt>
   <dd>
     {{ monitor.listener_type|upper }}{% if monitor.port %} on port <strong>{{ monitor.port }}</strong>{% endif %}
-    {% if monitor.listener_type != 'http' %}
+    {% if monitor.listener_type in ('tcp', 'udp') %}
       &nbsp;— {% if monitor.listener_alive %}<span class="ok">running</span>{% else %}<span class="off">stopped</span>{% endif %}
     {% endif %}
   </dd>
+  {% if monitor.listener_type == 'modbus' %}
+  <dt>Modbus device</dt>
+  <dd>
+    {% if monitor.modbus_device_id %}
+      <a href="{{ url_for('web.modbus_detail', did=monitor.modbus_device_id) }}">{{ monitor.modbus_device_name }}</a>
+    {% else %}
+      <span class="off">not bound — set on edit</span>
+    {% endif %}
+  </dd>
+  <dt>Modbus register</dt>
+  <dd>{{ monitor.modbus_register_address }} <span class="muted">({{ monitor.modbus_data_type or 'float32' }})</span></dd>
+  {% endif %}
   <dt>Enabled</dt><dd>{% if monitor.enabled %}<span class="ok">yes</span>{% else %}<span class="off">no</span>{% endif %}</dd>
   <dt>Retention</dt>
   <dd>
@@ -40,6 +52,7 @@
   <dt>Auth token</dt><dd><code>{{ monitor.auth_token }}</code></dd>
 </dl>
 
+{% if monitor.listener_type != 'modbus' %}
 <h2>Push examples</h2>
 <pre class="code">{% if monitor.listener_type == 'http' -%}
 # Numeric reading
@@ -63,6 +76,13 @@ printf '92.3\n92.5,Show Start\nFire Alarm\n' | nc HOST {{ monitor.port }}
 # UDP datagrams: "value", "value,label", or just "label"
 printf '92.3' | nc -u -w1 HOST {{ monitor.port }}
 {%- endif %}</pre>
+{% else %}
+<p class="muted">
+  This monitor is fed by Spot polling the bound Modbus device — there's nothing
+  to push. Adjust the device's poll interval, host, or word order on the
+  <a href="{{ url_for('web.modbus_detail', did=monitor.modbus_device_id) }}">Modbus device page</a>.
+</p>
+{% endif %}
 
 <div class="row">
   <a class="button" href="{{ url_for('web.monitor_dashboard', mid=monitor.id) }}">Live dashboard</a>
