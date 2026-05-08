@@ -16,11 +16,14 @@ and lets you browse, query, graph, and export the data.
   `°C`, `%`, custom…), a listener type, an auto-generated auth token, and
   an optional **value-extraction regex** for sources that ship pre-formatted
   text (e.g. `47.5dB`, `7:47:32 AM — 47.5dB`).
-- **Three ingest protocols per monitor:**
+- **Four ingest protocols per monitor:**
   - **HTTP** — `POST /api/ingest/<token>` on the shared web port
     (JSON, form-encoded, or `text/plain`).
   - **TCP** — newline-terminated lines on a per-monitor port.
   - **UDP** — datagrams on a per-monitor port.
+  - **Modbus** — Spot polls a Modbus TCP device (Function Code 3, Read
+    Holding Registers) on a configurable interval and decodes one or more
+    values per cycle. See [Modbus devices](#modbus-devices) below.
   TCP/UDP ports are **auto-assigned** from the **6101–6199** range; Spot
   vibe-checks bindability before claiming one. The user can't pick a port.
 - **Event markers** — push a label string (`"Show Start"`, `"Fire Alarm"`)
@@ -355,6 +358,86 @@ local timezone**, set via `timedatectl set-timezone America/New_York`
 or by `Environment=TZ=America/New_York` in the systemd unit. Internally,
 Spot stores everything as UTC and converts only at the display layer.
 
+### Modbus devices
+
+Modbus TCP sensors (temperature/humidity probes, PLCs, etc.) are passive —
+they only reply when polled. Spot's Modbus support introduces a small
+**Modbus device** entity that holds the connection and polling settings, and
+each *Monitor* can be linked to a device with a register address and a data
+type. One TCP poll per cycle reads the configured register block, then
+decodes one value for each linked Monitor.
+
+Why a separate entity? Most Modbus sensors expose multiple values from one
+device — e.g. a Monigear sensor returns temperature and humidity together.
+Each value wants its own unit, retention, dashboard, and overlay treatment,
+which means each is its own Monitor. The device record is the shared
+"connection" the Monitors hang off of.
+
+#### Add a device
+
+Go to the **Modbus** tab → **New Modbus device** and fill in:
+
+| Field              | Default | Notes |
+|--------------------|---------|-------|
+| Host               | —       | IP or DNS of the device (port 502 by default). |
+| Slave / unit ID    | `0`     | Most simple devices use 0. |
+| Poll interval      | `10`    | Seconds between cycles. Minimum 1. |
+| Read timeout       | `5`     | Seconds before a single read is given up on. |
+| Word order         | `CDAB`  | Multi-register endianness. Monigear is `CDAB`; others may be `ABCD` / `BADC` / `DCBA`. If decoded values are nonsense, try a different order. |
+| Register start     | `0`     | First holding register to read each cycle. |
+| Register count     | `4`     | How many 16-bit registers to read per cycle (Modbus spec ceiling: 125). |
+| Auto-create temp/humidity | on  | One-click: also creates two Monitors — `<name> Temperature` (°F, register `start`, `float32`) and `<name> Humidity` (%, register `start+2`, `float32`). |
+
+Saving with **Auto-create** ticked is the one-form path for the common
+Monigear-style temp+humidity sensor. Untick it to add Monitors manually
+afterwards from the device's detail page.
+
+#### Add a Monitor that reads a Modbus value
+
+On the monitor form, set **Listener type** to `MODBUS`. New fields appear:
+
+- **Modbus device** — pick a device from the dropdown. Manage devices on the
+  Modbus tab.
+- **Register address** — absolute holding-register address. Must fall inside
+  the device's `start … start+count-1` window.
+- **Data type** — `float32` (default), `uint16`, `int16`, `uint32`, `int32`.
+  32-bit types consume two registers (subject to word order); 16-bit types
+  consume one.
+
+The Modbus device's poll interval is what governs how fast readings arrive;
+the Monitor's regex / port / token fields don't apply. The Monitor still
+has its own unit, retention, and dashboard, just like any other.
+
+#### Cycle behavior
+
+For each enabled device, one daemon thread runs a loop:
+
+1. Open a TCP connection to `host:port`.
+2. Send one Read Holding Registers (FC3) request for `register_count`
+   registers starting at `register_start`.
+3. Read the response, parse the registers.
+4. For every enabled Monitor linked to this device:
+   - compute the register slice from `address - register_start`,
+   - decode it per `data_type` and the device's `word_order`,
+   - store one Reading on that Monitor.
+5. Disconnect, sleep `poll_interval_seconds`, repeat.
+
+Failures (timeout, refused connection, Modbus exception, decode mismatch)
+are logged to syslog under `spot.modbus`. The cycle continues to the next
+poll without writing readings; affected Monitors will simply show a gap on
+their dashboards.
+
+#### Quick example: a Monigear sensor at `10.201.3.202`
+
+1. Modbus → New Modbus device:
+   - Name: `MDF Sensor`, Host: `10.201.3.202`,
+   - Defaults for the rest (port 502, slave 0, CDAB, regs 0–3),
+   - **Auto-create temp/humidity** ticked.
+2. Save. Two Monitors appear: `MDF Sensor Temperature` (°F) and
+   `MDF Sensor Humidity` (%), each with its own dashboard.
+3. The poller starts immediately if the device is enabled. **Poll now** on
+   the device page does a one-shot read so you can confirm the wiring.
+
 ### Multi-monitor overlay
 
 `/overlay` — pick monitors (Cmd/Ctrl-click to multi-select) and a UTC range.
@@ -397,6 +480,7 @@ All Spot loggers are children of `spot.*`:
 - `spot.web`        — UI actions (monitor created/updated/deleted, toggled, purged)
 - `spot.api`        — HTTP ingest + allow-list rejections
 - `spot.listeners`  — TCP/UDP listener start/stop/bind errors
+- `spot.modbus`     — Modbus poller start/stop, read failures, decode errors
 - `spot.ingest`     — malformed payloads
 - `spot.janitor`    — retention purges (rows deleted per monitor per pass)
 - `spot.db`         — schema bring-up
@@ -415,6 +499,10 @@ Browser ──► Flask (web UI, /api/ingest, /api/event, /data/...)
                 ├── ListenerManager
                 │     ├── TCPListener thread (per enabled TCP monitor)
                 │     └── UDPListener thread (per enabled UDP monitor)
+                │
+                ├── ModbusManager
+                │     └── ModbusPoller thread (per enabled Modbus device)
+                │           ↳ Reads FC3, dispatches to bound Monitors
                 │
                 ├── JanitorThread (single, periodic retention enforcement)
                 │

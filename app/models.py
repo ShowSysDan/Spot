@@ -30,6 +30,29 @@ def _make_token() -> str:
     return secrets.token_urlsafe(24)
 
 
+class ModbusDevice(Base):
+    __tablename__ = "modbus_devices"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    host: Mapped[str] = mapped_column(String(255), nullable=False)
+    port: Mapped[int] = mapped_column(Integer, nullable=False, default=502)
+    slave_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    poll_interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
+    timeout_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    word_order: Mapped[str] = mapped_column(String(8), nullable=False, default="CDAB")
+    register_start: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    register_count: Mapped[int] = mapped_column(Integer, nullable=False, default=4)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    monitors: Mapped[list["Monitor"]] = relationship(
+        "Monitor", back_populates="modbus_device",
+        cascade="all, delete-orphan", passive_deletes=True,
+    )
+
+
 class Monitor(Base):
     __tablename__ = "monitors"
 
@@ -37,7 +60,7 @@ class Monitor(Base):
     name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     unit: Mapped[str] = mapped_column(String(32), nullable=False, default="value")
-    listener_type: Mapped[str] = mapped_column(String(8), nullable=False, default="http")
+    listener_type: Mapped[str] = mapped_column(String(16), nullable=False, default="http")
     port: Mapped[int | None] = mapped_column(Integer, nullable=True)
     auth_token: Mapped[str] = mapped_column(String(64), nullable=False, default=_make_token, unique=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
@@ -45,8 +68,20 @@ class Monitor(Base):
     value_regex: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
 
+    modbus_device_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("modbus_devices.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    modbus_register_address: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    modbus_data_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
     readings: Mapped[list["Reading"]] = relationship(
         "Reading", back_populates="monitor", cascade="all, delete-orphan", passive_deletes=True
+    )
+    modbus_device: Mapped["ModbusDevice | None"] = relationship(
+        "ModbusDevice", back_populates="monitors"
     )
 
     __table_args__ = (

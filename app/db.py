@@ -89,4 +89,22 @@ def init_schema(cfg: Config) -> None:
             f'ALTER TABLE IF EXISTS "{sch}".monitors '
             f'ADD COLUMN IF NOT EXISTS value_regex TEXT'
         )
+        conn.exec_driver_sql(
+            f'ALTER TABLE IF EXISTS "{sch}".monitors '
+            f'ADD COLUMN IF NOT EXISTS modbus_device_id INTEGER '
+            f'REFERENCES "{sch}".modbus_devices(id) ON DELETE CASCADE'
+        )
+        conn.exec_driver_sql(
+            f'ALTER TABLE IF EXISTS "{sch}".monitors '
+            f'ADD COLUMN IF NOT EXISTS modbus_register_address INTEGER'
+        )
+        conn.exec_driver_sql(
+            f'ALTER TABLE IF EXISTS "{sch}".monitors '
+            f'ADD COLUMN IF NOT EXISTS modbus_data_type VARCHAR(16)'
+        )
+        # listener_type widened from VARCHAR(8) to VARCHAR(16) to fit "modbus".
+        conn.exec_driver_sql(
+            f'ALTER TABLE IF EXISTS "{sch}".monitors '
+            f'ALTER COLUMN listener_type TYPE VARCHAR(16)'
+        )
     log.info("Schema '%s' ready", sch)

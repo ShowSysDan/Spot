@@ -7,6 +7,7 @@ from .db import dispose_engine, init_engine, init_schema
 from .janitor import JanitorThread
 from .logging_config import configure_logging
 from .listeners import ListenerManager
+from .modbus import ModbusManager
 
 
 def create_app(config: Config | None = None) -> Flask:
@@ -21,8 +22,10 @@ def create_app(config: Config | None = None) -> Flask:
     init_schema(cfg)
 
     manager = ListenerManager(cfg)
+    modbus = ModbusManager(cfg)
     janitor = JanitorThread(cfg.janitor_interval_seconds, cfg.default_retention_days)
     app.config["SPOT_LISTENERS"] = manager
+    app.config["SPOT_MODBUS"] = modbus
     app.config["SPOT_JANITOR"] = janitor
 
     from .routes.web import bp as web_bp
@@ -34,12 +37,14 @@ def create_app(config: Config | None = None) -> Flask:
     app.register_blueprint(data_bp, url_prefix="/data")
 
     manager.start_enabled()
+    modbus.start_enabled()
     janitor.start()
 
     import atexit
 
     def _cleanup() -> None:
         janitor.stop()
+        modbus.shutdown()
         manager.shutdown()
         janitor.join(timeout=3.0)
         dispose_engine()

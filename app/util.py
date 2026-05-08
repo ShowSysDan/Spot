@@ -6,7 +6,7 @@ from typing import Any
 from flask import abort
 from sqlalchemy.orm import Session
 
-from .models import Monitor
+from .models import ModbusDevice, Monitor
 
 
 def parse_iso_ts(s: str) -> datetime:
@@ -49,6 +49,32 @@ def get_monitor_or_404(s: Session, mid: int) -> Monitor:
     return m
 
 
+def get_modbus_device_or_404(s: Session, did: int) -> ModbusDevice:
+    d = s.get(ModbusDevice, did)
+    if not d:
+        abort(404)
+    return d
+
+
+def modbus_device_view(d: ModbusDevice) -> dict[str, Any]:
+    return {
+        "id": d.id,
+        "name": d.name,
+        "description": d.description,
+        "host": d.host,
+        "port": d.port,
+        "slave_id": d.slave_id,
+        "poll_interval_seconds": d.poll_interval_seconds,
+        "timeout_seconds": d.timeout_seconds,
+        "word_order": d.word_order,
+        "register_start": d.register_start,
+        "register_count": d.register_count,
+        "enabled": d.enabled,
+        "created_at": d.created_at.isoformat() if d.created_at else None,
+        "monitor_count": len(d.monitors),
+    }
+
+
 def safe_filename(name: str) -> str:
     return "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
 
@@ -66,6 +92,10 @@ def monitor_view(m: Monitor) -> dict[str, Any]:
         "retention_days": m.retention_days,
         "value_regex": m.value_regex,
         "created_at": m.created_at.isoformat() if m.created_at else None,
+        "modbus_device_id": m.modbus_device_id,
+        "modbus_register_address": m.modbus_register_address,
+        "modbus_data_type": m.modbus_data_type,
+        "modbus_device_name": m.modbus_device.name if m.modbus_device else None,
     }
 
 

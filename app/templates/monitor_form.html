@@ -21,14 +21,15 @@
     </datalist>
   </label>
   <label>Listener type
-    <select name="listener_type">
+    <select name="listener_type" id="listener_type">
       {% for t in listener_types %}
       <option value="{{ t }}" {% if monitor and monitor.listener_type == t %}selected{% endif %}>{{ t|upper }}</option>
       {% endfor %}
     </select>
     <small class="muted">
       HTTP uses the shared web port. TCP/UDP get a dedicated port automatically
-      assigned from the 6101–6199 range on save.
+      assigned from the 6101–6199 range on save. Modbus polls a Modbus TCP
+      device — see the Modbus tab to add devices.
     </small>
   </label>
   {% if monitor and monitor.port %}
@@ -37,6 +38,51 @@
     <small class="muted">Auto-assigned. To change, switch listener type to HTTP and back, or delete and re-create.</small>
   </label>
   {% endif %}
+
+  <fieldset id="modbus_fields" style="border:1px solid var(--border); border-radius:6px; padding:0.85rem 1rem; display:grid; gap:0.9rem;">
+    <legend style="padding:0 0.4rem; color:var(--muted);">Modbus binding</legend>
+    <label>Modbus device
+      <select name="modbus_device_id">
+        <option value="">— select a device —</option>
+        {% for d in modbus_devices %}
+        <option value="{{ d.id }}"
+          {% if monitor and monitor.modbus_device_id == d.id %}selected{% endif %}>
+          {{ d.name }} — {{ d.host }}:{{ d.port }} (regs {{ d.register_start }}–{{ d.register_start + d.register_count - 1 }}, {{ d.word_order }})
+        </option>
+        {% endfor %}
+      </select>
+      <small class="muted">
+        {% if not modbus_devices %}
+          No Modbus devices yet. <a href="{{ url_for('web.modbus_new') }}">Add one first</a>.
+        {% else %}
+          Manage devices on the <a href="{{ url_for('web.modbus_list') }}">Modbus</a> page.
+        {% endif %}
+      </small>
+    </label>
+    <label>Register address
+      <input type="number" name="modbus_register_address" min="0" max="65535"
+             value="{{ monitor.modbus_register_address if monitor and monitor.modbus_register_address is not none else '' }}">
+      <small class="muted">
+        Absolute holding-register address. Must fall within the device's read
+        window. Monigear: temperature = 0, humidity = 2.
+      </small>
+    </label>
+    <label>Data type
+      <select name="modbus_data_type">
+        {% for dt in modbus_data_types %}
+        <option value="{{ dt }}"
+          {% if (monitor and monitor.modbus_data_type == dt) or (not (monitor and monitor.modbus_data_type) and dt == 'float32') %}selected{% endif %}>
+          {{ dt }}
+        </option>
+        {% endfor %}
+      </select>
+      <small class="muted">
+        <code>float32</code>/<code>uint32</code>/<code>int32</code> consume two
+        registers (subject to word order); <code>uint16</code>/<code>int16</code>
+        consume one.
+      </small>
+    </label>
+  </fieldset>
   <label>Value extraction regex
     <input type="text" name="value_regex"
            value="{{ monitor.value_regex if monitor and monitor.value_regex else '' }}"
@@ -71,4 +117,15 @@
     <a href="{{ url_for('web.index') }}" class="button">Cancel</a>
   </div>
 </form>
+
+<script>
+(function () {
+  const sel = document.getElementById('listener_type');
+  const fs = document.getElementById('modbus_fields');
+  if (!sel || !fs) return;
+  function sync() { fs.style.display = (sel.value === 'modbus') ? '' : 'none'; }
+  sel.addEventListener('change', sync);
+  sync();
+})();
+</script>
 {% endblock %}
