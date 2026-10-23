@@ -58,7 +58,7 @@
     <button type="submit" class="button">Poll now</button>
   </form>
   <form method="post" action="{{ url_for('web.modbus_delete', did=device.id) }}" class="inline"
-        onsubmit="return confirm('Delete Modbus device {{ device.name }} AND its {{ monitors|length }} bound monitor(s) (with all their readings)?');">
+        data-confirm="Delete Modbus device &quot;{{ device.name }}&quot; AND its {{ monitors|length }} bound monitor(s), with all their readings?">
     <button type="submit" class="button danger-btn">Delete device</button>
   </form>
 </div>

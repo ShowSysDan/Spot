@@ -8,6 +8,7 @@ from .janitor import JanitorThread
 from .logging_config import configure_logging
 from .listeners import ListenerManager
 from .modbus import ModbusManager
+from .version import __version__
 
 
 def create_app(config: Config | None = None) -> Flask:
@@ -36,6 +37,10 @@ def create_app(config: Config | None = None) -> Flask:
     app.register_blueprint(api_bp, url_prefix="/api")
     app.register_blueprint(data_bp, url_prefix="/data")
 
+    @app.context_processor
+    def _inject_globals():
+        return {"spot_version": __version__, "spot_schema": cfg.db_schema}
+
     manager.start_enabled()
     modbus.start_enabled()
     janitor.start()
@@ -51,6 +56,6 @@ def create_app(config: Config | None = None) -> Flask:
 
     atexit.register(_cleanup)
 
-    app.logger.info("Spot started: web=%s:%d schema=%s",
-                    cfg.web_host, cfg.web_port, cfg.db_schema)
+    app.logger.info("Spot v%s started: web=%s:%d schema=%s",
+                    __version__, cfg.web_host, cfg.web_port, cfg.db_schema)
     return app

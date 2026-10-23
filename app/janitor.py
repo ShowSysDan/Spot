@@ -81,22 +81,22 @@ class JanitorThread(threading.Thread):
         super().__init__(daemon=True, name="spot-janitor")
         self.interval = max(60, int(interval_seconds))
         self.default_days = default_days
-        self._stop = threading.Event()
+        self._stop_event = threading.Event()
 
     def run(self) -> None:
         log.info("janitor started: interval=%ds default_retention=%s",
                  self.interval,
                  f"{self.default_days}d" if self.default_days else "none")
-        if self._stop.wait(timeout=10):
+        if self._stop_event.wait(timeout=10):
             return
-        while not self._stop.is_set():
+        while not self._stop_event.is_set():
             try:
                 run_once(self.default_days)
             except Exception:
                 log.exception("janitor pass failed")
-            if self._stop.wait(timeout=self.interval):
+            if self._stop_event.wait(timeout=self.interval):
                 break
         log.info("janitor stopped")
 
     def stop(self) -> None:
-        self._stop.set()
+        self._stop_event.set()

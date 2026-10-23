@@ -191,28 +191,28 @@ class ModbusPoller(threading.Thread):
         super().__init__(daemon=True, name=f"modbus-{name}-{device_id}")
         self.device_id = device_id
         self.device_name = name
-        self._stop = threading.Event()
+        self._stop_event = threading.Event()
         self._tid = 0
 
     def stop(self) -> None:
-        self._stop.set()
+        self._stop_event.set()
 
     def run(self) -> None:
         log.info("modbus poller started: device=%s id=%d",
                  self.device_name, self.device_id)
         # Brief stagger so all pollers don't hit the network at boot.
-        if self._stop.wait(timeout=2):
+        if self._stop_event.wait(timeout=2):
             log.info("modbus poller stopped: device=%s id=%d",
                      self.device_name, self.device_id)
             return
-        while not self._stop.is_set():
+        while not self._stop_event.is_set():
             try:
                 interval = self._poll_once()
             except Exception:
                 log.exception("modbus poller error device=%s id=%d",
                               self.device_name, self.device_id)
                 interval = DEFAULT_BACKOFF_AFTER_ERROR
-            if self._stop.wait(timeout=interval):
+            if self._stop_event.wait(timeout=interval):
                 break
         log.info("modbus poller stopped: device=%s id=%d",
                  self.device_name, self.device_id)

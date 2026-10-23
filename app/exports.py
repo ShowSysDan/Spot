@@ -4,7 +4,7 @@ import csv
 import io
 import os
 from datetime import datetime
-from typing import Iterable
+from xml.sax.saxutils import escape as _xml_escape
 
 # Point matplotlib's cache at the install dir (writable under systemd's
 # ProtectHome=read-only) before importing matplotlib. setdefault() lets the
@@ -20,6 +20,7 @@ import matplotlib.dates as mdates
 from matplotlib.figure import Figure
 
 from .util import format_local, naive_local, to_local
+from .version import __version__
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter, landscape
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -68,19 +69,31 @@ _LOGO_PATH = os.path.join(_SPOT_ROOT, "app", "static", "logo.svg")
 _TAGLINE = "Data acquisition, down to the last spot."
 
 
-def readings_to_csv(rows: Iterable[tuple[datetime, float | None, str | None]]) -> bytes:
-    """CSV with timestamps in the server's local timezone (ISO-8601 with offset)."""
+def iter_csv(rows, include_monitor: bool = False, chunk_rows: int = 2000):
+    """Yield CSV text in chunks, timestamps in the server's local timezone
+    (ISO-8601 with offset). Rows are (ts, value, label) or, with
+    include_monitor, (ts, monitor_name, unit, value, label).
+
+    Lines are buffered `chunk_rows` at a time so a streamed export never
+    holds more than one chunk in memory.
+    """
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["timestamp", "value", "label"])
-    for ts, value, label in rows:
+    w.writerow(["timestamp", "monitor", "unit", "value", "label"] if include_monitor
+               else ["timestamp", "value", "label"])
+    n = 0
+    for row in rows:
+        ts, *lead, value, label = row
         local = to_local(ts)
-        w.writerow([
-            local.isoformat() if local else "",
-            "" if value is None else value,
-            label or "",
-        ])
-    return buf.getvalue().encode("utf-8")
+        w.writerow([local.isoformat() if local else "", *lead,
+                    "" if value is None else value, label or ""])
+        n += 1
+        if n >= chunk_rows:
+            yield buf.getvalue()
+            buf.seek(0)
+            buf.truncate()
+            n = 0
+    yield buf.getvalue()
 
 
 def _style_dark_axes(ax) -> None:
@@ -95,9 +108,12 @@ def _style_dark_axes(ax) -> None:
 
 
 def render_chart_png(monitor_name: str, unit: str,
-                     points: list[tuple[datetime, float]],
+                     points: list[dict],
                      events: list[tuple[datetime, str]]) -> bytes:
     """Render a chart to PNG using the OO matplotlib API.
+
+    `points` are {ts, value} dicts; downsampled points also carry min/max,
+    which are drawn as a faint band behind the average line.
 
     Avoids pyplot's global state, so this is safe under gunicorn threaded workers.
     """
@@ -105,17 +121,20 @@ def render_chart_png(monitor_name: str, unit: str,
     ax = fig.subplots()
     _style_dark_axes(ax)
     if points:
-        xs = [naive_local(p[0]) for p in points]
-        ys = [p[1] for p in points]
+        xs = [naive_local(p["ts"]) for p in points]
+        ys = [p["value"] for p in points]
+        if "min" in points[0]:
+            ax.fill_between(xs, [p["min"] for p in points], [p["max"] for p in points],
+                            color=_ACCENT_HEX, alpha=0.18, linewidth=0)
         ax.plot(xs, ys, linewidth=1.2, color=_ACCENT_HEX)
     for ts, label in events:
         local_ts = naive_local(ts)
         ax.axvline(local_ts, color=_DANGER_HEX, linestyle="--", linewidth=0.8, alpha=0.8)
-        ax.annotate(label, xy=(local_ts, 1.0), xycoords=("data", "axes fraction"),
+        ax.annotate(_mpl_text(label), xy=(local_ts, 1.0), xycoords=("data", "axes fraction"),
                     xytext=(2, -10), textcoords="offset points",
                     fontsize=8, color=_DANGER_HEX, rotation=90,
                     verticalalignment="top")
-    ax.set_ylabel(unit)
+    ax.set_ylabel(_mpl_text(unit))
     ax.set_xlabel(f"Time ({_local_tz_name()})")
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d %H:%M:%S"))
     fig.autofmt_xdate()
@@ -123,6 +142,13 @@ def render_chart_png(monitor_name: str, unit: str,
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=120, facecolor=fig.get_facecolor())
     return buf.getvalue()
+
+
+def _mpl_text(s: str) -> str:
+    """Make user text literal for matplotlib: '$' would start mathtext and a
+    leading '_' hides a legend entry."""
+    s = (s or "").replace("$", r"\$")
+    return " " + s if s.startswith("_") else s
 
 
 def _local_tz_name() -> str:
@@ -157,10 +183,10 @@ def render_overlay_chart_png(start: datetime, end: datetime,
         for m in groups[unit]:
             xs = [naive_local(p["ts"]) for p in m["points"]]
             ys = [p["value"] for p in m["points"]]
-            ax.plot(xs, ys, label=m["name"], linewidth=1.2,
+            ax.plot(xs, ys, label=_mpl_text(m["name"]), linewidth=1.2,
                     color=_OVERLAY_COLORS[color_idx % len(_OVERLAY_COLORS)])
             color_idx += 1
-        ax.set_ylabel(unit)
+        ax.set_ylabel(_mpl_text(unit))
         legend = ax.legend(loc="upper right", fontsize=14,
                            facecolor=_CARD_HEX, edgecolor=_BORDER_HEX,
                            labelcolor=_FG_HEX)
@@ -356,7 +382,7 @@ def _draw_dark_page(canvas, doc) -> None:
     canvas.setFillColor(_MUTED)
     canvas.setFont("Helvetica", 8.5)
     canvas.drawRightString(w - 0.5 * inch, 0.32 * inch,
-                           f"Generated {stamp}   ·   Page {doc.page}")
+                           f"Generated {stamp}   ·   Spot v{__version__}   ·   Page {doc.page}")
     canvas.restoreState()
 
 
@@ -451,11 +477,11 @@ def render_overlay_pdf(start: datetime, end: datetime, monitors: list[dict]) -> 
     flow = [
         _brand_block(),
         _accent_rule(),
-        Paragraph(f"<b>{_join_monitor_names(monitors)}</b>", title_style),
+        Paragraph(f"<b>{_xml_escape(_join_monitor_names(monitors))}</b>", title_style),
         _meta_line([
             ("Range", f"{format_local(start)} &nbsp;&rarr;&nbsp; {format_local(end)}"),
             ("Monitors", str(len(monitors))),
-            ("Units", ", ".join(units) if units else "—"),
+            ("Units", _xml_escape(", ".join(units)) if units else "—"),
         ]),
         Spacer(1, 0.08 * inch),
         _section_label("Timeseries", section_style),
@@ -467,6 +493,12 @@ def render_overlay_pdf(start: datetime, end: datetime, monitors: list[dict]) -> 
 
     rows = [["Monitor", "Unit", "Samples", "Min", "Max", "Avg"]]
     for m in monitors:
+        summ = m.get("summary")
+        if summ:
+            # Exact SQL aggregates; preferred because points may be downsampled.
+            rows.append([m["name"], m["unit"], f"{summ['count']:,}",
+                         _fmt(summ["min"]), _fmt(summ["max"]), _fmt(summ["avg"])])
+            continue
         ys = [p["value"] for p in m["points"]]
         if ys:
             rows.append([m["name"], m["unit"], str(len(ys)),
@@ -500,10 +532,10 @@ def render_pdf(monitor_name: str, unit: str, start: datetime, end: datetime,
     flow = [
         _brand_block(),
         _accent_rule(),
-        Paragraph(f"<b>{monitor_name}</b>", title_style),
+        Paragraph(f"<b>{_xml_escape(monitor_name)}</b>", title_style),
         _meta_line([
             ("Range", f"{format_local(start)} &nbsp;&rarr;&nbsp; {format_local(end)}"),
-            ("Unit", unit),
+            ("Unit", _xml_escape(unit)),
         ]),
         Spacer(1, 0.08 * inch),
         _section_label("Timeseries", section_style),
@@ -514,7 +546,7 @@ def render_pdf(monitor_name: str, unit: str, start: datetime, end: datetime,
 
     stat_row = Table(
         [[
-            _stat_tile("Samples", str(summary.get("count", 0)), value_pt=16),
+            _stat_tile("Samples", f"{summary.get('count', 0):,}", value_pt=16),
             _stat_tile("Min",     _fmt(summary.get("min")),     value_pt=24, primary=True),
             _stat_tile("Max",     _fmt(summary.get("max")),     value_pt=24, primary=True),
             _stat_tile("Average", _fmt(summary.get("avg")),     value_pt=24, primary=True),

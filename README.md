@@ -2,6 +2,10 @@
 
 **Data acquisition, down to the last spot.**
 
+Current version: **1.1.0** — see [CHANGELOG.md](CHANGELOG.md). The running
+version is shown in the web UI footer, logged at startup, and stamped on every
+PDF report.
+
 Spot is a small Flask + PostgreSQL application that ingests numeric readings and
 event markers from monitors (audio processors, temperature sensors, anything
 that can speak HTTP, TCP, or UDP), stores them in an isolated Postgres schema,
@@ -31,13 +35,22 @@ and lets you browse, query, graph, and export the data.
 - **Event markers** — push a label string (`"Show Start"`, `"Fire Alarm"`)
   with or without a numeric value. Events are stored alongside readings and
   rendered as vertical markers on the graph.
-- **Live dashboard** — auto-refreshing chart of the last 30 s / 1 min / 5 min /
-  15 min, with the latest reading and recent events.
-- **Query & export** — pick a UTC time range; see min/max/avg/count + event
-  count; export the range to **CSV** or a one-page **PDF** with the chart.
-- **Multi-monitor overlay** — plot multiple monitors over the same time range
-  on one chart. Monitors that share a unit share a Y axis; differing units get
-  their own axis (left/right alternating).
+- **Live readout home page** — every monitor gets a tile with its latest
+  value, a one-hour sparkline, the 1-hour range, and a freshness dot
+  (green = reporting, amber = stale, grey = nothing recent). Tiles refresh
+  every 5 s while the tab is visible and click through to the dashboard.
+- **Live dashboard** — windows from 1 minute to 7 days, with current / min /
+  max / average / sample-count cards, event markers drawn on the chart, a
+  pause button, and an auto refresh rate that slows down for long windows.
+  Long windows are downsampled on the server, so a day at 1 Hz loads ~1,500
+  points instead of 86,400, with the min/max band shaded behind the line.
+- **Query & export** — pick a range (or a quick preset: last hour, 24 h,
+  7 days, today, yesterday, this week…); see min/max/avg/count + event count;
+  export the range to **CSV** or a one-page **PDF** with the chart.
+- **Reports** (formerly *Overlay*) — tick one or more monitors, pick a range,
+  preview them on one chart with a per-monitor summary table, then download a
+  branded **PDF report** or one combined **CSV**. Monitors that share a unit
+  share a Y axis; differing units get their own axis (left/right alternating).
 - **Per-monitor retention** with **global default** — each monitor can set
   its own `retention_days`; if blank, `SPOT_DEFAULT_RETENTION_DAYS` (env)
   applies. A janitor thread (default hourly) bulk-deletes expired readings;
@@ -226,8 +239,11 @@ For remote syslog, set `SPOT_SYSLOG_ADDRESS=loghost.example.com:514`.
 cd ~/Spot
 git pull        # or copy in the new tree
 .venv/bin/pip install -r requirements.txt
-sudo systemctl restart spot@<user>.service
+sudo systemctl restart spot
 ```
+
+Check the footer (or `journalctl -u spot | grep started`) to confirm the new
+version is running.
 
 The schema is migrated by `Base.metadata.create_all`, which only adds new
 tables/columns it doesn't know about — destructive changes require a manual
@@ -334,9 +350,40 @@ One reading per datagram (or newline-separated lines per datagram):
 printf '92.3' | nc -u -w1 HOST <PORT>
 ```
 
+### Monitors (home page)
+
+`/` shows a live tile per monitor plus a **Manage** table (collapsible; the
+open/closed state and the filter box are remembered per browser).
+
+- The big number is the latest value, rounded to the monitor's
+  *decimal places* when set.
+- The sparkline covers the last hour (60 one-minute averages); the
+  bottom-right figure is the low–high of those averages.
+- The dot is green while the monitor is reporting, amber once its newest
+  reading is older than the stale threshold, and grey when it is long
+  overdue or has no data. The threshold is 5 minutes, or 3× the poll
+  interval for Modbus monitors (minimum 30 s).
+- Polling pauses while the browser tab is hidden.
+
 ### Live dashboard
 
 `/monitors/<id>/dashboard` — auto-refreshing chart of the last N seconds.
+
+- **Windows:** 1 m, 5 m, 15 m, 1 h, 3 h, 6 h, 12 h, 24 h, 48 h, 7 d. The
+  choice is remembered per monitor and kept in the URL
+  (`?window=86400`), so a link opens the same view.
+- **Refresh:** *Auto* refreshes every 1 s for short windows and backs off to
+  once a minute for multi-day ones; a fixed rate can be picked instead.
+  **Pause** freezes the chart.
+- **Stats cards:** current value, plus min / max (with when they happened),
+  average and sample count for the whole window. These are computed in SQL
+  from every reading, even when the chart itself is downsampled.
+- **Downsampling:** when a window holds more than 1,500 readings, the chart
+  shows fixed-width bucket averages with the min/max band shaded. A note
+  under the sample count says how wide the buckets are.
+- **Events** appear as dashed red markers on the chart and in the list below.
+- **Report this window** opens Reports with this monitor and the visible
+  range already filled in.
 
 ### Query & export
 
@@ -347,12 +394,30 @@ Direct URLs (also usable from cron / scripts):
 
 - `GET /data/monitor/<id>/series?start=...&end=...` — JSON points + events
 - `GET /data/monitor/<id>/summary?start=...&end=...` — min/max/avg/count
-- `GET /data/monitor/<id>/recent?seconds=30`         — recent points
+- `GET /data/monitor/<id>/recent?seconds=30`         — recent points (add `&stats=1` for window min/max/avg/count)
 - `GET /data/monitor/<id>/latest`                    — only the most recent reading (`{ts, value, label}`)
+- `GET /data/latest`                                 — latest reading + 1 h sparkline for every monitor (`?ids=1,2` to narrow, `?spark_minutes=N` up to 1440)
 - `GET /data/monitor/<id>/export.csv?start=...&end=...`
 - `GET /data/monitor/<id>/export.pdf?start=...&end=...`
-- `GET /data/overlay?ids=1,2,3&start=...&end=...`    — series for many monitors
-- `GET /data/overlay/export.pdf?ids=1,2,3&start=...&end=...` — combined PDF
+- `GET /data/overlay?ids=1,2,3&start=...&end=...`    — series for many monitors (add `&summary=1` for exact per-monitor stats)
+- `GET /data/overlay/export.pdf?ids=1,2,3&start=...&end=...` — combined PDF report
+- `GET /data/overlay/export.csv?ids=1,2,3&start=...&end=...` — combined CSV (`timestamp,monitor,unit,value,label`)
+
+Common parameters:
+
+| Parameter | Applies to | Meaning |
+|-----------|-----------|---------|
+| `start`, `end` | range endpoints | ISO-8601 timestamps (see below). `end` defaults to now. |
+| `minutes` | range endpoints | Used when `start` is omitted: range is the last N minutes (default 60). |
+| `max_points` | `series`, `recent`, `overlay` | If the range holds more readings than this (10–10,000), return fixed-width bucket averages instead. Bucketed points carry `min`/`max` too, and the response's `bucket_seconds` says how wide each bucket is (`null` = raw readings). |
+
+Limits: a single request can cover at most **366 days**; `overlay` accepts at
+most 50 ids; series responses include at most the 500 most recent event
+markers. Malformed timestamps or integers return **400** with a message
+(they used to return 500). CSV exports are streamed straight from the
+database, so a long export uses the same memory as a short one; PDF charts are
+drawn from at most 4,000 bucketed points, while their stats always use every
+reading.
 
 Timestamps in URLs accept ISO-8601 with offset (`2026-04-28T15:00:00-04:00`)
 or with `Z` for UTC (`2026-04-28T19:00:00Z`). The web UI's date pickers and
@@ -443,15 +508,24 @@ their dashboards.
 3. The poller starts immediately if the device is enabled. **Poll now** on
    the device page does a one-shot read so you can confirm the wiring.
 
-### Multi-monitor overlay
+### Reports
 
-`/overlay` — pick monitors (Cmd/Ctrl-click to multi-select) and a UTC range.
+`/reports` (the old `/overlay` URL redirects here) is where multi-monitor
+charts and the PDF / CSV reports live.
 
-- **In-browser**: each unit gets its own Y axis (alternating left/right) on a
-  single chart.
-- **PDF export**: one panel per unit stacked vertically, sharing the X axis,
-  with a per-monitor min/max/avg summary table.
-- **CSV export**: one CSV per selected monitor.
+1. Tick monitors in the left panel. They are grouped by unit; the filter box,
+   **All** and **None** help with long lists.
+2. Pick a range: type it, or click a preset (last hour, 6 h, 24 h, 7 days,
+   30 days, today, yesterday, this week). Times are browser-local.
+3. **Preview** draws every selected monitor on one chart, one Y axis per
+   unit, with a summary table (samples, min, max, average, events).
+4. **Download PDF** — branded landscape report: one chart panel per unit
+   stacked on a shared time axis, plus the per-monitor summary table.
+   **Download CSV** — one combined file with a `monitor` and `unit` column.
+
+The page URL updates as you preview (`/reports?ids=1,2&start=…&end=…`), so a
+report can be bookmarked or shared. Each monitor's dashboard, detail page and
+Manage row has a **Report** link that opens this page pre-filled.
 
 ### Retention & storage
 
@@ -491,7 +565,7 @@ All Spot loggers are children of `spot.*`:
 - `spot.db`         — schema bring-up
 - `spot.data`       — query/export
 
-The same records go to **stderr** (visible in `journalctl -u spot@<user>`)
+The same records go to **stderr** (visible in `journalctl -u spot`)
 **and** syslog (the facility you set in `SPOT_SYSLOG_FACILITY`).
 
 ---
@@ -519,6 +593,8 @@ Browser ──► Flask (web UI, /api/ingest, /api/event, /data/...)
 
 - One process, threaded HTTP, daemon listener threads. Listener buffers are
   capped (8 KiB per line / datagram); oversize messages are logged and dropped.
+  Each TCP listener accepts at most 32 simultaneous connections (extra ones
+  are closed and logged) and closes its open connections when stopped.
 - The DB engine uses a small connection pool with `pool_pre_ping`; on shutdown
   the engine is disposed.
 - Charts are rendered server-side with the matplotlib OO API (no `pyplot`
@@ -539,6 +615,23 @@ Schema is created on first start. To wipe the data and start over:
 DROP SCHEMA spot CASCADE;
 CREATE SCHEMA spot AUTHORIZATION spot_user;
 ```
+
+### Front-end layout
+
+- `app/static/spot.js` — shared helpers exposed as `window.Spot`: value
+  formatting, "N ago" text, quick-range presets, a non-overlapping poller
+  that pauses in hidden tabs, the sparkline renderer, the Chart.js
+  event-marker plugin, `data-confirm` form confirmation, and `data-copy`
+  copy buttons.
+- `app/static/style.css` — one dark theme; colours are CSS variables on
+  `:root` and mirrored in `app/exports.py` for PDFs.
+- Static URLs carry `?v=<version>` so browsers fetch fresh CSS/JS after an
+  upgrade.
+
+### Versioning
+
+The version lives in `app/version.py` and is bumped with every change;
+`CHANGELOG.md` records what changed in each version.
 
 ---
 

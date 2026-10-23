@@ -36,6 +36,12 @@ log = logging.getLogger("spot.web")
 VALID_LISTENER_TYPES = ("http", "tcp", "udp", "modbus")
 
 
+def _safe_next() -> str | None:
+    """Same-site redirect target from a form's hidden `next` field, if any."""
+    nxt = request.form.get("next") or ""
+    return nxt if nxt.startswith("/") and not nxt.startswith("//") else None
+
+
 def _manager() -> ListenerManager:
     return current_app.config["SPOT_LISTENERS"]
 
@@ -44,10 +50,23 @@ def _modbus() -> ModbusManager:
     return current_app.config["SPOT_MODBUS"]
 
 
+# A monitor whose newest reading is older than this is shown as "stale" on
+# the home page. Modbus monitors use 3x their device's poll interval instead,
+# since Spot knows exactly how often those should report.
+STALE_AFTER_SECONDS = 300
+
+
 @bp.route("/")
 def index():
     with session_scope() as s:
-        rows = [monitor_view(m) for m in s.query(Monitor).order_by(Monitor.name).all()]
+        rows = []
+        for m in s.query(Monitor).order_by(Monitor.name).all():
+            v = monitor_view(m)
+            if m.modbus_device is not None:
+                v["stale_after"] = max(30, 3 * m.modbus_device.poll_interval_seconds)
+            else:
+                v["stale_after"] = STALE_AFTER_SECONDS
+            rows.append(v)
     statuses = _manager().status()
     for r in rows:
         r["listener_alive"] = statuses.get(r["id"], False)
@@ -108,7 +127,8 @@ def monitor_toggle(mid: int):
     else:
         _manager().stop_monitor(info["id"])
         log.info("monitor disabled: %s id=%d", info["name"], info["id"])
-    return redirect(url_for("web.index"))
+    flash(f"{info['name']} {'enabled' if info['enabled'] else 'disabled'}.", "success")
+    return redirect(_safe_next() or url_for("web.index"))
 
 
 @bp.route("/monitors/<int:mid>")
@@ -182,11 +202,19 @@ def storage():
     return render_template("storage.html", overview=overview)
 
 
-@bp.route("/overlay")
-def overlay():
+@bp.route("/reports")
+def reports():
+    """Compare monitors on one chart and export PDF/CSV reports."""
     with session_scope() as s:
         rows = [monitor_view(m) for m in s.query(Monitor).order_by(Monitor.name).all()]
-    return render_template("overlay.html", monitors=rows)
+    return render_template("reports.html", monitors=rows)
+
+
+@bp.route("/overlay")
+def overlay():
+    """Old name for /reports; kept so bookmarks keep working."""
+    qs = request.query_string.decode()
+    return redirect(url_for("web.reports") + (f"?{qs}" if qs else ""), code=301)
 
 
 # ---------------------------------------------------------------------------

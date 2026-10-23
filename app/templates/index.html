@@ -1,48 +1,172 @@
 {% extends "base.html" %}
 {% block title %}Spot — Monitors{% endblock %}
 {% block content %}
-<h1>Monitors</h1>
+<div class="page-head">
+  <h1>Monitors</h1>
+  {% if monitors %}
+  <div class="page-tools">
+    <input type="search" id="filter" placeholder="Filter by name or unit…" aria-label="Filter monitors">
+    <span id="live-status" class="live-pill" title="Values refresh every 5 seconds while this tab is visible">
+      <span class="dot"></span> live
+    </span>
+  </div>
+  {% endif %}
+</div>
+
 {% if not monitors %}
-  <p>No monitors yet. <a href="{{ url_for('web.monitor_new') }}">Add one</a>.</p>
+  <div class="empty">
+    <img src="{{ url_for('static', filename='logo.svg') }}" alt="" class="empty-logo">
+    <h2>No monitors yet</h2>
+    <p class="muted">A monitor is one stream of readings — a sound level meter, a temperature probe,
+      anything that can send numbers over HTTP, TCP, UDP, or Modbus.</p>
+    <p>
+      <a class="button primary" href="{{ url_for('web.monitor_new') }}">Add your first monitor</a>
+      <a class="button" href="{{ url_for('web.modbus_new') }}">Add a Modbus sensor</a>
+    </p>
+  </div>
 {% else %}
-<table class="grid">
-  <thead>
-    <tr>
-      <th>Name</th><th>Unit</th><th>Listener</th><th>Port</th>
-      <th>Retention</th><th>Enabled</th><th>Listener thread</th><th>Actions</th>
-    </tr>
-  </thead>
-  <tbody>
+
+<section class="tiles" id="tiles">
   {% for m in monitors %}
-    <tr>
-      <td><a href="{{ url_for('web.monitor_detail', mid=m.id) }}">{{ m.name }}</a>
-          {% if m.description %}<div class="muted">{{ m.description }}</div>{% endif %}</td>
-      <td>{{ m.unit }}</td>
-      <td>{{ m.listener_type|upper }}</td>
-      <td>{{ m.port or "—" }}</td>
-      <td>{% if m.retention_days %}{{ m.retention_days }}d{% else %}<span class="muted">∞</span>{% endif %}</td>
-      <td>{% if m.enabled %}<span class="ok">on</span>{% else %}<span class="off">off</span>{% endif %}</td>
-      <td>
-        {% if m.listener_type in ('http', 'modbus') %}<span class="muted">n/a</span>
-        {% elif m.listener_alive %}<span class="ok">running</span>
-        {% else %}<span class="off">stopped</span>
-        {% endif %}
-      </td>
-      <td class="actions">
-        <a href="{{ url_for('web.monitor_dashboard', mid=m.id) }}">Dashboard</a>
-        <a href="{{ url_for('web.monitor_query', mid=m.id) }}">Query</a>
-        <a href="{{ url_for('web.monitor_edit', mid=m.id) }}">Edit</a>
-        <form method="post" action="{{ url_for('web.monitor_toggle', mid=m.id) }}" class="inline">
-          <button type="submit" class="link">{{ 'Disable' if m.enabled else 'Enable' }}</button>
-        </form>
-        <form method="post" action="{{ url_for('web.monitor_delete', mid=m.id) }}" class="inline"
-              onsubmit="return confirm('Delete monitor {{ m.name }} and all its data?');">
-          <button type="submit" class="link danger">Delete</button>
-        </form>
-      </td>
-    </tr>
+  <a class="tile {{ '' if m.enabled else 'is-disabled' }}" id="tile-{{ m.id }}"
+     href="{{ url_for('web.monitor_dashboard', mid=m.id) }}"
+     data-id="{{ m.id }}" data-decimals="{{ m.decimal_places if m.decimal_places is not none else '' }}"
+     data-stale-after="{{ m.stale_after }}" data-filter="{{ (m.name ~ ' ' ~ m.unit ~ ' ' ~ (m.description or ''))|lower }}"
+     title="Open the live dashboard for {{ m.name }}">
+    <div class="tile-head">
+      <span class="fresh-dot" aria-hidden="true"></span>
+      <span class="tile-name">{{ m.name }}</span>
+      <span class="tile-type">{{ m.listener_type|upper }}</span>
+    </div>
+    <div class="tile-value"><span class="v">—</span> <span class="u">{{ m.unit }}</span></div>
+    <canvas class="spark" aria-hidden="true"></canvas>
+    <div class="tile-foot">
+      <span class="ago">{{ 'disabled' if not m.enabled else 'waiting for data…' }}</span>
+      <span class="range"></span>
+    </div>
+  </a>
   {% endfor %}
-  </tbody>
-</table>
+</section>
+
+<details class="manage" id="manage" open>
+  <summary><h2>Manage</h2></summary>
+  <table class="grid" id="manage-table">
+    <thead>
+      <tr>
+        <th>Name</th><th>Unit</th><th>Input</th><th>Retention</th>
+        <th>Status</th><th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for m in monitors %}
+      <tr data-filter="{{ (m.name ~ ' ' ~ m.unit ~ ' ' ~ (m.description or ''))|lower }}">
+        <td><a href="{{ url_for('web.monitor_detail', mid=m.id) }}">{{ m.name }}</a>
+            {% if m.description %}<div class="muted">{{ m.description }}</div>{% endif %}</td>
+        <td>{{ m.unit }}</td>
+        <td>
+          {{ m.listener_type|upper }}{% if m.port %} <span class="muted">:{{ m.port }}</span>{% endif %}
+          {% if m.listener_type == 'modbus' and m.modbus_device_name %}
+            <div class="muted">via {{ m.modbus_device_name }}</div>
+          {% endif %}
+        </td>
+        <td>{% if m.retention_days %}{{ m.retention_days }}d{% else %}<span class="muted">default</span>{% endif %}</td>
+        <td>
+          {% if not m.enabled %}<span class="badge off">disabled</span>
+          {% elif m.listener_type in ('tcp', 'udp') and not m.listener_alive %}<span class="badge bad" title="The listener thread isn't running — check syslog for a bind error">listener down</span>
+          {% else %}<span class="badge ok">enabled</span>
+          {% endif %}
+        </td>
+        <td class="actions">
+          <a href="{{ url_for('web.monitor_dashboard', mid=m.id) }}">Dashboard</a>
+          <a href="{{ url_for('web.monitor_query', mid=m.id) }}">Query</a>
+          <a href="{{ url_for('web.reports', ids=m.id) }}">Report</a>
+          <a href="{{ url_for('web.monitor_edit', mid=m.id) }}">Edit</a>
+          <form method="post" action="{{ url_for('web.monitor_toggle', mid=m.id) }}" class="inline">
+            <button type="submit" class="link">{{ 'Disable' if m.enabled else 'Enable' }}</button>
+          </form>
+          <form method="post" action="{{ url_for('web.monitor_delete', mid=m.id) }}" class="inline"
+                data-confirm="Delete monitor &quot;{{ m.name }}&quot; and all of its data?">
+            <button type="submit" class="link danger">Delete</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</details>
+
+<script>
+(function () {
+  const tiles = new Map();
+  document.querySelectorAll('.tile').forEach(el => tiles.set(Number(el.dataset.id), {
+    el,
+    v: el.querySelector('.v'),
+    ago: el.querySelector('.ago'),
+    range: el.querySelector('.range'),
+    spark: el.querySelector('.spark'),
+    decimals: el.dataset.decimals,
+    staleAfter: Number(el.dataset.staleAfter) * 1000,
+    disabled: el.classList.contains('is-disabled'),
+    data: null,
+  }));
+  let sparkWindow = { start: null, end: null };
+
+  function paint(t, now) {
+    const d = t.data;
+    if (!d) return;
+    t.v.textContent = Spot.fmtValue(d.value, t.decimals);
+    const age = d.ts ? now - new Date(d.ts).valueOf() : Infinity;
+    let state = 'none';
+    if (d.ts) state = age <= t.staleAfter ? 'fresh' : (age <= t.staleAfter * 12 ? 'stale' : 'old');
+    t.el.dataset.state = t.disabled ? 'disabled' : state;
+    t.ago.textContent = t.disabled ? 'disabled' : (d.ts ? `updated ${Spot.timeAgo(d.ts, now)}` : 'no data yet');
+    if (d.spark && d.spark.length) {
+      let lo = Infinity, hi = -Infinity;
+      for (const p of d.spark) { if (p[1] < lo) lo = p[1]; if (p[1] > hi) hi = p[1]; }
+      t.range.textContent = `1h ${Spot.fmtValue(lo, t.decimals)}–${Spot.fmtValue(hi, t.decimals)}`;
+    } else {
+      t.range.textContent = '';
+    }
+    Spot.sparkline(t.spark, d.spark, sparkWindow);
+  }
+
+  async function refresh() {
+    const r = await fetch('/data/latest');
+    const pill = document.getElementById('live-status');
+    if (!r.ok) { pill.classList.add('down'); return; }
+    pill.classList.remove('down');
+    const j = await r.json();
+    sparkWindow = { start: new Date(j.spark_start).valueOf(), end: new Date(j.now).valueOf() };
+    const now = Date.now();
+    for (const m of j.monitors) {
+      const t = tiles.get(m.id);
+      if (t) { t.data = m; paint(t, now); }
+    }
+  }
+
+  Spot.poller(refresh, 5000);
+  // Keep the "updated Ns ago" text ticking between fetches.
+  setInterval(() => { if (!document.hidden) { const now = Date.now(); tiles.forEach(t => paint(t, now)); } }, 1000);
+  window.addEventListener('resize', () => tiles.forEach(t => t.data && Spot.sparkline(t.spark, t.data.spark, sparkWindow)));
+
+  // Filter tiles + table rows together.
+  const filter = document.getElementById('filter');
+  filter.value = Spot.store.get('spot.index.filter', '');
+  function applyFilter() {
+    const q = filter.value.trim().toLowerCase();
+    Spot.store.set('spot.index.filter', filter.value);
+    document.querySelectorAll('[data-filter]').forEach(el => {
+      el.hidden = q !== '' && !el.dataset.filter.includes(q);
+    });
+  }
+  filter.addEventListener('input', applyFilter);
+  applyFilter();
+
+  // Remember whether the Manage section is collapsed.
+  const manage = document.getElementById('manage');
+  manage.open = Spot.store.get('spot.index.manage', 'open') === 'open';
+  manage.addEventListener('toggle', () => Spot.store.set('spot.index.manage', manage.open ? 'open' : 'closed'));
+})();
+</script>
 {% endif %}
 {% endblock %}
