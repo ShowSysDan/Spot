@@ -77,22 +77,19 @@ def index():
 def monitor_new():
     if request.method == "POST":
         return _save_monitor(None)
-    with session_scope() as s:
-        devices = [modbus_device_view(d) for d in
-                   s.query(ModbusDevice).order_by(ModbusDevice.name).all()]
-    return render_template("monitor_form.html", monitor=None,
-                           listener_types=VALID_LISTENER_TYPES,
-                           default_retention=current_app.config["SPOT"].default_retention_days,
-                           modbus_devices=devices,
-                           modbus_data_types=DATA_TYPES)
+    return _monitor_form(None)
 
 
 @bp.route("/monitors/<int:mid>/edit", methods=["GET", "POST"])
 def monitor_edit(mid: int):
     if request.method == "POST":
         return _save_monitor(mid)
+    return _monitor_form(mid)
+
+
+def _monitor_form(mid: int | None):
     with session_scope() as s:
-        data = monitor_view(get_monitor_or_404(s, mid))
+        data = monitor_view(get_monitor_or_404(s, mid)) if mid is not None else None
         devices = [modbus_device_view(d) for d in
                    s.query(ModbusDevice).order_by(ModbusDevice.name).all()]
     return render_template("monitor_form.html", monitor=data,
@@ -236,11 +233,7 @@ def modbus_list():
 def modbus_new():
     if request.method == "POST":
         return _save_modbus_device(None)
-    return render_template("modbus_form.html", device=None,
-                           word_orders=WORD_ORDERS,
-                           default_port=MODBUS_DEFAULT_PORT,
-                           min_poll_interval=MIN_POLL_INTERVAL,
-                           is_new=True)
+    return _modbus_form(None)
 
 
 @bp.route("/modbus/<int:did>")
@@ -258,13 +251,19 @@ def modbus_detail(did: int):
 def modbus_edit(did: int):
     if request.method == "POST":
         return _save_modbus_device(did)
-    with session_scope() as s:
-        data = modbus_device_view(get_modbus_device_or_404(s, did))
+    return _modbus_form(did)
+
+
+def _modbus_form(did: int | None):
+    data = None
+    if did is not None:
+        with session_scope() as s:
+            data = modbus_device_view(get_modbus_device_or_404(s, did))
     return render_template("modbus_form.html", device=data,
                            word_orders=WORD_ORDERS,
                            default_port=MODBUS_DEFAULT_PORT,
                            min_poll_interval=MIN_POLL_INTERVAL,
-                           is_new=False)
+                           is_new=did is None)
 
 
 @bp.route("/modbus/<int:did>/delete", methods=["POST"])
@@ -305,83 +304,87 @@ def modbus_poll_now(did: int):
     return redirect(url_for("web.modbus_detail", did=did))
 
 
+# ---------------------------------------------------------------------------
+# Form helpers
+# ---------------------------------------------------------------------------
+
+class _FormError(Exception):
+    """Validation failure: flashed to the user, who is sent back to the form."""
+
+
+def _form_str(name: str, default: str = "") -> str:
+    return (request.form.get(name) or default).strip()
+
+
+def _form_int(name: str, default: str | None, error: str) -> int | None:
+    """Integer field. A missing/empty field falls back to `default`; with no
+    default the field is optional and blank means None."""
+    raw = _form_str(name, default or "")
+    if raw == "":
+        if default is None:
+            return None
+        raise _FormError(error)  # whitespace-only value for a required field
+    try:
+        return int(raw)
+    except ValueError:
+        raise _FormError(error) from None
+
+
+def _check(ok: bool, error: str) -> None:
+    if not ok:
+        raise _FormError(error)
+
+
 def _save_modbus_device(did: int | None):
-    name = (request.form.get("name") or "").strip()
-    description = (request.form.get("description") or "").strip() or None
-    host = (request.form.get("host") or "").strip()
-    port_raw = (request.form.get("port") or str(MODBUS_DEFAULT_PORT)).strip()
-    slave_raw = (request.form.get("slave_id") or "0").strip()
-    interval_raw = (request.form.get("poll_interval_seconds") or "10").strip()
-    timeout_raw = (request.form.get("timeout_seconds") or "5").strip()
-    word_order = (request.form.get("word_order") or "CDAB").strip().upper()
-    register_start_raw = (request.form.get("register_start") or "0").strip()
-    register_count_raw = (request.form.get("register_count") or "4").strip()
+    try:
+        return _save_modbus_device_checked(did)
+    except _FormError as e:
+        flash(str(e), "error")
+        return redirect(request.url)
+
+
+def _save_modbus_device_checked(did: int | None):
+    name = _form_str("name")
+    description = _form_str("description") or None
+    host = _form_str("host")
+    word_order = _form_str("word_order", "CDAB").upper()
     enabled = bool(request.form.get("enabled"))
     auto_create = bool(request.form.get("auto_create_temp_humidity"))
 
-    if not name:
-        flash("Name is required.", "error")
-        return redirect(request.url)
-    if not host:
-        flash("Host is required.", "error")
-        return redirect(request.url)
-    if word_order not in WORD_ORDERS:
-        flash(f"Word order must be one of {', '.join(WORD_ORDERS)}.", "error")
-        return redirect(request.url)
-    try:
-        port = int(port_raw)
-        slave_id = int(slave_raw)
-        poll_interval = int(interval_raw)
-        timeout = int(timeout_raw)
-        register_start = int(register_start_raw)
-        register_count = int(register_count_raw)
-    except ValueError:
-        flash("Port, slave id, intervals, and registers must be integers.", "error")
-        return redirect(request.url)
-    if not 1 <= port <= 65535:
-        flash("Port must be 1-65535.", "error")
-        return redirect(request.url)
-    if not 0 <= slave_id <= 255:
-        flash("Slave id must be 0-255.", "error")
-        return redirect(request.url)
-    if poll_interval < MIN_POLL_INTERVAL:
-        flash(f"Poll interval must be at least {MIN_POLL_INTERVAL}s.", "error")
-        return redirect(request.url)
-    if timeout < 1:
-        flash("Timeout must be at least 1 second.", "error")
-        return redirect(request.url)
-    if not 0 <= register_start <= 0xFFFF:
-        flash("Register start must be 0-65535.", "error")
-        return redirect(request.url)
-    if not 1 <= register_count <= 125:
-        flash("Register count must be 1-125 (Modbus spec).", "error")
-        return redirect(request.url)
+    _check(bool(name), "Name is required.")
+    _check(bool(host), "Host is required.")
+    _check(word_order in WORD_ORDERS, f"Word order must be one of {', '.join(WORD_ORDERS)}.")
+    int_err = "Port, slave id, intervals, and registers must be integers."
+    port = _form_int("port", str(MODBUS_DEFAULT_PORT), int_err)
+    slave_id = _form_int("slave_id", "0", int_err)
+    poll_interval = _form_int("poll_interval_seconds", "10", int_err)
+    timeout = _form_int("timeout_seconds", "5", int_err)
+    register_start = _form_int("register_start", "0", int_err)
+    register_count = _form_int("register_count", "4", int_err)
+    _check(1 <= port <= 65535, "Port must be 1-65535.")
+    _check(0 <= slave_id <= 255, "Slave id must be 0-255.")
+    _check(poll_interval >= MIN_POLL_INTERVAL,
+           f"Poll interval must be at least {MIN_POLL_INTERVAL}s.")
+    _check(timeout >= 1, "Timeout must be at least 1 second.")
+    _check(0 <= register_start <= 0xFFFF, "Register start must be 0-65535.")
+    _check(1 <= register_count <= 125, "Register count must be 1-125 (Modbus spec).")
 
+    fields = dict(name=name, description=description, host=host, port=port,
+                  slave_id=slave_id, poll_interval_seconds=poll_interval,
+                  timeout_seconds=timeout, word_order=word_order,
+                  register_start=register_start, register_count=register_count,
+                  enabled=enabled)
     with session_scope() as s:
         if did is None:
-            d = ModbusDevice(name=name, description=description, host=host,
-                             port=port, slave_id=slave_id,
-                             poll_interval_seconds=poll_interval,
-                             timeout_seconds=timeout, word_order=word_order,
-                             register_start=register_start,
-                             register_count=register_count, enabled=enabled)
+            d = ModbusDevice(**fields)
             s.add(d)
             s.flush()
             if auto_create:
                 _create_temp_humidity_monitors(s, d)
         else:
             d = get_modbus_device_or_404(s, did)
-            d.name = name
-            d.description = description
-            d.host = host
-            d.port = port
-            d.slave_id = slave_id
-            d.poll_interval_seconds = poll_interval
-            d.timeout_seconds = timeout
-            d.word_order = word_order
-            d.register_start = register_start
-            d.register_count = register_count
-            d.enabled = enabled
+            for k, v in fields.items():
+                setattr(d, k, v)
         info = modbus_device_view(d)
         action = "created" if did is None else "updated"
         log.info("modbus device %s: %s id=%d host=%s:%d interval=%ds",
@@ -454,128 +457,70 @@ def _validate_modbus_monitor(s, device_id: int | None, address: int | None,
 
 
 def _save_monitor(mid: int | None):
+    try:
+        return _save_monitor_checked(mid)
+    except _FormError as e:
+        flash(str(e), "error")
+        return redirect(request.url)
+
+
+def _save_monitor_checked(mid: int | None):
     cfg = current_app.config["SPOT"]
-    name = (request.form.get("name") or "").strip()
-    description = (request.form.get("description") or "").strip() or None
-    unit = (request.form.get("unit") or "value").strip() or "value"
-    listener_type = (request.form.get("listener_type") or "http").strip()
-    retention_raw = (request.form.get("retention_days") or "").strip()
-    value_regex = (request.form.get("value_regex") or "").strip() or None
-    decimals_raw = (request.form.get("decimal_places") or "").strip()
+    name = _form_str("name")
+    description = _form_str("description") or None
+    unit = _form_str("unit", "value") or "value"
+    listener_type = _form_str("listener_type", "http")
+    value_regex = _form_str("value_regex") or None
     enabled = bool(request.form.get("enabled"))
 
     if value_regex:
         try:
             re.compile(value_regex)
         except re.error as e:
-            flash(f"Invalid regex: {e}", "error")
-            return redirect(request.url)
-
-    if not name:
-        flash("Name is required.", "error")
-        return redirect(request.url)
-    if listener_type not in VALID_LISTENER_TYPES:
-        flash("Invalid listener type.", "error")
-        return redirect(request.url)
+            raise _FormError(f"Invalid regex: {e}") from None
+    _check(bool(name), "Name is required.")
+    _check(listener_type in VALID_LISTENER_TYPES, "Invalid listener type.")
 
     modbus_device_id: int | None = None
     modbus_register_address: int | None = None
     modbus_data_type: str | None = None
     if listener_type == "modbus":
-        raw_device_id = (request.form.get("modbus_device_id") or "").strip()
-        try:
-            modbus_device_id = int(raw_device_id) if raw_device_id else None
-        except ValueError:
-            flash("Invalid Modbus device.", "error")
-            return redirect(request.url)
-        raw_addr = (request.form.get("modbus_register_address") or "").strip()
-        try:
-            modbus_register_address = int(raw_addr) if raw_addr != "" else None
-        except ValueError:
-            flash("Register address must be an integer.", "error")
-            return redirect(request.url)
-        modbus_data_type = (request.form.get("modbus_data_type") or "float32").strip()
+        modbus_device_id = _form_int("modbus_device_id", None, "Invalid Modbus device.")
+        modbus_register_address = _form_int("modbus_register_address", None,
+                                            "Register address must be an integer.")
+        modbus_data_type = _form_str("modbus_data_type", "float32")
 
-    # Look up the current port so we can keep it on edit if still valid.
-    existing_port: int | None = None
-    if mid is not None:
-        with session_scope() as s:
-            existing = get_monitor_or_404(s, mid)
-            existing_port = existing.port
+    retention_err = "Retention must be a positive integer (days), or blank for keep-forever."
+    retention_days = _form_int("retention_days", None, retention_err)
+    _check(retention_days is None or retention_days >= 1, retention_err)
 
-    port: int | None = None
-    if listener_type in ("tcp", "udp"):
-        in_range = (existing_port is not None and
-                    PORT_RANGE_START <= existing_port <= PORT_RANGE_END)
-        if in_range:
-            port = existing_port
-        else:
-            with session_scope() as s:
-                taken = {p for (p,) in s.execute(
-                    select(Monitor.port).where(
-                        Monitor.port.is_not(None),
-                        Monitor.id != (mid or 0),
-                    )
-                ).all() if p is not None}
-            taken.add(cfg.web_port)
-            port = allocate_port(listener_type, taken)
-            if port is None:
-                flash(f"No port available in {PORT_RANGE_START}-{PORT_RANGE_END}; "
-                      "free a monitor first.", "error")
-                return redirect(request.url)
-
-    retention_days: int | None = None
-    if retention_raw:
-        try:
-            retention_days = int(retention_raw)
-            if retention_days < 1:
-                raise ValueError
-        except ValueError:
-            flash("Retention must be a positive integer (days), or blank for keep-forever.", "error")
-            return redirect(request.url)
-
-    decimal_places: int | None = None
-    if decimals_raw:
-        try:
-            decimal_places = int(decimals_raw)
-            if decimal_places < 0 or decimal_places > 10:
-                raise ValueError
-        except ValueError:
-            flash("Decimal places must be 0–10, or blank for full precision.", "error")
-            return redirect(request.url)
+    decimals_err = "Decimal places must be 0–10, or blank for full precision."
+    decimal_places = _form_int("decimal_places", None, decimals_err)
+    _check(decimal_places is None or 0 <= decimal_places <= 10, decimals_err)
 
     with session_scope() as s:
         if listener_type == "modbus":
             err = _validate_modbus_monitor(
                 s, modbus_device_id, modbus_register_address, modbus_data_type)
-            if err:
-                flash(err, "error")
-                return redirect(request.url)
+            _check(not err, err)
+        existing_port = get_monitor_or_404(s, mid).port if mid is not None else None
+        port = _assign_port(s, mid, listener_type, existing_port, cfg.web_port)
 
+        fields = dict(name=name, description=description, unit=unit,
+                      listener_type=listener_type, port=port, enabled=enabled,
+                      retention_days=retention_days, value_regex=value_regex,
+                      modbus_device_id=modbus_device_id,
+                      modbus_register_address=modbus_register_address,
+                      modbus_data_type=modbus_data_type,
+                      decimal_places=decimal_places)
         if mid is None:
-            m = Monitor(name=name, description=description, unit=unit,
-                        listener_type=listener_type, port=port, enabled=enabled,
-                        retention_days=retention_days, value_regex=value_regex,
-                        modbus_device_id=modbus_device_id,
-                        modbus_register_address=modbus_register_address,
-                        modbus_data_type=modbus_data_type,
-                        decimal_places=decimal_places)
+            m = Monitor(**fields)
             s.add(m)
             s.flush()
         else:
             m = get_monitor_or_404(s, mid)
-            m.name = name
-            m.description = description
-            m.unit = unit
-            m.listener_type = listener_type
-            m.port = port
-            m.enabled = enabled
-            m.retention_days = retention_days
-            m.value_regex = value_regex
-            m.modbus_device_id = modbus_device_id
-            m.modbus_register_address = modbus_register_address
-            m.modbus_data_type = modbus_data_type
-            m.decimal_places = decimal_places
+            for k, v in fields.items():
+                setattr(m, k, v)
         info = monitor_view(m)
         action = "created" if mid is None else "updated"
         log.info("monitor %s: %s id=%d type=%s port=%s decimals=%s retention=%s",
@@ -584,9 +529,30 @@ def _save_monitor(mid: int | None):
 
     if mid is not None:
         _manager().stop_monitor(info["id"])
-    if info["enabled"] and info["listener_type"] in ("tcp", "udp"):
+    if info["enabled"]:
         _manager().start_monitor(info["id"], info["name"], info["listener_type"],
                                  info["port"], info["value_regex"])
 
     flash("Monitor saved.", "success")
     return redirect(url_for("web.monitor_detail", mid=info["id"]))
+
+
+def _assign_port(s, mid: int | None, listener_type: str,
+                 existing_port: int | None, web_port: int) -> int | None:
+    """TCP/UDP monitors keep their current port if it's still in range,
+    otherwise get the next free one. Other listener types have no port."""
+    if listener_type not in ("tcp", "udp"):
+        return None
+    if existing_port is not None and PORT_RANGE_START <= existing_port <= PORT_RANGE_END:
+        return existing_port
+    taken = {p for (p,) in s.execute(
+        select(Monitor.port).where(
+            Monitor.port.is_not(None),
+            Monitor.id != (mid or 0),
+        )
+    ).all() if p is not None}
+    taken.add(web_port)
+    port = allocate_port(listener_type, taken)
+    _check(port is not None,
+           f"No port available in {PORT_RANGE_START}-{PORT_RANGE_END}; free a monitor first.")
+    return port

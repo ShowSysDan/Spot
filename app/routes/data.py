@@ -92,14 +92,6 @@ def _range_clause(mid: int, start: datetime, end: datetime):
     return (Reading.monitor_id == mid) & (Reading.ts >= start) & (Reading.ts <= end)
 
 
-def _fetch_rows(s: Session, mid: int, start: datetime, end: datetime):
-    return s.execute(
-        select(Reading.ts, Reading.value, Reading.label)
-        .where(_range_clause(mid, start, end))
-        .order_by(Reading.ts.asc())
-    ).all()
-
-
 def _bucket_expr(bucket_seconds: int):
     """Floor each reading's timestamp to the start of a bucket (epoch seconds)."""
     return func.floor(func.extract("epoch", Reading.ts) / bucket_seconds) * bucket_seconds

@@ -3,12 +3,11 @@ from __future__ import annotations
 import logging
 import socket
 import threading
-from typing import Dict
-
 from .config import Config
 from .db import session_scope
 from .ingest import MalformedData, ingest_raw
 from .models import Monitor
+from .workers import WorkerRegistry
 
 log = logging.getLogger("spot.listeners")
 
@@ -209,50 +208,29 @@ class UDPListener(_BaseListener):
 
 
 class ListenerManager:
+    """One TCPListener/UDPListener thread per enabled TCP/UDP monitor."""
+
     def __init__(self, cfg: Config):
         self.cfg = cfg
-        self._lock = threading.Lock()
-        self._threads: Dict[int, _BaseListener] = {}
+        self._workers: WorkerRegistry[_BaseListener] = WorkerRegistry()
 
     def start_enabled(self) -> None:
         with session_scope() as s:
             for m in s.query(Monitor).filter(Monitor.enabled.is_(True)).all():
-                if m.listener_type in ("tcp", "udp") and m.port:
-                    self._spawn(m.id, m.name, m.listener_type, m.port, m.value_regex)
+                self.start_monitor(m.id, m.name, m.listener_type, m.port, m.value_regex)
 
     def start_monitor(self, monitor_id: int, name: str, listener_type: str,
                       port: int | None, value_regex: str | None = None) -> None:
         if listener_type not in ("tcp", "udp") or not port:
             return
-        self._spawn(monitor_id, name, listener_type, port, value_regex)
+        cls = TCPListener if listener_type == "tcp" else UDPListener
+        self._workers.spawn(monitor_id, lambda: cls(monitor_id, name, port, value_regex))
 
     def stop_monitor(self, monitor_id: int) -> None:
-        with self._lock:
-            t = self._threads.pop(monitor_id, None)
-        if t:
-            t.stop()
-            t.join(timeout=3.0)
+        self._workers.stop(monitor_id)
 
     def shutdown(self) -> None:
-        with self._lock:
-            threads = list(self._threads.values())
-            self._threads.clear()
-        for t in threads:
-            t.stop()
-        for t in threads:
-            t.join(timeout=3.0)
-
-    def _spawn(self, monitor_id: int, name: str, listener_type: str, port: int,
-               value_regex: str | None = None) -> None:
-        with self._lock:
-            existing = self._threads.get(monitor_id)
-            if existing and existing.is_alive():
-                return
-            cls = TCPListener if listener_type == "tcp" else UDPListener
-            t = cls(monitor_id, name, port, value_regex)
-            self._threads[monitor_id] = t
-        t.start()
+        self._workers.shutdown()
 
     def status(self) -> dict[int, bool]:
-        with self._lock:
-            return {mid: t.is_alive() for mid, t in self._threads.items()}
+        return self._workers.status()

@@ -3,6 +3,42 @@
 All notable changes to Spot. The version number lives in `app/version.py`
 and is bumped with every change.
 
+## 1.1.1 — 2026-10-23
+
+Cleanup release: code that had grown by repeated patching was rewritten in
+one consistent shape. Behaviour, URLs, form messages and the database
+layout are unchanged unless listed under *Fixed*.
+
+### Changed (internal)
+- `app/workers.py` — new `WorkerRegistry` holds the start / stop / shutdown /
+  status bookkeeping that `ListenerManager` and `ModbusManager` each had a
+  copy of.
+- `app/db.py` — the stack of hand-written `ALTER TABLE … ADD COLUMN IF NOT
+  EXISTS` statements is now a declarative `_ADDED_COLUMNS` table (plus
+  `_ALTERED_COLUMNS` for type changes) applied in a loop. New columns are
+  one appended line.
+- `app/routes/web.py` — monitor and Modbus forms validate through small
+  helpers (`_form_str`, `_form_int`, `_check`) raising one `_FormError`,
+  replacing 19 copies of "flash + redirect". New/edit pages share one
+  renderer each; TCP/UDP port assignment is its own `_assign_port()`, and a
+  save now uses one database session instead of three.
+- `app/routes/api.py` — JSON and form-encoded ingest share one field parser.
+- `app/exports.py` — each PDF colour is defined once; both PDF reports are
+  laid out by one `_build_report()`; the overlay summary always uses the SQL
+  aggregates (the points-based fallback was unreachable).
+- Removed dead code: `janitor.get_default_retention()`,
+  `ModbusManager.restart_device()`, `data._fetch_rows()`, unused imports.
+
+### Fixed
+- A JSON ingest body that isn't an object (e.g. `[1]`) returned 500 over
+  HTTP; it now returns 400 `malformed payload`. The same payload over
+  TCP/UDP/plain text is logged as malformed instead of raising.
+- Report PDFs with more than three monitors spilled the last summary row onto
+  a second page. The table and chart now shrink to keep up to ~6 monitors on
+  one page, and the table header repeats if it still overflows.
+- PDF charts draw a dot per reading when a series has fewer than 40, so a
+  monitor with a single sample is no longer invisible.
+
 ## 1.1.0 — 2026-10-23
 
 UI overhaul, longer dashboards, and a bug / memory-safety sweep.

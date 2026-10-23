@@ -47,23 +47,22 @@ except Exception:  # pragma: no cover - graceful fallback if svglib missing
     svg2rlg = None  # type: ignore
 
 
-# Dark theme palette (mirrors app/static/style.css :root vars).
-_BG = colors.HexColor("#0e1116")
-_CARD = colors.HexColor("#161b22")
-_CARD_2 = colors.HexColor("#1c222b")
-_BORDER = colors.HexColor("#2c313a")
-_FG = colors.HexColor("#e6e8eb")
-_MUTED = colors.HexColor("#8a929d")
-_ACCENT = colors.HexColor("#58a6ff")
-_DANGER = colors.HexColor("#f85149")
-
+# Dark theme palette (mirrors app/static/style.css :root vars). Hex strings
+# feed matplotlib and ReportLab <font> markup; the HexColor twins feed
+# ReportLab table/canvas styling.
 _BG_HEX = "#0e1116"
 _CARD_HEX = "#161b22"
+_CARD_2_HEX = "#1c222b"
 _BORDER_HEX = "#2c313a"
 _FG_HEX = "#e6e8eb"
 _MUTED_HEX = "#8a929d"
 _ACCENT_HEX = "#58a6ff"
 _DANGER_HEX = "#f85149"
+
+_BG, _CARD, _CARD_2, _BORDER, _FG, _MUTED, _ACCENT, _DANGER = (
+    colors.HexColor(h) for h in (_BG_HEX, _CARD_HEX, _CARD_2_HEX, _BORDER_HEX,
+                                 _FG_HEX, _MUTED_HEX, _ACCENT_HEX, _DANGER_HEX)
+)
 
 _LOGO_PATH = os.path.join(_SPOT_ROOT, "app", "static", "logo.svg")
 _TAGLINE = "Data acquisition, down to the last spot."
@@ -126,7 +125,7 @@ def render_chart_png(monitor_name: str, unit: str,
         if "min" in points[0]:
             ax.fill_between(xs, [p["min"] for p in points], [p["max"] for p in points],
                             color=_ACCENT_HEX, alpha=0.18, linewidth=0)
-        ax.plot(xs, ys, linewidth=1.2, color=_ACCENT_HEX)
+        ax.plot(xs, ys, linewidth=1.2, color=_ACCENT_HEX, **_sparse_markers(xs))
     for ts, label in events:
         local_ts = naive_local(ts)
         ax.axvline(local_ts, color=_DANGER_HEX, linestyle="--", linewidth=0.8, alpha=0.8)
@@ -142,6 +141,12 @@ def render_chart_png(monitor_name: str, unit: str,
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=120, facecolor=fig.get_facecolor())
     return buf.getvalue()
+
+
+def _sparse_markers(xs: list) -> dict:
+    """Dot each reading when there are only a few, so a lone sample (which
+    would be a zero-length line) is still visible."""
+    return {"marker": "o", "markersize": 3} if len(xs) < 40 else {}
 
 
 def _mpl_text(s: str) -> str:
@@ -183,7 +188,7 @@ def render_overlay_chart_png(start: datetime, end: datetime,
         for m in groups[unit]:
             xs = [naive_local(p["ts"]) for p in m["points"]]
             ys = [p["value"] for p in m["points"]]
-            ax.plot(xs, ys, label=_mpl_text(m["name"]), linewidth=1.2,
+            ax.plot(xs, ys, label=_mpl_text(m["name"]), linewidth=1.2, **_sparse_markers(xs),
                     color=_OVERLAY_COLORS[color_idx % len(_OVERLAY_COLORS)])
             color_idx += 1
         ax.set_ylabel(_mpl_text(unit))
@@ -458,92 +463,73 @@ def _join_monitor_names(monitors: list[dict], char_cap: int = 60) -> str:
     return out
 
 
-def render_overlay_pdf(start: datetime, end: datetime, monitors: list[dict]) -> bytes:
-    """Branded one-page PDF: stacked overlay chart + per-monitor summary table.
-
-    `monitors` is a list of {name, unit, points: [{ts: datetime, value: float}]}.
-    """
-    chart_png = render_overlay_chart_png(start, end, monitors)
+def _build_report(doc_title: str, heading: str, meta: list[tuple[str, str]],
+                  chart_png: bytes, summary_label: str, body: list,
+                  chart_height_in: float = 4.0) -> bytes:
+    """Lay out the shared one-page landscape report: brand lockup, heading,
+    metadata line, chart, then a labelled summary section (`body`)."""
     out = io.BytesIO()
     doc = SimpleDocTemplate(
         out, pagesize=landscape(letter),
         leftMargin=0.5 * inch, rightMargin=0.5 * inch,
         topMargin=0.35 * inch, bottomMargin=0.55 * inch,
-        title="Spot report",
+        title=doc_title,
     )
     title_style, _body, _muted, section_style = _dark_styles()
-
-    units = sorted({m.get("unit", "") for m in monitors if m.get("unit")})
     flow = [
         _brand_block(),
         _accent_rule(),
-        Paragraph(f"<b>{_xml_escape(_join_monitor_names(monitors))}</b>", title_style),
-        _meta_line([
-            ("Range", f"{format_local(start)} &nbsp;&rarr;&nbsp; {format_local(end)}"),
-            ("Monitors", str(len(monitors))),
-            ("Units", _xml_escape(", ".join(units)) if units else "—"),
-        ]),
+        Paragraph(f"<b>{_xml_escape(heading)}</b>", title_style),
+        _meta_line(meta),
         Spacer(1, 0.08 * inch),
         _section_label("Timeseries", section_style),
-        Image(io.BytesIO(chart_png), width=10 * inch, height=4.0 * inch),
+        Image(io.BytesIO(chart_png), width=10 * inch, height=chart_height_in * inch),
         Spacer(1, 0.08 * inch),
-        _section_label("Per-monitor summary", section_style),
-        Spacer(1, 0.08 * inch),
+        _section_label(summary_label, section_style),
+        *body,
     ]
-
-    rows = [["Monitor", "Unit", "Samples", "Min", "Max", "Avg"]]
-    for m in monitors:
-        summ = m.get("summary")
-        if summ:
-            # Exact SQL aggregates; preferred because points may be downsampled.
-            rows.append([m["name"], m["unit"], f"{summ['count']:,}",
-                         _fmt(summ["min"]), _fmt(summ["max"]), _fmt(summ["avg"])])
-            continue
-        ys = [p["value"] for p in m["points"]]
-        if ys:
-            rows.append([m["name"], m["unit"], str(len(ys)),
-                         _fmt(min(ys)), _fmt(max(ys)), _fmt(sum(ys) / len(ys))])
-        else:
-            rows.append([m["name"], m["unit"], "0", "—", "—", "—"])
-    tbl = Table(rows, colWidths=[2.5 * inch, 1.0 * inch, 1.0 * inch,
-                                 1.0 * inch, 1.0 * inch, 1.0 * inch])
-    tbl.setStyle(_dark_table_style(header_row=True, font_size=12))
-    flow.append(tbl)
-
     doc.build(flow, onFirstPage=_draw_dark_page, onLaterPages=_draw_dark_page)
     return out.getvalue()
 
 
+def _range_meta(start: datetime, end: datetime) -> tuple[str, str]:
+    return ("Range", f"{format_local(start)} &nbsp;&rarr;&nbsp; {format_local(end)}")
+
+
+def render_overlay_pdf(start: datetime, end: datetime, monitors: list[dict]) -> bytes:
+    """Branded one-page PDF: stacked overlay chart + per-monitor summary table.
+
+    `monitors` is a list of {name, unit, points: [{ts, value, ...}], summary},
+    where `summary` holds exact SQL aggregates (points may be downsampled).
+    """
+    units = sorted({m.get("unit", "") for m in monitors if m.get("unit")})
+    rows = [["Monitor", "Unit", "Samples", "Min", "Max", "Avg"]]
+    for m in monitors:
+        summ = m["summary"]
+        rows.append([m["name"], m["unit"], f"{summ['count']:,}",
+                     _fmt(summ["min"]), _fmt(summ["max"]), _fmt(summ["avg"])])
+    # Shrink the table as monitors are added so typical reports stay on one
+    # page; past that, the header row repeats on the overflow page.
+    n = len(monitors)
+    font_size = 12 if n <= 3 else 9 if n <= 6 else 8
+    tbl = Table(rows, colWidths=[2.5 * inch, 1.0 * inch, 1.0 * inch,
+                                 1.0 * inch, 1.0 * inch, 1.0 * inch], repeatRows=1)
+    tbl.setStyle(_dark_table_style(header_row=True, font_size=font_size))
+    return _build_report(
+        "Spot report", _join_monitor_names(monitors),
+        [_range_meta(start, end),
+         ("Monitors", str(len(monitors))),
+         ("Units", _xml_escape(", ".join(units)) if units else "—")],
+        render_overlay_chart_png(start, end, monitors),
+        "Per-monitor summary", [Spacer(1, 0.08 * inch), tbl],
+        chart_height_in=4.0 if n <= 3 else 3.4,
+    )
+
+
 def render_pdf(monitor_name: str, unit: str, start: datetime, end: datetime,
-               points: list[tuple[datetime, float]],
+               points: list[dict],
                events: list[tuple[datetime, str]],
                summary: dict) -> bytes:
-    chart_png = render_chart_png(monitor_name, unit, points, events)
-
-    out = io.BytesIO()
-    doc = SimpleDocTemplate(
-        out, pagesize=landscape(letter),
-        leftMargin=0.5 * inch, rightMargin=0.5 * inch,
-        topMargin=0.35 * inch, bottomMargin=0.55 * inch,
-        title=f"Spot — {monitor_name}",
-    )
-    title_style, _body, _muted, section_style = _dark_styles()
-
-    flow = [
-        _brand_block(),
-        _accent_rule(),
-        Paragraph(f"<b>{_xml_escape(monitor_name)}</b>", title_style),
-        _meta_line([
-            ("Range", f"{format_local(start)} &nbsp;&rarr;&nbsp; {format_local(end)}"),
-            ("Unit", _xml_escape(unit)),
-        ]),
-        Spacer(1, 0.08 * inch),
-        _section_label("Timeseries", section_style),
-        Image(io.BytesIO(chart_png), width=10 * inch, height=4.0 * inch),
-        Spacer(1, 0.08 * inch),
-        _section_label("Summary", section_style),
-    ]
-
     stat_row = Table(
         [[
             _stat_tile("Samples", f"{summary.get('count', 0):,}", value_pt=16),
@@ -561,10 +547,12 @@ def render_pdf(monitor_name: str, unit: str, start: datetime, end: datetime,
         ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
     ]))
-    flow.append(stat_row)
-
-    doc.build(flow, onFirstPage=_draw_dark_page, onLaterPages=_draw_dark_page)
-    return out.getvalue()
+    return _build_report(
+        f"Spot — {monitor_name}", monitor_name,
+        [_range_meta(start, end), ("Unit", _xml_escape(unit))],
+        render_chart_png(monitor_name, unit, points, events),
+        "Summary", [stat_row],
+    )
 
 
 def _fmt(v) -> str:

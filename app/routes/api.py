@@ -49,22 +49,22 @@ def ingest(token: str):
     ctype = (request.content_type or "").lower()
     try:
         if "application/json" in ctype:
-            data = request.get_json(silent=True) or {}
-            if data.get("value") is not None:
-                value = float(data["value"])
-            if data.get("label") is not None:
-                label = str(data["label"])
-            if data.get("ts"):
-                ts = parse_iso_ts(str(data["ts"]))
+            fields = request.get_json(silent=True) or {}
+            if not isinstance(fields, dict):
+                raise ValueError("JSON body must be an object")
         elif "application/x-www-form-urlencoded" in ctype or request.form:
-            if request.form.get("value"):
-                value = float(request.form["value"])
-            if request.form.get("label"):
-                label = request.form["label"]
-            if request.form.get("ts"):
-                ts = parse_iso_ts(request.form["ts"])
+            # Empty form fields mean "not given", like absent JSON keys.
+            fields = {k: v for k, v in request.form.items() if v != ""}
         else:
+            fields = None
             raw_text = request.get_data(as_text=True)
+        if fields is not None:
+            if fields.get("value") is not None:
+                value = float(fields["value"])
+            if fields.get("label") is not None:
+                label = str(fields["label"])
+            if fields.get("ts"):
+                ts = parse_iso_ts(str(fields["ts"]))
     except (ValueError, TypeError) as e:
         log.warning("malformed ingest monitor=%s err=%s", monitor_name, e)
         return jsonify({"ok": False, "error": "malformed payload"}), 400

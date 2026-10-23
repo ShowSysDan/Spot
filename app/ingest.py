@@ -66,6 +66,8 @@ def parse_payload(raw: str, regex: str | None = None) -> tuple[Optional[float], 
             obj = json.loads(text)
         except json.JSONDecodeError as e:
             raise MalformedData(f"invalid JSON: {e}") from e
+        if not isinstance(obj, dict):
+            raise MalformedData("JSON payload must be an object")
         v = obj.get("value")
         lbl = obj.get("label")
         if v is None and not lbl:

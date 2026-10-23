@@ -22,7 +22,8 @@ from typing import Optional
 from .config import Config
 from .db import session_scope
 from .ingest import MalformedData, store_reading
-from .models import ModbusDevice, Monitor
+from .models import ModbusDevice
+from .workers import WorkerRegistry
 
 log = logging.getLogger("spot.modbus")
 
@@ -191,6 +192,7 @@ class ModbusPoller(threading.Thread):
         super().__init__(daemon=True, name=f"modbus-{name}-{device_id}")
         self.device_id = device_id
         self.device_name = name
+        # Not `_stop`: that would shadow Thread._stop() on Python <= 3.12.
         self._stop_event = threading.Event()
         self._tid = 0
 
@@ -288,51 +290,28 @@ class ModbusPoller(threading.Thread):
 
 
 class ModbusManager:
+    """One ModbusPoller thread per enabled Modbus device."""
+
     def __init__(self, cfg: Config):
         self.cfg = cfg
-        self._lock = threading.Lock()
-        self._threads: dict[int, ModbusPoller] = {}
+        self._workers: WorkerRegistry[ModbusPoller] = WorkerRegistry()
 
     def start_enabled(self) -> None:
         with session_scope() as s:
             for d in s.query(ModbusDevice).filter(ModbusDevice.enabled.is_(True)).all():
-                self._spawn(d.id, d.name)
+                self.start_device(d.id, d.name)
 
     def start_device(self, device_id: int, name: str) -> None:
-        self._spawn(device_id, name)
+        self._workers.spawn(device_id, lambda: ModbusPoller(device_id, name))
 
     def stop_device(self, device_id: int) -> None:
-        with self._lock:
-            t = self._threads.pop(device_id, None)
-        if t:
-            t.stop()
-            t.join(timeout=3.0)
-
-    def restart_device(self, device_id: int, name: str) -> None:
-        self.stop_device(device_id)
-        self.start_device(device_id, name)
+        self._workers.stop(device_id)
 
     def shutdown(self) -> None:
-        with self._lock:
-            threads = list(self._threads.values())
-            self._threads.clear()
-        for t in threads:
-            t.stop()
-        for t in threads:
-            t.join(timeout=3.0)
+        self._workers.shutdown()
 
     def status(self) -> dict[int, bool]:
-        with self._lock:
-            return {did: t.is_alive() for did, t in self._threads.items()}
-
-    def _spawn(self, device_id: int, name: str) -> None:
-        with self._lock:
-            existing = self._threads.get(device_id)
-            if existing and existing.is_alive():
-                return
-            t = ModbusPoller(device_id, name)
-            self._threads[device_id] = t
-        t.start()
+        return self._workers.status()
 
 
 def poll_now(device_id: int) -> tuple[Optional[list[int]], Optional[str]]:

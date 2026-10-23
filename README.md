@@ -2,7 +2,7 @@
 
 **Data acquisition, down to the last spot.**
 
-Current version: **1.1.0** — see [CHANGELOG.md](CHANGELOG.md). The running
+Current version: **1.1.1** — see [CHANGELOG.md](CHANGELOG.md). The running
 version is shown in the web UI footer, logged at startup, and stamped on every
 PDF report.
 
@@ -627,6 +627,17 @@ CREATE SCHEMA spot AUTHORIZATION spot_user;
   `:root` and mirrored in `app/exports.py` for PDFs.
 - Static URLs carry `?v=<version>` so browsers fetch fresh CSS/JS after an
   upgrade.
+
+### Code layout notes
+
+- `app/workers.py` — `WorkerRegistry`, the one-thread-per-id bookkeeping
+  used by both the TCP/UDP `ListenerManager` and the `ModbusManager`.
+- `app/db.py` — to add a column to an existing table, append a line to
+  `_ADDED_COLUMNS`; it is applied idempotently on every start.
+- `app/routes/web.py` — form handlers validate with `_form_str` /
+  `_form_int` / `_check`, which raise `_FormError`; the wrapper flashes the
+  message and sends the user back to the form.
+- `app/exports.py` — `_build_report()` lays out both PDF reports.
 
 ### Versioning
 
