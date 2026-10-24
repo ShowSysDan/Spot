@@ -3,6 +3,18 @@
 All notable changes to Spot. The version number lives in `app/version.py`
 and is bumped with every change.
 
+## 1.2.0 — 2026-10-24
+
+### Changed
+- **Fully offline / internal-network capable.** Chart.js 4.4.4 and
+  chartjs-adapter-date-fns 3.0.0 are vendored in `app/static/vendor/`
+  (checksums and upgrade steps in its README) instead of loaded from
+  jsDelivr. Previously every chart failed on a network without internet.
+- New `scripts/build-wheelhouse.sh` for installing the Python dependencies
+  on an offline server.
+- The push examples on a monitor's page show this server's real address
+  instead of `HOST:WEB_PORT`.
+
 ## 1.1.1 — 2026-10-23
 
 Cleanup release: code that had grown by repeated patching was rewritten in

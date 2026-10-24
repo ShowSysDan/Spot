@@ -67,23 +67,23 @@
 # Numeric reading
 curl -X POST -H "Content-Type: application/json" \
   -d '{"value": 92.3}' \
-  http://HOST:WEB_PORT/api/ingest/{{ monitor.auth_token }}
+  {{ request.host_url }}api/ingest/{{ monitor.auth_token }}
 
 # Reading with label
 curl -X POST -H "Content-Type: application/json" \
   -d '{"value": 92.3, "label": "Show Start"}' \
-  http://HOST:WEB_PORT/api/ingest/{{ monitor.auth_token }}
+  {{ request.host_url }}api/ingest/{{ monitor.auth_token }}
 
 # Event marker only
 curl -X POST -H "Content-Type: text/plain" \
   --data 'Fire Alarm' \
-  http://HOST:WEB_PORT/api/event/{{ monitor.auth_token }}
+  {{ request.host_url }}api/event/{{ monitor.auth_token }}
 {%- elif monitor.listener_type == 'tcp' -%}
 # Newline-terminated lines: "value", "value,label", or just "label"
-printf '92.3\n92.5,Show Start\nFire Alarm\n' | nc HOST {{ monitor.port }}
+printf '92.3\n92.5,Show Start\nFire Alarm\n' | nc {{ request.host.split(':')[0] }} {{ monitor.port }}
 {%- else -%}
 # UDP datagrams: "value", "value,label", or just "label"
-printf '92.3' | nc -u -w1 HOST {{ monitor.port }}
+printf '92.3' | nc -u -w1 {{ request.host.split(':')[0] }} {{ monitor.port }}
 {%- endif %}</pre>
 {% else %}
 <p class="muted">

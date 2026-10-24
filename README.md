@@ -2,7 +2,7 @@
 
 **Data acquisition, down to the last spot.**
 
-Current version: **1.1.1** — see [CHANGELOG.md](CHANGELOG.md). The running
+Current version: **1.2.0** — see [CHANGELOG.md](CHANGELOG.md). The running
 version is shown in the web UI footer, logged at startup, and stamped on every
 PDF report.
 
@@ -108,6 +108,21 @@ cd ~/Spot
 python3 -m venv .venv
 .venv/bin/pip install --upgrade pip
 .venv/bin/pip install -r requirements.txt
+```
+
+**No internet on the server?** Spot runs fully offline: every browser
+library (Chart.js and its date adapter) is vendored in `app/static/vendor/`
+and served by Spot itself, so the UI never touches a CDN. For the Python
+packages, build a wheelhouse on a machine that does have internet and the
+same OS / architecture / Python version, then copy it across:
+
+```bash
+# on the connected machine, inside the Spot directory
+./scripts/build-wheelhouse.sh            # creates ./wheelhouse/
+
+# on the offline server, after copying the Spot directory over
+python3 -m venv .venv
+.venv/bin/pip install --no-index --find-links wheelhouse -r requirements.txt
 ```
 
 ### 4. Postgres database

@@ -7,8 +7,9 @@
   <meta name="color-scheme" content="dark">
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='logo.svg') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=spot_version) }}">
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  {# All browser libraries are vendored under static/vendor so Spot works offline. #}
+  <script src="{{ url_for('static', filename='vendor/chart-4.4.4.umd.min.js') }}"></script>
+  <script src="{{ url_for('static', filename='vendor/chartjs-adapter-date-fns-3.0.0.bundle.min.js') }}"></script>
   <script>
     // Dark-mode defaults for every Chart.js chart on the site.
     if (window.Chart) {
