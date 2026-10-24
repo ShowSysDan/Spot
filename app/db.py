@@ -78,7 +78,14 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("monitors", "modbus_register_address", "INTEGER"),
     ("monitors", "modbus_data_type", "VARCHAR(16)"),
     ("monitors", "decimal_places", "INTEGER"),
+    ("monitors", "location", "VARCHAR(120)"),
+    ("monitors", "color", "VARCHAR(16)"),
+    ("monitors", "alert_high", "DOUBLE PRECISION"),
+    ("monitors", "alert_low", "DOUBLE PRECISION"),
+    ("monitors", "alert_window_seconds", "INTEGER"),
+    ("monitors", "alert_stale_seconds", "INTEGER"),
 )
+
 
 # Other in-place type changes, applied every start (all idempotent).
 _ALTERED_COLUMNS: tuple[tuple[str, str, str], ...] = (

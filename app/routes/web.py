@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
+from datetime import datetime, timezone
 from flask import Blueprint, current_app, flash, redirect, render_template, request, url_for
 from sqlalchemy import select
 
@@ -17,10 +19,13 @@ from ..modbus import (
     WORD_ORDERS,
     poll_now,
 )
-from ..models import ModbusDevice, Monitor
+from ..alerts import active_alerts_by_monitor
+from ..models import Alert, ModbusDevice, Monitor
+from ..notify import email_enabled, post_json, send_email
 from ..portalloc import PORT_RANGE_END, PORT_RANGE_START, allocate_port
 from ..storage import storage_overview
 from ..util import (
+    PALETTE,
     format_bytes,
     format_local,
     get_modbus_device_or_404,
@@ -66,11 +71,17 @@ def index():
                 v["stale_after"] = max(30, 3 * m.modbus_device.poll_interval_seconds)
             else:
                 v["stale_after"] = STALE_AFTER_SECONDS
+            # Sort key for grouping tiles: named locations A-Z, unassigned last.
+            v["location_key"] = m.location or ""
             rows.append(v)
+    rows.sort(key=lambda r: (r["location_key"] == "", r["location_key"].lower(), r["name"].lower()))
     statuses = _manager().status()
     for r in rows:
         r["listener_alive"] = statuses.get(r["id"], False)
-    return render_template("index.html", monitors=rows)
+    groups: dict[str, list[dict]] = {}
+    for r in rows:
+        groups.setdefault(r["location_key"], []).append(r)
+    return render_template("index.html", monitors=rows, groups=list(groups.items()))
 
 
 @bp.route("/monitors/new", methods=["GET", "POST"])
@@ -92,11 +103,14 @@ def _monitor_form(mid: int | None):
         data = monitor_view(get_monitor_or_404(s, mid)) if mid is not None else None
         devices = [modbus_device_view(d) for d in
                    s.query(ModbusDevice).order_by(ModbusDevice.name).all()]
+        locations = sorted({loc for (loc,) in s.execute(
+            select(Monitor.location).where(Monitor.location.is_not(None))).all()})
     return render_template("monitor_form.html", monitor=data,
                            listener_types=VALID_LISTENER_TYPES,
                            default_retention=current_app.config["SPOT"].default_retention_days,
                            modbus_devices=devices,
-                           modbus_data_types=DATA_TYPES)
+                           modbus_data_types=DATA_TYPES,
+                           locations=locations, palette=PALETTE)
 
 
 @bp.route("/monitors/<int:mid>/delete", methods=["POST"])
@@ -138,7 +152,8 @@ def monitor_detail(mid: int):
         data["retention_days"], cfg.default_retention_days
     )
     data["default_retention_days"] = cfg.default_retention_days
-    return render_template("monitor_detail.html", monitor=data)
+    alerts = active_alerts_by_monitor().get(mid, [])
+    return render_template("monitor_detail.html", monitor=data, alerts=alerts)
 
 
 @bp.route("/monitors/<int:mid>/dashboard")
@@ -146,6 +161,100 @@ def monitor_dashboard(mid: int):
     with session_scope() as s:
         data = monitor_view(get_monitor_or_404(s, mid))
     return render_template("dashboard.html", monitor=data)
+
+
+# ---------------------------------------------------------------------------
+# Alerts
+# ---------------------------------------------------------------------------
+
+@bp.route("/alerts")
+def alerts():
+    with session_scope() as s:
+        def rows(q):
+            return [{
+                "id": a.id, "kind": a.kind, "message": a.message,
+                "monitor_id": a.monitor_id, "monitor_name": a.monitor.name,
+                "unit": a.monitor.unit,
+                "location": a.monitor.location,
+                "started": format_local(a.started_at),
+                "cleared": format_local(a.cleared_at) if a.cleared_at else None,
+                "duration": _duration_text((a.cleared_at or datetime.now(timezone.utc)) - a.started_at),
+                "acknowledged": a.acknowledged_at is not None,
+                "peak_value": a.peak_value,
+            } for a in s.scalars(q)]
+        active = rows(select(Alert).where(Alert.cleared_at.is_(None))
+                      .order_by(Alert.started_at.desc()))
+        history = rows(select(Alert).where(Alert.cleared_at.is_not(None))
+                       .order_by(Alert.started_at.desc()).limit(200))
+        configured = [monitor_view(m) for m in s.scalars(
+            select(Monitor).order_by(Monitor.name)) if
+            m.alert_high is not None or m.alert_low is not None or m.alert_stale_seconds]
+    cfg = current_app.config["SPOT"]
+    return render_template("alerts.html", active=active, history=history,
+                           configured=configured,
+                           email_on=email_enabled(cfg) and bool(cfg.alert_email_to),
+                           webhook_on=bool(cfg.alert_webhook_url),
+                           interval=cfg.alert_interval_seconds)
+
+
+@bp.route("/alerts/<int:aid>/ack", methods=["POST"])
+def alert_ack(aid: int):
+    with session_scope() as s:
+        a = s.get(Alert, aid)
+        if a and a.acknowledged_at is None:
+            a.acknowledged_at = datetime.now(timezone.utc)
+            log.info("alert acknowledged id=%d monitor_id=%d kind=%s", aid, a.monitor_id, a.kind)
+    return redirect(_safe_next() or url_for("web.alerts"))
+
+
+def _duration_text(td) -> str:
+    sec = int(td.total_seconds())
+    if sec < 60:
+        return f"{sec}s"
+    if sec < 3600:
+        return f"{sec // 60}m {sec % 60:02d}s"
+    if sec < 86400:
+        return f"{sec // 3600}h {sec % 3600 // 60:02d}m"
+    return f"{sec // 86400}d {sec % 86400 // 3600}h"
+
+
+# ---------------------------------------------------------------------------
+# Setup hub + notification tests
+# ---------------------------------------------------------------------------
+
+@bp.route("/setup")
+def setup():
+    cfg = current_app.config["SPOT"]
+    with session_scope() as s:
+        counts = {
+            "modbus": s.query(ModbusDevice).count(),
+            "monitors": s.query(Monitor).count(),
+        }
+    return render_template("setup.html", cfg=cfg, counts=counts,
+                           email_on=email_enabled(cfg))
+
+
+@bp.route("/setup/test-email", methods=["POST"])
+def setup_test_email():
+    cfg = current_app.config["SPOT"]
+    to = [x.strip() for x in _form_str("to").split(",") if x.strip()] or list(cfg.alert_email_to)
+    err = send_email(cfg, to, "[Spot] Test e-mail",
+                     "This is a test message from Spot. E-mail delivery works.")
+    flash(f"Test e-mail failed: {err}" if err else f"Test e-mail sent to {', '.join(to)}.",
+          "error" if err else "success")
+    return redirect(url_for("web.setup"))
+
+
+@bp.route("/setup/test-webhook", methods=["POST"])
+def setup_test_webhook():
+    cfg = current_app.config["SPOT"]
+    if not cfg.alert_webhook_url:
+        flash("No alert webhook configured (set SPOT_ALERT_WEBHOOK_URL).", "error")
+    else:
+        err = post_json(cfg.alert_webhook_url, {"event": "test", "message": "Test from Spot"})
+        flash(f"Webhook failed: {err}" if err else "Test webhook delivered.",
+              "error" if err else "success")
+    return redirect(url_for("web.setup"))
 
 
 @bp.route("/monitors/<int:mid>/query")
@@ -330,6 +439,19 @@ def _form_int(name: str, default: str | None, error: str) -> int | None:
         raise _FormError(error) from None
 
 
+def _form_float(name: str, error: str) -> float | None:
+    """Optional decimal field; blank means None."""
+    raw = _form_str(name)
+    if raw == "":
+        return None
+    try:
+        v = float(raw)
+    except ValueError:
+        raise _FormError(error) from None
+    _check(math.isfinite(v), error)
+    return v
+
+
 def _check(ok: bool, error: str) -> None:
     if not ok:
         raise _FormError(error)
@@ -498,11 +620,28 @@ def _save_monitor_checked(mid: int | None):
     decimal_places = _form_int("decimal_places", None, decimals_err)
     _check(decimal_places is None or 0 <= decimal_places <= 10, decimals_err)
 
+    location = _form_str("location")[:120] or None
+    color = _form_str("color") or None
+    _check(color is None or re.fullmatch(r"#[0-9a-fA-F]{6}", color) is not None,
+           "Colour must be a #rrggbb value.")
+
+    alert_high = _form_float("alert_high", "High alert threshold must be a number.")
+    alert_low = _form_float("alert_low", "Low alert threshold must be a number.")
+    _check(alert_high is None or alert_low is None or alert_low < alert_high,
+           "The low alert threshold must be below the high one.")
+    window_err = "Alert averaging window must be 0–86400 seconds."
+    alert_window = _form_int("alert_window_seconds", None, window_err)
+    _check(alert_window is None or 0 <= alert_window <= 86400, window_err)
+    stale_err = "No-data alert must be at least 10 seconds, or blank for off."
+    alert_stale = _form_int("alert_stale_seconds", None, stale_err)
+    _check(alert_stale is None or alert_stale >= 10, stale_err)
+
     with session_scope() as s:
         if listener_type == "modbus":
             err = _validate_modbus_monitor(
                 s, modbus_device_id, modbus_register_address, modbus_data_type)
             _check(not err, err)
+
         existing_port = get_monitor_or_404(s, mid).port if mid is not None else None
         port = _assign_port(s, mid, listener_type, existing_port, cfg.web_port)
 
@@ -512,7 +651,11 @@ def _save_monitor_checked(mid: int | None):
                       modbus_device_id=modbus_device_id,
                       modbus_register_address=modbus_register_address,
                       modbus_data_type=modbus_data_type,
-                      decimal_places=decimal_places)
+                      decimal_places=decimal_places,
+                      location=location, color=color,
+                      alert_high=alert_high, alert_low=alert_low,
+                      alert_window_seconds=alert_window or None,
+                      alert_stale_seconds=alert_stale)
         if mid is None:
             m = Monitor(**fields)
             s.add(m)

@@ -108,7 +108,8 @@ def _style_dark_axes(ax) -> None:
 
 def render_chart_png(monitor_name: str, unit: str,
                      points: list[dict],
-                     events: list[tuple[datetime, str]]) -> bytes:
+                     events: list[tuple[datetime, str]],
+                     color: str = _ACCENT_HEX) -> bytes:
     """Render a chart to PNG using the OO matplotlib API.
 
     `points` are {ts, value} dicts; downsampled points also carry min/max,
@@ -124,8 +125,8 @@ def render_chart_png(monitor_name: str, unit: str,
         ys = [p["value"] for p in points]
         if "min" in points[0]:
             ax.fill_between(xs, [p["min"] for p in points], [p["max"] for p in points],
-                            color=_ACCENT_HEX, alpha=0.18, linewidth=0)
-        ax.plot(xs, ys, linewidth=1.2, color=_ACCENT_HEX, **_sparse_markers(xs))
+                            color=color, alpha=0.18, linewidth=0)
+        ax.plot(xs, ys, linewidth=1.2, color=color, **_sparse_markers(xs))
     for ts, label in events:
         local_ts = naive_local(ts)
         ax.axvline(local_ts, color=_DANGER_HEX, linestyle="--", linewidth=0.8, alpha=0.8)
@@ -189,7 +190,7 @@ def render_overlay_chart_png(start: datetime, end: datetime,
             xs = [naive_local(p["ts"]) for p in m["points"]]
             ys = [p["value"] for p in m["points"]]
             ax.plot(xs, ys, label=_mpl_text(m["name"]), linewidth=1.2, **_sparse_markers(xs),
-                    color=_OVERLAY_COLORS[color_idx % len(_OVERLAY_COLORS)])
+                    color=m.get("color") or _OVERLAY_COLORS[color_idx % len(_OVERLAY_COLORS)])
             color_idx += 1
         ax.set_ylabel(_mpl_text(unit))
         legend = ax.legend(loc="upper right", fontsize=14,
@@ -529,7 +530,7 @@ def render_overlay_pdf(start: datetime, end: datetime, monitors: list[dict]) -> 
 def render_pdf(monitor_name: str, unit: str, start: datetime, end: datetime,
                points: list[dict],
                events: list[tuple[datetime, str]],
-               summary: dict) -> bytes:
+               summary: dict, color: str = _ACCENT_HEX) -> bytes:
     stat_row = Table(
         [[
             _stat_tile("Samples", f"{summary.get('count', 0):,}", value_pt=16),
@@ -550,7 +551,7 @@ def render_pdf(monitor_name: str, unit: str, start: datetime, end: datetime,
     return _build_report(
         f"Spot — {monitor_name}", monitor_name,
         [_range_meta(start, end), ("Unit", _xml_escape(unit))],
-        render_chart_png(monitor_name, unit, points, events),
+        render_chart_png(monitor_name, unit, points, events, color),
         "Summary", [stat_row],
     )
 

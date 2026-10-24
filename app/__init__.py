@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from flask import Flask
 
+from .alerts import AlertEngine, open_alert_count
 from .config import Config
 from .db import dispose_engine, init_engine, init_schema
 from .janitor import JanitorThread
 from .logging_config import configure_logging
 from .listeners import ListenerManager
 from .modbus import ModbusManager
+from .util import format_local, parse_iso_ts
 from .version import __version__
 
 
@@ -28,6 +30,7 @@ def create_app(config: Config | None = None) -> Flask:
     app.config["SPOT_LISTENERS"] = manager
     app.config["SPOT_MODBUS"] = modbus
     app.config["SPOT_JANITOR"] = janitor
+    alerts = AlertEngine(cfg)
 
     from .routes.web import bp as web_bp
     from .routes.api import bp as api_bp
@@ -37,18 +40,32 @@ def create_app(config: Config | None = None) -> Flask:
     app.register_blueprint(api_bp, url_prefix="/api")
     app.register_blueprint(data_bp, url_prefix="/data")
 
+    @app.template_filter("localtime")
+    def _localtime(value, fmt: str = "%Y-%m-%d %H:%M:%S %Z"):
+        """Render a datetime or ISO-8601 string in the server's timezone."""
+        if isinstance(value, str):
+            value = parse_iso_ts(value)
+        return format_local(value, fmt)
+
     @app.context_processor
     def _inject_globals():
-        return {"spot_version": __version__, "spot_schema": cfg.db_schema}
+        try:
+            alert_count = open_alert_count()
+        except Exception:  # never let the nav badge break a page
+            alert_count = 0
+        return {"spot_version": __version__, "spot_schema": cfg.db_schema,
+                "spot_alert_count": alert_count}
 
     manager.start_enabled()
     modbus.start_enabled()
     janitor.start()
+    alerts.start()
 
     import atexit
 
     def _cleanup() -> None:
         janitor.stop()
+        alerts.stop()
         modbus.shutdown()
         manager.shutdown()
         janitor.join(timeout=3.0)

@@ -36,6 +36,7 @@
   <button type="button" id="btn-pause" class="button">Pause</button>
 </div>
 
+<div id="alert-banners"></div>
 <div class="summary stat-row">
   <div class="card primary">
     <h3>Current</h3>
@@ -58,6 +59,9 @@
   const monitorId = {{ monitor.id }};
   const unit = {{ monitor.unit | tojson }};
   const decimals = {{ monitor.decimal_places | tojson }};
+  const color = {{ monitor.display_color | tojson }};
+  const alertHigh = {{ monitor.alert_high | tojson }};
+  const alertLow = {{ monitor.alert_low | tojson }};
   const MAX_POINTS = 1500;
   const fmt = v => Spot.fmtValue(v, decimals);
   const storeKey = `spot.dash.${monitorId}`;
@@ -91,9 +95,9 @@
       { label: 'min', data: [], borderWidth: 0, pointRadius: 0, fill: false, hidden: true },
       // 1: bucket maximum, filled down to dataset 0 → shaded min/max band
       { label: 'max', data: [], borderWidth: 0, pointRadius: 0, fill: '-1',
-        backgroundColor: 'rgba(88,166,255,0.16)', hidden: true },
+        backgroundColor: Spot.alpha(color, 0.16), hidden: true },
       // 2: the line itself (raw values, or bucket averages)
-      { label: unit, data: [], borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.10)',
+      { label: unit, data: [], borderColor: color, backgroundColor: Spot.alpha(color, 0.10),
         borderWidth: 1.4, pointRadius: 0, pointHitRadius: 6, tension: 0, fill: 'origin' },
     ] },
     options: {
@@ -112,9 +116,31 @@
           callbacks: { label: item => `${fmt(item.parsed.y)} ${unit}` },
         },
         spotEvents: { events: [] },
+        spotThresholds: { lines: [
+          ...(alertHigh !== null ? [{ y: alertHigh, label: `alert above ${fmt(alertHigh)} ${unit}`, color: '#f85149' }] : []),
+          ...(alertLow !== null ? [{ y: alertLow, label: `alert below ${fmt(alertLow)} ${unit}`, color: '#e3b341' }] : []),
+        ] },
       },
     },
   });
+
+  // Keep alert thresholds inside the y range so their lines stay visible.
+  function fitThresholds() {
+    const ys = chart.data.datasets[2].data.map(p => p.y);
+    const marks = [alertHigh, alertLow].filter(v => v !== null);
+    if (!marks.length || !ys.length) {
+      chart.options.scales.y.suggestedMin = chart.options.scales.y.suggestedMax = undefined;
+      return;
+    }
+    chart.options.scales.y.suggestedMin = Math.min(...marks, ...ys);
+    chart.options.scales.y.suggestedMax = Math.max(...marks, ...ys);
+  }
+
+  function renderAlerts(alerts) {
+    document.getElementById('alert-banners').innerHTML = (alerts || []).map(a =>
+      `<div class="alert-banner ${a.acknowledged ? 'is-acked' : ''}"><strong>${Spot.escapeHtml(a.kind.toUpperCase())}</strong>
+       ${Spot.escapeHtml(a.message)} <span class="muted">since ${new Date(a.started_at).toLocaleString()}</span></div>`).join('');
+  }
 
   let ctrl = null;
   async function tick() {
@@ -138,7 +164,9 @@
     chart.options.scales.x.max = end;
     chart.options.scales.y.beginAtZero = zero.checked;
     chart.options.plugins.spotEvents.events = j.events.map(e => ({ x: new Date(e.ts).valueOf(), label: e.label }));
+    fitThresholds();
     chart.update('none');
+    renderAlerts(j.alerts);
 
     const st = j.stats || {};
     const last = j.points.length && !bucketed ? j.points[j.points.length - 1] : null;

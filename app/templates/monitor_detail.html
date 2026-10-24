@@ -1,11 +1,27 @@
 {% extends "base.html" %}
 {% block title %}{{ monitor.name }} — Spot{% endblock %}
 {% block content %}
-<h1>{{ monitor.name }}</h1>
+<h1><span class="swatch big" style="background: {{ monitor.display_color }}"></span>{{ monitor.name }}</h1>
 {% if monitor.description %}<p class="muted">{{ monitor.description }}</p>{% endif %}
+{% include "_alert_banner.html" %}
 
 <dl class="meta">
   <dt>Unit</dt><dd>{{ monitor.unit }}</dd>
+  {% if monitor.location %}<dt>Location</dt><dd>{{ monitor.location }}</dd>{% endif %}
+  <dt>Alerts</dt>
+  <dd>
+    {% if monitor.alerting %}
+      {% if monitor.alert_high is not none %}above <strong>{{ monitor.alert_high }} {{ monitor.unit }}</strong>{% endif %}
+      {% if monitor.alert_high is not none and monitor.alert_low is not none %} · {% endif %}
+      {% if monitor.alert_low is not none %}below <strong>{{ monitor.alert_low }} {{ monitor.unit }}</strong>{% endif %}
+      {% if (monitor.alert_high is not none or monitor.alert_low is not none) %}
+        <span class="muted">({{ (monitor.alert_window_seconds ~ ' s average') if monitor.alert_window_seconds else 'latest reading' }})</span>
+      {% endif %}
+      {% if monitor.alert_stale_seconds %}{% if monitor.alert_high is not none or monitor.alert_low is not none %} · {% endif %}no data for {{ monitor.alert_stale_seconds }} s{% endif %}
+    {% else %}
+      <span class="muted">off</span>
+    {% endif %}
+  </dd>
   <dt>Listener</dt>
   <dd>
     {{ monitor.listener_type|upper }}{% if monitor.port %} on port <strong>{{ monitor.port }}</strong>{% endif %}

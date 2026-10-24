@@ -136,7 +136,7 @@
     const datasets = j.monitors.map((m, i) => ({
       label: `${m.name} (${m.unit})`,
       data: m.points.map(pt => ({ x: new Date(pt.ts).valueOf(), y: pt.value })),
-      borderColor: COLORS[i % COLORS.length], borderWidth: 1.3, pointRadius: 0, pointHitRadius: 6,
+      borderColor: m.color || COLORS[i % COLORS.length], borderWidth: 1.3, pointRadius: 0, pointHitRadius: 6,
       tension: 0, yAxisID: axisFor[m.unit],
     }));
     // Destroy the old chart before building a new one so canvases/listeners don't leak.
@@ -152,7 +152,7 @@
     tbody.innerHTML = j.monitors.map((m, i) => {
       const s = m.summary || {};
       const f = v => Spot.escapeHtml(Spot.fmtValue(v));
-      return `<tr><td><span class="swatch" style="background:${COLORS[i % COLORS.length]}"></span>
+      return `<tr><td><span class="swatch" style="background:${Spot.escapeHtml(m.color || COLORS[i % COLORS.length])}"></span>
         <a href="/monitors/${m.id}">${Spot.escapeHtml(m.name)}</a></td><td>${Spot.escapeHtml(m.unit)}</td>
         <td class="num">${(s.count || 0).toLocaleString()}</td><td class="num">${f(s.min)}</td>
         <td class="num">${f(s.max)}</td><td class="num">${f(s.avg)}</td><td class="num">${s.events || 0}</td></tr>`;

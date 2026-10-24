@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Setup — Spot{% endblock %}
+{% block content %}
+<h1>Setup</h1>
+
+<section class="setup-grid">
+  <a class="card setup-card" href="{{ url_for('web.modbus_list') }}">
+    <h3>Modbus devices</h3>
+    <p class="muted">Polled Modbus TCP sensors (temperature, humidity, PLC values).</p>
+    <span class="badge off">{{ counts.modbus }} device{{ '' if counts.modbus == 1 else 's' }}</span>
+  </a>
+  <a class="card setup-card" href="{{ url_for('web.storage') }}">
+    <h3>Storage</h3>
+    <p class="muted">Database size, rows per monitor, retention.</p>
+    <span class="badge off">{{ counts.monitors }} monitor{{ '' if counts.monitors == 1 else 's' }}</span>
+  </a>
+  <a class="card setup-card" href="{{ url_for('web.alerts') }}">
+    <h3>Alerts</h3>
+    <p class="muted">Active alerts, thresholds in use, and history.</p>
+  </a>
+</section>
+
+<h2>Notifications</h2>
+<p class="muted">Configured in <code>.env</code> (restart Spot after changing). See the README section <em>Alerts &amp; notifications</em>.</p>
+<dl class="meta">
+  <dt>E-mail (SMTP)</dt>
+  <dd>
+    {% if email_on %}
+      <span class="ok">on</span> — <code>{{ cfg.smtp_host }}:{{ cfg.smtp_port }}</code>
+      ({{ cfg.smtp_security }}{% if cfg.smtp_user %}, login as {{ cfg.smtp_user }}{% endif %}), from <code>{{ cfg.smtp_from }}</code>
+    {% else %}
+      <span class="off">off</span> — set <code>SPOT_SMTP_HOST</code>
+    {% endif %}
+  </dd>
+  <dt>Alert e-mails to</dt>
+  <dd>{{ cfg.alert_email_to|join(', ') if cfg.alert_email_to else '—' }}</dd>
+  <dt>Alert webhook</dt>
+  <dd>{% if cfg.alert_webhook_url %}<code>{{ cfg.alert_webhook_url }}</code>{% else %}<span class="off">off</span> — set <code>SPOT_ALERT_WEBHOOK_URL</code>{% endif %}</dd>
+  <dt>Public URL</dt>
+  <dd>{% if cfg.public_url %}<code>{{ cfg.public_url }}</code>{% else %}<span class="muted">not set — links in e-mails are omitted (<code>SPOT_PUBLIC_URL</code>)</span>{% endif %}</dd>
+</dl>
+<div class="row">
+  <form method="post" action="{{ url_for('web.setup_test_email') }}" class="inline-form form">
+    <label>Send a test e-mail to
+      <input type="text" name="to" placeholder="{{ cfg.alert_email_to|join(', ') or 'you@example.org' }}">
+    </label>
+    <button type="submit" {% if not email_on %}disabled{% endif %}>Send test e-mail</button>
+  </form>
+  <form method="post" action="{{ url_for('web.setup_test_webhook') }}" class="inline">
+    <button type="submit" {% if not cfg.alert_webhook_url %}disabled{% endif %}>Send test webhook</button>
+  </form>
+</div>
+{% endblock %}

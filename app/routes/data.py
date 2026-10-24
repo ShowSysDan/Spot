@@ -7,10 +7,11 @@ from flask import Blueprint, Response, abort, jsonify, request, stream_with_cont
 from sqlalchemy import func, select, true
 from sqlalchemy.orm import Session
 
+from ..alerts import active_alerts_by_monitor
 from ..db import session_scope
 from ..exports import iter_csv, render_overlay_pdf, render_pdf
 from ..models import Monitor, Reading
-from ..util import get_monitor_or_404, parse_iso_ts, safe_filename
+from ..util import get_monitor_or_404, monitor_color, parse_iso_ts, safe_filename
 
 bp = Blueprint("data", __name__)
 log = logging.getLogger("spot.data")
@@ -233,6 +234,7 @@ def recent(mid: int):
     }
     if stats is not None:
         body["stats"] = stats
+    body["alerts"] = active_alerts_by_monitor().get(mid, [])
     return jsonify(body)
 
 
@@ -313,6 +315,7 @@ def latest_all():
     with session_scope() as s:
         latest_rows = s.execute(q).all()
         spark_rows = s.execute(spark_q).all()
+    alerts = active_alerts_by_monitor()
 
     sparks: dict[int, list] = {}
     for mid, bstart, avg in spark_rows:
@@ -326,7 +329,8 @@ def latest_all():
              "ts": r[1].isoformat() if r[1] else None,
              "value": r[2],
              "label": r[3],
-             "spark": sparks.get(r[0], [])}
+             "spark": sparks.get(r[0], []),
+             "alerts": alerts.get(r[0], [])}
             for r in latest_rows
         ],
     })
@@ -373,6 +377,7 @@ def _collect_overlay(s, ids: list[int], start: datetime, end: datetime,
             "id": m.id,
             "name": m.name,
             "unit": m.unit,
+            "color": monitor_color(m.id, m.color),
             "bucket_seconds": bucket,
             "points": points,
         }
@@ -441,9 +446,9 @@ def export_pdf(mid: int):
         points, bucket = _fetch_points(s, mid, start, end, PDF_MAX_POINTS)
         events = _fetch_events(s, mid, start, end, limit=200)
         summary_data = _compute_summary(s, mid, start, end)
-        name, unit = m.name, m.unit
+        name, unit, color = m.name, m.unit, monitor_color(m.id, m.color)
     body = render_pdf(name, unit, start, end, points,
-                      [(e["ts"], e["label"]) for e in events], summary_data)
+                      [(e["ts"], e["label"]) for e in events], summary_data, color=color)
     return Response(body, mimetype="application/pdf",
                     headers={"Content-Disposition":
                              f'attachment; filename="{_filename(name, start, end, "pdf")}"'})

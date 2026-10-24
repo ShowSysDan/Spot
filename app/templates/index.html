@@ -26,16 +26,19 @@
   </div>
 {% else %}
 
-<section class="tiles" id="tiles">
-  {% for m in monitors %}
+{% for loc, group in groups %}
+{% if groups|length > 1 or loc %}<h2 class="tile-group" data-group>{{ loc or 'Other' }}</h2>{% endif %}
+<section class="tiles">
+  {% for m in group %}
   <a class="tile {{ '' if m.enabled else 'is-disabled' }}" id="tile-{{ m.id }}"
-     href="{{ url_for('web.monitor_dashboard', mid=m.id) }}"
+     href="{{ url_for('web.monitor_dashboard', mid=m.id) }}" style="--tile-color: {{ m.display_color }}"
      data-id="{{ m.id }}" data-decimals="{{ m.decimal_places if m.decimal_places is not none else '' }}"
-     data-stale-after="{{ m.stale_after }}" data-filter="{{ (m.name ~ ' ' ~ m.unit ~ ' ' ~ (m.description or ''))|lower }}"
+     data-stale-after="{{ m.stale_after }}" data-filter="{{ (m.name ~ ' ' ~ m.unit ~ ' ' ~ (m.location or '') ~ ' ' ~ (m.description or ''))|lower }}"
      title="Open the live dashboard for {{ m.name }}">
     <div class="tile-head">
       <span class="fresh-dot" aria-hidden="true"></span>
       <span class="tile-name">{{ m.name }}</span>
+      <span class="tile-alert" hidden></span>
       <span class="tile-type">{{ m.listener_type|upper }}</span>
     </div>
     <div class="tile-value"><span class="v">—</span> <span class="u">{{ m.unit }}</span></div>
@@ -47,6 +50,7 @@
   </a>
   {% endfor %}
 </section>
+{% endfor %}
 
 <details class="manage" id="manage" open>
   <summary><h2>Manage</h2></summary>
@@ -104,6 +108,8 @@
     ago: el.querySelector('.ago'),
     range: el.querySelector('.range'),
     spark: el.querySelector('.spark'),
+    alert: el.querySelector('.tile-alert'),
+    color: el.style.getPropertyValue('--tile-color').trim() || '#58a6ff',
     decimals: el.dataset.decimals,
     staleAfter: Number(el.dataset.staleAfter) * 1000,
     disabled: el.classList.contains('is-disabled'),
@@ -127,7 +133,13 @@
     } else {
       t.range.textContent = '';
     }
-    Spot.sparkline(t.spark, d.spark, sparkWindow);
+    const alerts = d.alerts || [];
+    t.el.classList.toggle('is-alerting', alerts.some(a => !a.acknowledged));
+    t.el.classList.toggle('is-acked', alerts.length > 0 && alerts.every(a => a.acknowledged));
+    t.alert.hidden = !alerts.length;
+    t.alert.textContent = alerts.map(a => a.kind.toUpperCase()).join(' · ');
+    t.alert.title = alerts.map(a => a.message).join('\n');
+    Spot.sparkline(t.spark, d.spark, Object.assign({ color: t.color, fill: Spot.alpha(t.color, 0.15) }, sparkWindow));
   }
 
   async function refresh() {
@@ -147,7 +159,7 @@
   Spot.poller(refresh, 5000);
   // Keep the "updated Ns ago" text ticking between fetches.
   setInterval(() => { if (!document.hidden) { const now = Date.now(); tiles.forEach(t => paint(t, now)); } }, 1000);
-  window.addEventListener('resize', () => tiles.forEach(t => t.data && Spot.sparkline(t.spark, t.data.spark, sparkWindow)));
+  window.addEventListener('resize', () => tiles.forEach(t => t.data && paint(t, Date.now())));
 
   // Filter tiles + table rows together.
   const filter = document.getElementById('filter');
@@ -157,6 +169,11 @@
     Spot.store.set('spot.index.filter', filter.value);
     document.querySelectorAll('[data-filter]').forEach(el => {
       el.hidden = q !== '' && !el.dataset.filter.includes(q);
+    });
+    // Hide location headings whose tiles are all filtered out.
+    document.querySelectorAll('[data-group]').forEach(h => {
+      const sec = h.nextElementSibling;
+      h.hidden = sec.hidden = ![...sec.children].some(c => !c.hidden);
     });
   }
   filter.addEventListener('input', applyFilter);

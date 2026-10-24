@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Alerts — Spot{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Alerts</h1>
+  <div class="page-tools muted">
+    Checked every {{ interval }} s ·
+    e-mail <strong class="{{ 'ok' if email_on else 'off' }}">{{ 'on' if email_on else 'off' }}</strong> ·
+    webhook <strong class="{{ 'ok' if webhook_on else 'off' }}">{{ 'on' if webhook_on else 'off' }}</strong>
+    · <a href="{{ url_for('web.setup') }}">set up</a>
+  </div>
+</div>
+
+<h2>Active</h2>
+{% if not active %}
+  <p class="all-clear"><span class="fresh-dot ok-dot"></span> All clear — nothing is alerting.</p>
+{% else %}
+<table class="grid">
+  <thead><tr><th></th><th>Monitor</th><th>Alert</th><th>Since</th><th>For</th><th class="num">Worst</th><th></th></tr></thead>
+  <tbody>
+  {% for a in active %}
+    <tr class="{{ 'is-acked' if a.acknowledged else 'is-alerting' }}">
+      <td><span class="badge bad">{{ a.kind|upper }}</span></td>
+      <td><a href="{{ url_for('web.monitor_dashboard', mid=a.monitor_id) }}">{{ a.monitor_name }}</a>
+          {% if a.location %}<div class="muted">{{ a.location }}</div>{% endif %}</td>
+      <td>{{ a.message }}</td>
+      <td>{{ a.started }}</td>
+      <td>{{ a.duration }}</td>
+      <td class="num">{{ '%.4g'|format(a.peak_value) if a.peak_value is not none else '—' }} {% if a.peak_value is not none %}{{ a.unit }}{% endif %}</td>
+      <td>
+        {% if a.acknowledged %}<span class="muted">acknowledged</span>
+        {% else %}
+        <form method="post" action="{{ url_for('web.alert_ack', aid=a.id) }}" class="inline">
+          <button type="submit" class="link">Acknowledge</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="muted">Acknowledging removes an alert from the menu badge; it stays listed here until the monitor recovers.</p>
+{% endif %}
+
+<h2>Monitors with alerts set</h2>
+{% if not configured %}
+  <p class="muted">No monitor has alert thresholds yet. Set them on a monitor's <em>Edit</em> page.</p>
+{% else %}
+<table class="grid">
+  <thead><tr><th>Monitor</th><th class="num">Above</th><th class="num">Below</th><th class="num">Averaged over</th><th class="num">No data after</th><th></th></tr></thead>
+  <tbody>
+  {% for m in configured %}
+    <tr>
+      <td><a href="{{ url_for('web.monitor_detail', mid=m.id) }}">{{ m.name }}</a>{% if not m.enabled %} <span class="badge off">disabled</span>{% endif %}</td>
+      <td class="num">{{ m.alert_high if m.alert_high is not none else '—' }}{% if m.alert_high is not none %} {{ m.unit }}{% endif %}</td>
+      <td class="num">{{ m.alert_low if m.alert_low is not none else '—' }}{% if m.alert_low is not none %} {{ m.unit }}{% endif %}</td>
+      <td class="num">{{ (m.alert_window_seconds ~ ' s') if m.alert_window_seconds else 'latest' }}</td>
+      <td class="num">{{ (m.alert_stale_seconds ~ ' s') if m.alert_stale_seconds else '—' }}</td>
+      <td class="actions"><a href="{{ url_for('web.monitor_edit', mid=m.id) }}">Edit</a></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<h2>History <span class="muted">last 200</span></h2>
+{% if not history %}
+  <p class="muted">No past alerts.</p>
+{% else %}
+<table class="grid">
+  <thead><tr><th></th><th>Monitor</th><th>Alert</th><th>Started</th><th>Cleared</th><th>Lasted</th><th class="num">Worst</th></tr></thead>
+  <tbody>
+  {% for a in history %}
+    <tr>
+      <td><span class="badge off">{{ a.kind|upper }}</span></td>
+      <td><a href="{{ url_for('web.monitor_detail', mid=a.monitor_id) }}">{{ a.monitor_name }}</a></td>
+      <td>{{ a.message }}</td>
+      <td>{{ a.started }}</td>
+      <td>{{ a.cleared }}</td>
+      <td>{{ a.duration }}</td>
+      <td class="num">{{ '%.4g'|format(a.peak_value) if a.peak_value is not none else '—' }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

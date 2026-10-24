@@ -8,6 +8,15 @@ from sqlalchemy.orm import Session
 
 from .models import ModbusDevice, Monitor
 
+# Series colours, tuned for the dark theme. A monitor without its own colour
+# gets PALETTE[id % len(PALETTE)], so it looks the same on every page and PDF.
+PALETTE: tuple[str, ...] = ("#58a6ff", "#f85149", "#56d364", "#bc8cff",
+                            "#e3b341", "#39c5cf", "#ff7b72", "#ec6cb9")
+
+
+def monitor_color(monitor_id: int, color: str | None) -> str:
+    return color or PALETTE[monitor_id % len(PALETTE)]
+
 
 def parse_iso_ts(s: str) -> datetime:
     """Parse an ISO-8601 timestamp; assume UTC if naive; accept trailing 'Z'."""
@@ -97,7 +106,17 @@ def monitor_view(m: Monitor) -> dict[str, Any]:
         "modbus_data_type": m.modbus_data_type,
         "modbus_device_name": m.modbus_device.name if m.modbus_device else None,
         "decimal_places": m.decimal_places,
+        "location": m.location,
+        "color": m.color,
+        "display_color": monitor_color(m.id, m.color),
+        "alert_high": m.alert_high,
+        "alert_low": m.alert_low,
+        "alert_window_seconds": m.alert_window_seconds,
+        "alert_stale_seconds": m.alert_stale_seconds,
+        "alerting": (m.alert_high is not None or m.alert_low is not None
+                     or bool(m.alert_stale_seconds)),
     }
+
 
 
 def format_bytes(n: int | float | None) -> str:

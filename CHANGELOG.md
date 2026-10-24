@@ -3,6 +3,35 @@
 All notable changes to Spot. The version number lives in `app/version.py`
 and is bumped with every change.
 
+## 1.3.0 — 2026-10-24
+
+### Added
+- **Alerts.** Per-monitor *above* / *below* thresholds judged on a
+  configurable rolling average, plus a *no data for N seconds* alert. A
+  background engine (`SPOT_ALERT_INTERVAL_SECONDS`, default 15 s) opens one
+  alert per crossing, tracks its worst value and closes it on recovery.
+  Alerts are shown on tiles (red glow / amber when acknowledged), as a
+  dashboard banner with threshold lines on the chart, on a new **Alerts**
+  page (active + acknowledge, configured monitors, history) and as a menu
+  badge. Every raise/recovery goes to syslog, and optionally to e-mail
+  (`SPOT_SMTP_*`, `SPOT_ALERT_EMAIL_TO`) and a JSON webhook
+  (`SPOT_ALERT_WEBHOOK_URL`).
+- **Location** label on monitors; the Monitors page groups tiles by it.
+- **Per-monitor colour**, used for its tile, dashboard line, Reports line
+  and PDF charts. Monitors without one get a stable colour from the palette.
+- **Setup** page gathering Modbus devices, Storage and Alerts, with the
+  current notification settings and *Send test e-mail / webhook* buttons.
+- `SPOT_PUBLIC_URL` for links in e-mails and webhooks.
+- New tables/columns are added automatically on start (`alerts` table;
+  `monitors.location`, `color`, `alert_high`, `alert_low`,
+  `alert_window_seconds`, `alert_stale_seconds`).
+
+### Changed
+- Navigation is now Monitors · Reports · Alerts · Setup; Modbus and Storage
+  moved under Setup (their URLs are unchanged).
+- The Modbus fieldset on the monitor form uses shared styles instead of inline
+  CSS.
+
 ## 1.2.0 — 2026-10-24
 
 ### Changed

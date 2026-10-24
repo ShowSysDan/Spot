@@ -2,7 +2,7 @@
 
 **Data acquisition, down to the last spot.**
 
-Current version: **1.2.0** — see [CHANGELOG.md](CHANGELOG.md). The running
+Current version: **1.3.0** — see [CHANGELOG.md](CHANGELOG.md). The running
 version is shown in the web UI footer, logged at startup, and stamped on every
 PDF report.
 
@@ -39,6 +39,14 @@ and lets you browse, query, graph, and export the data.
   value, a one-hour sparkline, the 1-hour range, and a freshness dot
   (green = reporting, amber = stale, grey = nothing recent). Tiles refresh
   every 5 s while the tab is visible and click through to the dashboard.
+- **Alerts** — per-monitor *above* / *below* thresholds (judged on the
+  average over a window you choose, so one loud clap doesn't page anyone) and
+  a *no data for N seconds* alert. Alerting tiles glow red, dashboards draw the
+  threshold lines, the menu shows a count, and every raise / recovery goes
+  to syslog and optionally e-mail and a JSON webhook.
+- **Locations & colours** — an optional location label groups tiles on the
+  Monitors page (e.g. per theater); each monitor can have its own colour,
+  used for its tile, chart line and PDF reports.
 - **Live dashboard** — windows from 1 minute to 7 days, with current / min /
   max / average / sample-count cards, event markers drawn on the chart, a
   pause button, and an auto refresh rate that slows down for long windows.
@@ -172,6 +180,15 @@ Set at least:
 | `SPOT_INGEST_ALLOW`   | Optional CSV of allowed source IPs           |
 | `SPOT_JANITOR_INTERVAL_SECONDS` | Retention-cleanup interval (default `3600`) |
 | `SPOT_DEFAULT_RETENTION_DAYS` | Global default retention; blank = keep forever |
+| `SPOT_PUBLIC_URL`     | Optional. Base URL used for links in e-mails / webhooks, e.g. `http://spot.internal:6100` |
+| `SPOT_SMTP_HOST`      | Optional. Mail server for alert / report e-mails; blank = e-mail off |
+| `SPOT_SMTP_PORT`      | Default `587` |
+| `SPOT_SMTP_SECURITY`  | `starttls` (default), `ssl`, or `none` |
+| `SPOT_SMTP_USER` / `SPOT_SMTP_PASSWORD` | Optional SMTP login |
+| `SPOT_SMTP_FROM`      | Sender address, default `spot@localhost` |
+| `SPOT_ALERT_EMAIL_TO` | Comma-separated alert recipients |
+| `SPOT_ALERT_WEBHOOK_URL` | Optional URL that receives alert JSON |
+| `SPOT_ALERT_INTERVAL_SECONDS` | How often alerts are evaluated (default `15`, min `5`) |
 
 ### 6. Smoke-test (foreground)
 
@@ -367,7 +384,8 @@ printf '92.3' | nc -u -w1 HOST <PORT>
 
 ### Monitors (home page)
 
-`/` shows a live tile per monitor plus a **Manage** table (collapsible; the
+`/` shows a live tile per monitor, grouped under headings by **Location**
+when any monitor has one, plus a **Manage** table (collapsible; the
 open/closed state and the filter box are remembered per browser).
 
 - The big number is the latest value, rounded to the monitor's
@@ -379,6 +397,53 @@ open/closed state and the filter box are remembered per browser).
   overdue or has no data. The threshold is 5 minutes, or 3× the poll
   interval for Modbus monitors (minimum 30 s).
 - Polling pauses while the browser tab is hidden.
+
+### Alerts & notifications
+
+Set thresholds on a monitor's **Edit** page, in the *Alerts* box:
+
+| Field | Meaning |
+|-------|---------|
+| Alert above / Alert below | Raise a `HIGH` / `LOW` alert when the value crosses it. Blank = off. |
+| Averaged over (seconds) | The value judged is the average of the last N seconds (0 or blank = the latest reading). 30–60 s works well for sound levels. |
+| Alert when no data for (seconds) | Raise a `STALE` alert when no reading has arrived for this long (min 10). |
+
+The alert engine runs every `SPOT_ALERT_INTERVAL_SECONDS` (default 15).
+It waits about 30 s after Spot starts so a restart doesn't flag everything as
+stale. Each crossing opens **one** alert, which tracks the worst value seen
+and closes when the monitor is back in range (a `HIGH`/`LOW` alert only
+clears on a real reading; missing data is the `STALE` alert's job).
+Disabling a monitor or clearing its thresholds closes its open alerts.
+
+Where alerts show up:
+
+- **Monitors page** — the tile glows red with a `HIGH` / `LOW` / `STALE`
+  tag (amber once acknowledged).
+- **Dashboard** — a banner above the chart and dashed threshold lines on it.
+- **Alerts page** (`/alerts`) — active alerts with **Acknowledge**, every
+  monitor that has thresholds, and the last 200 past alerts. The menu badge
+  counts active, unacknowledged alerts.
+- **syslog** — `spot.alerts` logs every raise (WARNING) and recovery (INFO).
+- **E-mail** — when `SPOT_SMTP_HOST` and `SPOT_ALERT_EMAIL_TO` are set.
+- **Webhook** — when `SPOT_ALERT_WEBHOOK_URL` is set, Spot POSTs:
+
+```json
+{
+  "event": "alert.raised",            // or "alert.cleared"
+  "alert_id": 12,
+  "kind": "high",                     // high | low | stale
+  "message": "101.8 dB (10s average) is above the 95 dB limit",
+  "monitor": {"id": 1, "name": "Stage Left dB", "unit": "dB", "location": "Walt Disney Theater"},
+  "value": 101.79,
+  "threshold": 95.0,
+  "started_at": "2026-10-24T21:39:24+00:00",
+  "cleared_at": null,
+  "url": "http://spot.internal:6100/monitors/1/dashboard"
+}
+```
+
+**Setup → Notifications** shows the current mail / webhook settings and has
+*Send test e-mail* and *Send test webhook* buttons.
 
 ### Live dashboard
 

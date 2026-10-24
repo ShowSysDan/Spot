@@ -33,10 +33,10 @@
          class="{{ 'active' if ep == 'web.index' or (ep.startswith('web.monitor_') and ep != 'web.monitor_new') }}">Monitors</a>
       <a href="{{ url_for('web.reports') }}"
          class="{{ 'active' if ep == 'web.reports' }}" title="Compare monitors and export PDF / CSV reports">Reports</a>
-      <a href="{{ url_for('web.modbus_list') }}"
-         class="{{ 'active' if ep.startswith('web.modbus_') }}">Modbus</a>
-      <a href="{{ url_for('web.storage') }}"
-         class="{{ 'active' if ep == 'web.storage' }}">Storage</a>
+      <a href="{{ url_for('web.alerts') }}" class="{{ 'active' if ep == 'web.alerts' }}">Alerts{%
+        if spot_alert_count %} <span class="nav-badge" title="{{ spot_alert_count }} active, unacknowledged">{{ spot_alert_count }}</span>{% endif %}</a>
+      <a href="{{ url_for('web.setup') }}"
+         class="{{ 'active' if ep == 'web.setup' or ep.startswith('web.modbus_') or ep == 'web.storage' }}">Setup</a>
       <a href="{{ url_for('web.monitor_new') }}" class="nav-cta {{ 'active' if ep == 'web.monitor_new' }}">+ New monitor</a>
     </nav>
   </header>

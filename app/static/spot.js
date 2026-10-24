@@ -130,7 +130,32 @@
       ctx.restore();
     },
   };
-  if (window.Chart) window.Chart.register(eventLinesPlugin);
+  // Chart.js plugin: horizontal dashed lines for alert thresholds.
+  // Configure with options.plugins.spotThresholds = { lines: [{y, label, color}] }.
+  const thresholdLinesPlugin = {
+    id: 'spotThresholds',
+    afterDatasetsDraw(chart, _args, opts) {
+      const lines = (opts && opts.lines) || [];
+      const y = chart.scales.y;
+      if (!lines.length || !y) return;
+      const { left, right, top, bottom } = chart.chartArea;
+      const ctx = chart.ctx;
+      ctx.save();
+      ctx.setLineDash([6, 4]);
+      ctx.lineWidth = 1.2;
+      ctx.font = '11px system-ui, sans-serif';
+      ctx.textAlign = 'right';
+      for (const ln of lines) {
+        const py = y.getPixelForValue(ln.y);
+        if (py < top || py > bottom) continue;
+        ctx.strokeStyle = ctx.fillStyle = ln.color || '#e3b341';
+        ctx.beginPath(); ctx.moveTo(left, py); ctx.lineTo(right, py); ctx.stroke();
+        if (ln.label) ctx.fillText(ln.label, right - 4, py - 4);
+      }
+      ctx.restore();
+    },
+  };
+  if (window.Chart) window.Chart.register(eventLinesPlugin, thresholdLinesPlugin);
 
   // Tiny dependency-free sparkline; points are [[epochMs, value], ...].
   function sparkline(canvas, points, opts) {
@@ -217,6 +242,13 @@
     }
   });
 
-  window.Spot = { escapeHtml, fmtValue, timeAgo, fmtDuration, toLocalInput, toIso,
+  // '#58a6ff' + 0.15 -> 'rgba(88,166,255,0.15)'.
+  function alpha(hex, a) {
+    const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex || '');
+    if (!m) return `rgba(88,166,255,${a})`;
+    return `rgba(${parseInt(m[1], 16)},${parseInt(m[2], 16)},${parseInt(m[3], 16)},${a})`;
+  }
+
+  window.Spot = { alpha, escapeHtml, fmtValue, timeAgo, fmtDuration, toLocalInput, toIso,
                   presetRange, bindPresets, store, sparkline, poller };
 })();
