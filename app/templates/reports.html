@@ -141,8 +141,16 @@
   });
 
   let runSeq = 0;
-  async function run() {
+  function run() {
     if (!selectedIds().length) return;
+    const span = new Date(Spot.toIso(form.end.value)) - new Date(Spot.toIso(form.start.value));
+    const n = selectedIds().length;
+    return Spot.busy(document.querySelector('.chart-wrap'), preview, {
+      label: `Crunching ${Spot.rangeWords(span)} of readings for ${n} monitor${n === 1 ? '' : 's'}…`,
+      buttons: [form.querySelector('button.primary')],
+    });
+  }
+  async function preview() {
     const seq = ++runSeq;  // only the newest preview may draw
     const p = rangeParams();
     p.set('max_points', '2000');
@@ -217,10 +225,10 @@
 
   form.addEventListener('submit', e => { e.preventDefault(); run(); });
   document.getElementById('btn-pdf').addEventListener('click', () => {
-    if (selectedIds().length) window.location = `/data/overlay/export.pdf?${rangeParams()}`;
+    if (selectedIds().length) Spot.download(`/data/overlay/export.pdf?${rangeParams()}`, document.getElementById('btn-pdf'), 'PDF report');
   });
   document.getElementById('btn-csv').addEventListener('click', () => {
-    if (selectedIds().length) window.location = `/data/overlay/export.csv?${rangeParams()}`;
+    if (selectedIds().length) Spot.download(`/data/overlay/export.csv?${rangeParams()}`, document.getElementById('btn-csv'), 'CSV');
   });
   const loadShow = document.getElementById('load-show');
   if (loadShow) loadShow.addEventListener('change', () => {

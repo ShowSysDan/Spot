@@ -4,9 +4,9 @@
 <div class="page-head">
   <h1>{{ show.name }} <span class="status-pill {{ show.status }}">{{ show.status }}</span></h1>
   <div class="page-tools">
-    <a class="button primary" href="{{ url_for('web.show_report', sid=show.id) }}">Download PDF</a>
+    <a class="button primary" href="{{ url_for('web.show_report', sid=show.id) }}" data-download="PDF">Download PDF</a>
     {% set rs = report.start if report else show.starts_at %}{% set re = report.end if report else show.ends_at %}
-    <a class="button" href="/data/overlay/export.csv?ids={{ show.monitor_ids|join(',') }}&start={{ rs|urlencode }}&end={{ re|urlencode }}">CSV</a>
+    <a class="button" href="/data/overlay/export.csv?ids={{ show.monitor_ids|join(',') }}&start={{ rs|urlencode }}&end={{ re|urlencode }}" data-download="CSV">CSV</a>
     <a class="button" href="{{ url_for('web.reports', ids=show.monitor_ids|join(','), start=show.starts_at, end=show.ends_at, detect='1' if show.auto_detect else None, window_minutes=show.detect.window_minutes if show.auto_detect else None) }}">Open in Reports</a>
     <a class="button" href="{{ url_for('web.show_edit', sid=show.id) }}">Edit</a>
   </div>
@@ -37,12 +37,10 @@
   {% endif %}
   <dt>Report delivery</dt>
   <dd>
-    {% if not (show.email_to or show.callback_url) %}
+    {% if not show.callback_url %}
       <span class="muted">none — download the PDF any time</span>
     {% else %}
-      {% if show.email_to %}e-mail {{ show.email_to }}{% endif %}
-      {% if show.email_to and show.callback_url %} · {% endif %}
-      {% if show.callback_url %}callback <code>{{ show.callback_url }}</code>{% endif %}
+      callback <code>{{ show.callback_url }}</code>
       <br>
       {% if show.delivered_at %}<span class="ok">sent {{ show.delivered_at|localtime }}</span>
       {% elif show.delivery_status %}<span class="off">attempt {{ show.delivery_attempts }} failed: {{ show.delivery_status }}</span>
@@ -87,7 +85,7 @@
 
 {% if show.status != 'upcoming' %}
 <script>
-(async function () {
+Spot.busy(document.querySelector('.chart-wrap'), async function () {
   const p = new URLSearchParams({ ids: {{ show.monitor_ids|join(',')|tojson }},
     start: {{ show.starts_at|tojson }}, end: {{ show.ends_at|tojson }}, max_points: '1500' });
   {% if show.auto_detect %}
@@ -124,7 +122,7 @@
                    startLabel: j.detection.start_detected ? 'detected start' : 'start',
                    endLabel: j.detection.end_detected ? 'detected end' : 'end' } : {} } },
   });
-})();
+}, { label: 'Loading the show’s readings…' });
 </script>
 {% endif %}
 {% endblock %}

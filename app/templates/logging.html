@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% block title %}Logging — Spot{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Logging &amp; syslog</h1>
+  <div class="page-tools">
+    <form method="post" action="{{ url_for('web.logging_test') }}" class="inline">
+      <button type="submit" class="button" {% if not status.connected %}disabled{% endif %}>Send test message</button>
+    </form>
+  </div>
+</div>
+<p class="muted">
+  Spot always logs to its service log (<code>journalctl -u spot</code>). Here you can also send
+  those lines to <strong>syslog</strong> — the local syslog daemon or a remote collector — and choose how much
+  each part of Spot logs. Changes apply immediately, no restart needed.
+</p>
+
+<section class="summary stat-row log-status">
+  <div class="card {{ 'primary' if status.connected }}">
+    <h3>Syslog</h3>
+    <p>{% if status.connected %}<span class="ok">● connected</span>
+       {% elif status.enabled %}<span class="off" style="color: var(--danger)">● not working</span>
+       {% else %}<span class="off">○ off</span>{% endif %}</p>
+    <small>{{ status.destination or '—' }}</small>
+  </div>
+  <div class="card"><h3>Sent</h3><p>{{ '{:,}'.format(status.sent) }}</p>
+    <small>{{ ('last ' ~ status.last_sent_at_local) if status.last_sent_at_local else 'nothing yet' }}</small></div>
+  <div class="card"><h3>Failed</h3><p>{{ '{:,}'.format(status.failed) }}</p>
+    <small>{{ status.error_at_local or '' }}</small></div>
+  <div class="card"><h3>Settings from</h3>
+    <p>{{ 'this page' if status.source == 'saved' else '.env' }}</p>
+    {% if status.source == 'saved' %}
+    <form method="post" action="{{ url_for('web.logging_reset') }}" class="inline"
+          data-confirm="Forget the settings saved here and go back to the .env values?">
+      <button type="submit" class="link">Reset to .env</button>
+    </form>
+    {% else %}<small>save below to override</small>{% endif %}
+  </div>
+</section>
+{% if status.error %}
+<div class="alert-banner"><strong>SYSLOG</strong> {{ status.error }}</div>
+{% endif %}
+
+<form method="post" class="form log-form">
+  <fieldset class="group">
+    <legend>Syslog</legend>
+    <label class="checkbox">
+      <input type="checkbox" name="syslog_enabled" {% if settings.syslog_enabled %}checked{% endif %}>
+      Send log lines to syslog
+    </label>
+    <div class="form-row">
+      <label>Destination
+        <input type="text" name="syslog_address" value="{{ settings.syslog_address }}" placeholder="/dev/log  or  loghost.example.org:514">
+        <small class="muted">A local socket path (<code>/dev/log</code> = this server's rsyslog / journald) or
+          <code>host:port</code> for a remote collector.</small>
+      </label>
+      <label>Transport (remote only)
+        <select name="syslog_protocol">
+          <option value="udp" {% if settings.syslog_protocol == 'udp' %}selected{% endif %}>UDP</option>
+          <option value="tcp" {% if settings.syslog_protocol == 'tcp' %}selected{% endif %}>TCP</option>
+        </select>
+        <small class="muted">TCP doesn't lose lines on a busy network and reconnects if the collector restarts.</small>
+      </label>
+    </div>
+    <div class="form-row">
+      <label>App name
+        <input type="text" name="syslog_tag" value="{{ settings.syslog_tag }}" maxlength="32" pattern="[A-Za-z0-9_.\-]{1,32}" required>
+        <small class="muted">The program name on every syslog line (<code>{{ settings.syslog_tag }}[pid]:</code>) — what
+          rsyslog filters such as <code>$programname == '{{ settings.syslog_tag }}'</code> match on.</small>
+      </label>
+      <label>Facility
+        <select name="syslog_facility">
+          {% for f in facilities %}<option {% if f == settings.syslog_facility %}selected{% endif %}>{{ f }}</option>{% endfor %}
+        </select>
+        <small class="muted">Usually one of <code>local0</code>–<code>local7</code>, to route Spot into its own file.</small>
+      </label>
+    </div>
+  </fieldset>
+
+  <fieldset class="group">
+    <legend>What to log</legend>
+    <table class="grid log-levels">
+      <thead><tr><th>Category</th><th>Level</th></tr></thead>
+      <tbody>
+      {% for c in categories %}
+        <tr>
+          <td><strong>{{ c.label }}</strong><div class="muted">{{ c.description }}</div></td>
+          <td>
+            <select name="level_{{ c.key }}" aria-label="{{ c.label }} level">
+              {% for l in levels %}
+              <option value="{{ l }}" {% if settings.levels.get(c.key) == l %}selected{% endif %}>{{ l|capitalize }}{% if env.levels.get(c.key) == l %} (default){% endif %}</option>
+              {% endfor %}
+            </select>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <small class="muted">Each level includes everything more serious: <em>Info</em> also logs warnings and errors.
+      <em>Off</em> silences a category everywhere (service log too). Defaults come from <code>SPOT_LOG_LEVEL</code>.</small>
+  </fieldset>
+  <div class="row"><button type="submit" class="primary">Save &amp; apply</button></div>
+</form>
+
+<h2 id="recent">Recent log <span class="muted">showing {{ entries|length }} of the last 500 lines (kept in memory since Spot started)</span></h2>
+<form method="get" action="{{ url_for('web.logging_settings') }}#recent" class="inline-form form log-filter">
+  <label>At least
+    <select name="level">{% for l in levels if l != 'off' %}<option value="{{ l }}" {% if l == level %}selected{% endif %}>{{ l|capitalize }}</option>{% endfor %}</select>
+  </label>
+  <label>Category
+    <select name="category"><option value="">All</option>
+      {% for c in categories %}<option value="{{ c.key }}" {% if c.key == category %}selected{% endif %}>{{ c.label }}</option>{% endfor %}
+    </select>
+  </label>
+  <button type="submit">Filter</button>
+  <a class="button" href="{{ url_for('web.logging_settings', level=level, category=category) }}#recent">Refresh</a>
+</form>
+{% if not entries %}
+  <p class="muted">Nothing logged{% if category or level != 'debug' %} that matches{% endif %} since Spot started.</p>
+{% else %}
+<table class="grid log-table">
+  <thead><tr><th>Time</th><th>Level</th><th>Category</th><th>Message</th><th>From</th></tr></thead>
+  <tbody>
+  {% for e in entries %}
+    <tr class="lvl-{{ e.level|lower }}">
+      <td class="nowrap">{{ e.local }}</td>
+      <td><span class="badge {{ 'bad' if e.level in ('ERROR', 'CRITICAL') else ('warnb' if e.level == 'WARNING' else 'off') }}">{{ e.level }}</span></td>
+      <td class="muted nowrap">{{ e.category or e.logger }}</td>
+      <td class="log-msg">{{ e.message }}</td>
+      <td class="muted nowrap">{{ e.src or '' }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

@@ -24,8 +24,8 @@ from sqlalchemy import func, or_, select
 from .config import Config
 from .db import session_scope
 from .models import Alert, Monitor, Reading
-from .notify import email_enabled, post_json, send_email
-from .util import format_local, iso_local
+from .notify import post_json
+from .util import iso_local
 
 log = logging.getLogger("spot.alerts")
 
@@ -169,7 +169,7 @@ def _event(action: str, a: Alert, m: Monitor, location: str | None,
 
 
 def notify(cfg: Config, ev: AlertEvent) -> None:
-    """Deliver one alert event to syslog and any configured e-mail / webhook."""
+    """Deliver one alert event to the log (syslog) and the webhook, if configured."""
     where = f" [{ev.location}]" if ev.location else ""
     head = "ALERT" if ev.action == "raised" else "RECOVERED"
     summary = f"{head}: {ev.monitor_name}{where} {ev.kind} — {ev.message}"
@@ -179,17 +179,6 @@ def notify(cfg: Config, ev: AlertEvent) -> None:
         log.info(summary)
 
     link = f"{cfg.public_url}/monitors/{ev.monitor_id}/dashboard" if cfg.public_url else ""
-    if email_enabled(cfg) and cfg.alert_email_to:
-        body = "\n".join(filter(None, [
-            summary, "",
-            f"Monitor:  {ev.monitor_name}",
-            f"Location: {ev.location}" if ev.location else "",
-            f"Value:    {_num(ev.value)} {ev.unit}",
-            f"Started:  {format_local(ev.started_at)}",
-            f"Cleared:  {format_local(ev.cleared_at)}" if ev.cleared_at else "",
-            f"Live:     {link}" if link else "",
-        ]))
-        send_email(cfg, cfg.alert_email_to, f"[Spot] {summary}", body)
     if cfg.alert_webhook_url:
         post_json(cfg.alert_webhook_url, {
             "event": f"alert.{ev.action}",
@@ -215,8 +204,8 @@ class AlertEngine(threading.Thread):
         self._stop_event = threading.Event()
 
     def run(self) -> None:
-        log.info("alert engine started: interval=%ds email=%s webhook=%s",
-                 self.interval, "on" if email_enabled(self.cfg) and self.cfg.alert_email_to else "off",
+        log.info("alert engine started: interval=%ds webhook=%s",
+                 self.interval,
                  "on" if self.cfg.alert_webhook_url else "off")
         # Give listeners a moment to deliver fresh data before the first pass,
         # so a restart doesn't raise a burst of spurious "stale" alerts.

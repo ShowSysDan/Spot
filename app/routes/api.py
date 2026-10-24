@@ -11,6 +11,7 @@ from ..util import parse_iso_ts
 
 bp = Blueprint("api", __name__)
 log = logging.getLogger("spot.api")
+security_log = logging.getLogger("spot.security")
 
 
 @bp.before_request
@@ -20,7 +21,7 @@ def _allowlist():
         return
     src = request.remote_addr or ""
     if src not in cfg.ingest_allow:
-        log.warning("rejected ingest from %s (not in allow list)", src)
+        security_log.warning("rejected ingest from %s (not in SPOT_INGEST_ALLOW) path=%s", src, request.path)
         abort(403)
 
 

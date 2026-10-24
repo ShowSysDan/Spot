@@ -204,9 +204,20 @@
       : '<li class="muted">none in this window</li>';
   }
 
-  const poll = Spot.poller(() => tick().catch(e => { if (e.name !== 'AbortError') throw e; }), refreshMs());
+  // Show the "working" overlay on the first load and after a window change
+  // (a 7-day window can take a moment); routine refreshes stay silent.
+  let showBusy = true;
+  const chartWrap = document.querySelector('.chart-wrap');
+  function load() {
+    const run = () => tick().catch(e => { if (e.name !== 'AbortError') throw e; });
+    if (!showBusy) return run();
+    showBusy = false;
+    return Spot.busy(chartWrap, run, { label: `Loading ${Spot.rangeWords(windowSec * 1000)} of readings…` });
+  }
+  const poll = Spot.poller(load, refreshMs());
 
   function setWindow(sec) {
+    if (sec !== windowSec) showBusy = true;
     windowSec = sec;
     Spot.store.set(`${storeKey}.window`, String(sec));
     winBtns.forEach(b => b.classList.toggle('active', Number(b.dataset.sec) === sec));

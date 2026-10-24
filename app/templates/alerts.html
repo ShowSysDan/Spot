@@ -5,7 +5,6 @@
   <h1>Alerts</h1>
   <div class="page-tools muted">
     Checked every {{ interval }} s ·
-    e-mail <strong class="{{ 'ok' if email_on else 'off' }}">{{ 'on' if email_on else 'off' }}</strong> ·
     webhook <strong class="{{ 'ok' if webhook_on else 'off' }}">{{ 'on' if webhook_on else 'off' }}</strong>
     · <a href="{{ url_for('web.setup') }}">set up</a>
   </div>

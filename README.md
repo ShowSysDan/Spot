@@ -2,7 +2,7 @@
 
 **Data acquisition, down to the last spot.**
 
-Current version: **1.7.1** — see [CHANGELOG.md](CHANGELOG.md). The running
+Current version: **1.9.0** — see [CHANGELOG.md](CHANGELOG.md). The running
 version is shown in the web UI footer, logged at startup, and stamped on every
 PDF report.
 
@@ -43,17 +43,15 @@ and lets you browse, query, graph, and export the data.
   average over a window you choose, so one loud clap doesn't page anyone) and
   a *no data for N seconds* alert. Alerting tiles glow red, dashboards draw the
   threshold lines, the menu shows a count, and every raise / recovery goes
-  to syslog and optionally e-mail and a JSON webhook.
+  to syslog and, optionally, a JSON webhook.
 - **Shows** — named time ranges (a performance, rehearsal, event) with
   their monitors. Each gets min / max / average plus **Leq, L10 and L90** for
-  dB monitors, and a PDF report that Spot can e-mail and/or POST to another
-  system automatically after the show ends.
+  dB monitors, and a PDF report that Spot can POST to another system (such as
+  321Theater) automatically after the show ends.
 - **Actual show start/end detection** — give Spot the scheduled times and it
   finds the real curtain-up / curtain-down in the sound levels (±15 min by
   default), reports on those, and shows what it found. Falls back to the
   schedule, with a reason, when there's no clear change.
-- **Scheduled reports** — daily, weekly or monthly PDF reports e-mailed
-  automatically, each covering the previous complete Eastern-time period.
 - **Wall display** (`/wall`) — a full-screen kiosk view with huge numbers,
   sparklines, alert colours and a 24-hour clock, for a control-room or
   backstage screen. Filter by location; bookmark one per screen.
@@ -61,7 +59,7 @@ and lets you browse, query, graph, and export the data.
   321Theater: list monitors, pull statistics, series and PDF reports for any
   time range, and create/update shows. Full guide: **[docs/API.md](docs/API.md)**.
 - **US Eastern, 24-hour everywhere** — every time on screen, in charts, PDFs,
-  CSVs and e-mails is shown in `SPOT_TIMEZONE` (default America/New_York,
+  CSVs and API responses is shown in `SPOT_TIMEZONE` (default America/New_York,
   EST/EDT handled automatically), whatever the viewer's computer is set to.
   Data is stored in UTC.
 - **Honest charts** — where a sensor stopped reporting, lines break and the
@@ -199,21 +197,21 @@ Set at least:
 | `SPOT_DB_SCHEMA`      | `spot` (or any name; will be created)        |
 | `SPOT_WEB_HOST`       | `0.0.0.0` (bind everywhere) or a specific IP |
 | `SPOT_WEB_PORT`       | e.g. `6100`                                  |
-| `SPOT_SYSLOG_ADDRESS` | `/dev/log` for local rsyslog                 |
+| `SPOT_SYSLOG_ADDRESS` | `/dev/log` for local rsyslog, or `host:port` for a remote collector; blank = syslog off |
+| `SPOT_SYSLOG_PROTOCOL`| `udp` (default) or `tcp` — remote syslog only |
+| `SPOT_SYSLOG_APP_NAME`| Program name on each syslog line (default `spot`) |
 | `SPOT_SYSLOG_FACILITY`| e.g. `local0`                                |
-| `SPOT_LOG_LEVEL`      | `INFO` / `DEBUG` / `WARNING`                 |
+| `SPOT_LOG_LEVEL`      | Default level for every log category: `INFO` / `DEBUG` / `WARNING` / `ERROR` |
+
+The syslog settings and per-category levels can also be changed live on
+**Setup → Logging** (no restart); settings saved there take precedence over
+`.env` until you press *Reset to .env*.
 | `SPOT_SECRET_KEY`     | Any random string                            |
 | `SPOT_INGEST_ALLOW`   | Optional CSV of allowed source IPs           |
 | `SPOT_JANITOR_INTERVAL_SECONDS` | Retention-cleanup interval (default `3600`) |
 | `SPOT_DEFAULT_RETENTION_DAYS` | Global default retention; blank = keep forever |
 | `SPOT_TIMEZONE`       | Display zone for all times, 24-hour (default `America/New_York`) |
-| `SPOT_PUBLIC_URL`     | Optional. Base URL used for links in e-mails / webhooks, e.g. `http://spot.internal:6100` |
-| `SPOT_SMTP_HOST`      | Optional. Mail server for alert / report e-mails; blank = e-mail off |
-| `SPOT_SMTP_PORT`      | Default `587` |
-| `SPOT_SMTP_SECURITY`  | `starttls` (default), `ssl`, or `none` |
-| `SPOT_SMTP_USER` / `SPOT_SMTP_PASSWORD` | Optional SMTP login |
-| `SPOT_SMTP_FROM`      | Sender address, default `spot@localhost` |
-| `SPOT_ALERT_EMAIL_TO` | Comma-separated alert recipients |
+| `SPOT_PUBLIC_URL`     | Optional. Base URL used for links in webhooks, callbacks and API responses, e.g. `http://spot.internal:6100` |
 | `SPOT_ALERT_WEBHOOK_URL` | Optional URL that receives alert JSON |
 | `SPOT_ALERT_INTERVAL_SECONDS` | How often alerts are evaluated (default `15`, min `5`) |
 | `SPOT_CALLBACK_ALLOW` | Optional. Hosts / CIDR ranges show-report callbacks may go to, e.g. `321theater.internal,10.20.0.0/16`; blank = any except link-local / reserved |
@@ -280,8 +278,12 @@ sudo ufw allow 6101:6199/udp      # UDP monitors (auto-assigned in this range)
 
 ### 9. Syslog
 
-If `SPOT_SYSLOG_ADDRESS=/dev/log`, messages reach the local syslog daemon.
-To route Spot's `local0` messages to a dedicated file, drop a file at
+Spot always writes its log to the service log (`journalctl -u spot`). It can
+also send every line to syslog — set it up in `.env` or, more easily, on
+**Setup → Logging** (see *Logging & syslog* below).
+
+With `SPOT_SYSLOG_ADDRESS=/dev/log`, lines reach this server's syslog
+daemon. To route them to a dedicated file, drop a file at
 `/etc/rsyslog.d/30-spot.conf`:
 
 ```
@@ -289,9 +291,11 @@ if $programname == 'spot' then /var/log/spot.log
 & stop
 ```
 
-then `sudo systemctl restart rsyslog`.
+then `sudo systemctl restart rsyslog`. (If you change the **app name** on
+the Logging page, use that name in the rule instead of `spot`.)
 
-For remote syslog, set `SPOT_SYSLOG_ADDRESS=loghost.example.com:514`.
+For a remote collector, set `SPOT_SYSLOG_ADDRESS=loghost.example.com:514`
+and optionally `SPOT_SYSLOG_PROTOCOL=tcp`.
 
 ### 10. Upgrades
 
@@ -333,9 +337,9 @@ migration.
 | `/shows`, `/shows/new`, `/shows/<id>` | Shows | Performances: levels, detection, PDF, automatic report delivery |
 | `/reports` | Reports | Several monitors on one chart; PDF / CSV; load / save shows (`/overlay` redirects here) |
 | `/alerts` | Alerts | Active alerts (acknowledge), thresholds in use, history |
-| `/setup` | Setup | Hub: links below, time zone check, notification settings and test buttons (`/setup/test-email`, `/setup/test-webhook`) |
-| `/setup/schedules`, `/setup/schedules/new` | Setup → Scheduled reports | Daily / weekly / monthly e-mailed PDFs |
+| `/setup` | Setup | Hub: links below, time zone check, webhook settings and test button (`/setup/test-webhook`) |
 | `/setup/api-keys` | Setup → API keys | Keys for `/api/v1` (321Theater etc.) |
+| `/setup/logging` | Setup → Logging & syslog | Syslog destination / transport / app name / facility, what to log, recent log |
 | `/modbus`, `/modbus/new`, `/modbus/<id>` | Setup → Modbus devices | Polled Modbus TCP sensors |
 | `/storage` | Setup → Storage | Database size and rows per monitor |
 | `/api/v1/…` | — | External API, see [docs/API.md](docs/API.md) |
@@ -458,6 +462,17 @@ open/closed state and the filter box are remembered per browser).
   interval for Modbus monitors (minimum 30 s).
 - Polling pauses while the browser tab is hidden.
 
+### Long ranges and loading
+
+Big requests — e.g. 30 days of a 1-second meter, about 2.6 million readings
+per monitor — take a few seconds. While they run, the chart shows a spinner
+with what's being crunched ("Crunching 30 days of readings for 3
+monitors…") and the elapsed time, and the buttons that would start another
+request are disabled. PDF and CSV downloads show a *Preparing…* notice in
+the corner until the browser starts receiving the file. Quick requests
+don't flash anything. Charts are always downsampled on the server, so the
+browser only ever draws a couple of thousand points.
+
 ### Gaps, themes and printing
 
 - **Gaps:** a pause longer than 5× the sensor's usual spacing (and at least
@@ -474,7 +489,7 @@ open/closed state and the filter box are remembered per browser).
 ### Time & timezone
 
 Spot stores every timestamp in UTC and shows every time — pages, charts,
-date pickers, PDFs, CSV files, e-mails, API responses — in **one display
+date pickers, PDFs, CSV files, API responses — in **one display
 zone, 24-hour**: `SPOT_TIMEZONE`, default `America/New_York` (EST/EDT switch
 automatically). It does not depend on the viewer's computer or on the
 server's own timezone setting, so a server reinstalled with a UTC clock
@@ -499,8 +514,8 @@ the Walt Disney Theater's sound meters.
   average, and for dB monitors **Leq** — the energy-average level, the
   standard "average loudness" — plus **L10** (loud passages) and **L90**
   (background)), a chart, and *Download PDF* / *CSV* / *Open in Reports*.
-- **Automatic report** — give a show e-mail recipients and/or a callback URL
-  and Spot sends its PDF about 5 minutes after it ends (so late readings are
+- **Automatic report** — give a show a callback URL (e.g. a 321Theater
+  endpoint) and Spot POSTs its PDF and statistics about 5 minutes after it ends (so late readings are
   included), retrying with backoff (1, 2, 4, 8, 16 min; 6 attempts) if
   delivery fails. *Send now* / *Send again* on the show page sends
   immediately. Editing a show re-arms delivery.
@@ -528,27 +543,8 @@ result, e.g. *Scheduled 21:00–23:30 · actual 21:04–23:40: start +4 min
 (rise of 22.1 dB); end +11 min (drop of 28.4 dB)*. One reference monitor
 (the first dB monitor, or the one you pick) decides the times for all
 monitors in the report. Shows with detection on wait an extra 17 minutes
-before e-mailing / sending their report so a late finish is caught. Full
+before sending their report so a late finish is caught. Full
 details: [docs/API.md §5.1](docs/API.md#51-finding-the-actual-start-and-end-detect).
-
-### Scheduled reports
-
-**Setup → Scheduled reports** sends a PDF report by e-mail on a schedule
-(needs `SPOT_SMTP_HOST`). Each report covers the previous **complete**
-period in Eastern time, never a partial one:
-
-| Frequency | Sent | Covers |
-|-----------|------|--------|
-| Daily | every day at HH:MM | yesterday 00:00 – 24:00 |
-| Weekly | the chosen weekday at HH:MM | the 7 days before that day (Monday → last Mon–Sun) |
-| Monthly | the 1st at HH:MM | the previous calendar month |
-
-The e-mail body lists min / max / average (and Leq for dB monitors) per
-monitor; the PDF is attached. *Send now* e-mails the most recent complete
-period without changing the schedule. The next send time is stored, so a
-restart neither skips nor repeats a report; if Spot was down at send time,
-the missed report goes out once when it's back (for the period it was due
-for). Daylight-saving days are handled (the fall-back day is 25 hours).
 
 ### Wall display
 
@@ -606,7 +602,6 @@ Where alerts show up:
   monitor that has thresholds, and the last 200 past alerts. The menu badge
   counts active, unacknowledged alerts.
 - **syslog** — `spot.alerts` logs every raise (WARNING) and recovery (INFO).
-- **E-mail** — when `SPOT_SMTP_HOST` and `SPOT_ALERT_EMAIL_TO` are set.
 - **Webhook** — when `SPOT_ALERT_WEBHOOK_URL` is set, Spot POSTs:
 
 ```json
@@ -624,8 +619,8 @@ Where alerts show up:
 }
 ```
 
-**Setup → Notifications** shows the current mail / webhook settings and has
-*Send test e-mail* and *Send test webhook* buttons.
+**Setup → Notifications** shows the current webhook setting and has a *Send
+test webhook* button.
 
 ### Live dashboard
 
@@ -814,21 +809,60 @@ without waiting for the janitor.
 
 ---
 
-## Logging / syslog details
+## Logging & syslog
 
-All Spot loggers are children of `spot.*`:
+Every log line goes to **stderr** (the service log, `journalctl -u spot`)
+and, when enabled, to **syslog**. **Setup → Logging** (`/setup/logging`)
+controls both, live:
 
-- `spot.web`        — UI actions (monitor created/updated/deleted, toggled, purged)
-- `spot.api`        — HTTP ingest + allow-list rejections
-- `spot.listeners`  — TCP/UDP listener start/stop/bind errors
-- `spot.modbus`     — Modbus poller start/stop, read failures, decode errors
-- `spot.ingest`     — malformed payloads
-- `spot.janitor`    — retention purges (rows deleted per monitor per pass)
-- `spot.db`         — schema bring-up
-- `spot.data`       — query/export
+**Status** — whether syslog is connected, lines sent, failures and the
+last error (a failure is never silent; it shows here and as a banner),
+whether the settings come from `.env` or were saved on the page, and a
+*Send test message* button.
 
-The same records go to **stderr** (visible in `journalctl -u spot`)
-**and** syslog (the facility you set in `SPOT_SYSLOG_FACILITY`).
+**Syslog settings**
+
+| Setting | Notes |
+|---------|-------|
+| Send to syslog | On / off. |
+| Destination | `/dev/log` (this server's rsyslog / journald) or `host:port`. |
+| Transport | UDP or TCP for a remote collector. TCP is newline-framed (what rsyslog / syslog-ng expect) and reconnects by itself after the collector restarts; a line that can't be delivered is counted as failed, not lost silently. |
+| App name | The program name on each line, `spot[pid]:` by default. 1–32 letters, digits, `.`, `_`, `-`. rsyslog `$programname` rules match on it. |
+| Facility | `local0`–`local7`, `user`, `daemon`, … |
+
+Lines are RFC 3164: `<PRI>Oct 24 18:54:40 host spot[1234]: spot.api.access INFO: GET /api/v1/stats?monitors=1 200 18ms 444B key="321Theater" [src=10.0.0.5]`.
+The timestamp is in Spot's display zone (Eastern); the severity in `PRI`
+follows the line's level. Lines logged while handling a web or API request
+end with `[src=<client IP>]`, so UI changes and API calls are attributable.
+
+**What to log** — one level per category (*Off*, *Error*, *Warning*,
+*Info*, *Debug*; each includes the more serious ones). Defaults follow
+`SPOT_LOG_LEVEL`.
+
+| Category | Default | Logs |
+|----------|---------|------|
+| Alerts | info | alert raised (warning) / recovered (info); webhook failures |
+| API requests | info | one line per `/api/v1` call: method, path, status, time, size, API key name, source IP (4xx as warning, 5xx as error); shows created / changed / deleted via the API |
+| Security | info | rejected or disabled API keys, refused cross-site form posts, ingest from outside `SPOT_INGEST_ALLOW` |
+| Data ingest | warning | malformed payloads; at *Debug* every accepted reading (busy!) |
+| Changes in the web UI | info | monitors, shows, Modbus devices, API keys, acknowledgements and settings created / changed / deleted |
+| Show reports & webhooks | info | show report deliveries to callback URLs and their retries |
+| Listeners & Modbus | info | TCP/UDP listeners starting / stopping / failing to bind; Modbus read and decode errors |
+| Exports | info | CSV and PDF downloads (which monitors, which range) |
+| System | info | start-up, database schema, retention purges |
+
+*Off* silences a category everywhere, the service log included.
+
+**Recent log** — the last 500 lines (from all categories, whatever goes to
+syslog) are kept in memory and shown at the bottom of the page, filterable
+by level and category; handy to confirm something is being logged without
+logging in to the server. It starts empty after a restart.
+
+Under the hood these are Python loggers under `spot.*` (`spot.alerts`,
+`spot.api.access`, `spot.api.v1`, `spot.security`, `spot.ingest`,
+`spot.api`, `spot.web`, `spot.shows`, `spot.notify`, `spot.listeners`,
+`spot.modbus`, `spot.data`, `spot.db`, `spot.janitor`); the category map is
+in `app/logging_config.py`.
 
 ---
 

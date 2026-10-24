@@ -2,8 +2,8 @@
 
 A show can be created in the UI or by an external system (321Theater) via
 /api/v1/shows. Once a show has ended — plus `SHOW_REPORT_DELAY_SECONDS` so
-late readings make it in — the `ShowReporter` thread e-mails its PDF report
-to `email_to` and/or POSTs it to `callback_url`, retrying with backoff.
+late readings make it in — the `ShowReporter` thread POSTs its PDF report
+to `callback_url`, retrying with backoff.
 """
 from __future__ import annotations
 
@@ -19,8 +19,8 @@ from .config import Config
 from .db import session_scope
 from .exports import render_overlay_pdf
 from .models import Show
-from .notify import callback_url_problem, post_multipart, send_email
-from .detect import HOLD as DETECT_HOLD, DetectOptions, describe as describe_detection, pdf_meta, resolve_range
+from .notify import callback_url_problem, post_multipart
+from .detect import HOLD as DETECT_HOLD, DetectOptions, pdf_meta, resolve_range
 from .queries import PDF_MAX_POINTS, collect_overlay, compute_summary
 from .util import format_local, iso_local, monitor_color, safe_filename, to_local
 
@@ -60,7 +60,6 @@ def show_view(show: Show, base_url: str = "") -> dict:
         "duration_minutes": round((show.ends_at - show.starts_at).total_seconds() / 60),
         "status": show_status(show),
         "notes": show.notes,
-        "email_to": show.email_to,
         "callback_url": show.callback_url,
         "delivered_at": iso_local(show.delivered_at),
         "delivery_status": show.delivery_status,
@@ -139,7 +138,7 @@ def _due_shows(s: Session, now: datetime) -> list[Show]:
     rows = s.scalars(
         select(Show).where(
             Show.delivered_at.is_(None),
-            or_(Show.email_to.is_not(None), Show.callback_url.is_not(None)),
+            Show.callback_url.is_not(None),
             Show.ends_at <= now - timedelta(seconds=SHOW_REPORT_DELAY_SECONDS),
             Show.delivery_attempts < MAX_DELIVERY_ATTEMPTS,
             or_(Show.next_attempt_at.is_(None), Show.next_attempt_at <= now),
@@ -176,17 +175,14 @@ def deliver_show(cfg: Config, show_id: int, now: datetime | None = None,
     """
     now = now or datetime.now(timezone.utc)
     errors: list[str] = []
-    email_to: list[str] = []
-    callback = None
     try:
         with session_scope() as s:
             show = s.get(Show, show_id)
             if show is None:
                 return "show not found"
-            email_to = [x.strip() for x in (show.email_to or "").split(",") if x.strip()]
             callback = show.callback_url
-            if not (email_to or callback):
-                return "show has no e-mail recipients or callback URL"
+            if not callback:
+                return "show has no callback URL"
             early = now < report_due_at(show)
             view = show_view(show, cfg.public_url)
             rng = show_range(s, show)
@@ -195,15 +191,10 @@ def deliver_show(cfg: Config, show_id: int, now: datetime | None = None,
             detection = rng[2]
             fname = report_filename(show)
 
-        if email_to:
-            err = send_email(cfg, email_to, f"[Spot] Show report: {view['name']}",
-                             _email_body(view, stats, detection), [(fname, pdf, "application/pdf")])
-            if err:
-                errors.append(f"e-mail: {err}")
-        problem = callback_url_problem(callback, cfg) if callback else None
+        problem = callback_url_problem(callback, cfg)
         if problem:
             errors.append(f"callback: {problem}")
-        elif callback:
+        else:
             metadata = {"event": "show.report", "show": view, "monitors": stats,
                         "report_start": iso_local(rng[0]), "report_end": iso_local(rng[1]),
                         "detection": detection, "final": not early}
@@ -238,31 +229,8 @@ def deliver_show(cfg: Config, show_id: int, now: datetime | None = None,
             show.delivered_at = now
             show.delivery_status = "delivered"
             show.next_attempt_at = None
-            log.info("show report delivered show=%s email=%s callback=%s",
-                     show.name, bool(email_to), bool(callback))
+            log.info("show report delivered show=%s callback=%s", show.name, callback)
     return "; ".join(errors) or None
-
-
-def _email_body(view: dict, stats: list[dict], detection: dict | None = None) -> str:
-    lines = [f"{view['name']}", f"Scheduled {view['starts_local']} – {view['ends_local']}"]
-    if detection:
-        lines.append(describe_detection(detection))
-    lines.append("")
-    for m in stats:
-        st = m["stats"]
-        line = (f"{m['name']}: min {_n(st['min'])}  max {_n(st['max'])}  "
-                f"avg {_n(st['avg'])} {m['unit']}")
-        if st.get("leq") is not None:
-            line += f"  Leq {_n(st['leq'])}  L10 {_n(st['l10'])}  L90 {_n(st['l90'])}"
-        lines.append(line + f"  ({st['count']:,} samples)")
-    if view["spot_url"].startswith("http"):
-        lines += ["", f"Details: {view['spot_url']}"]
-    lines += ["", "The full report is attached as a PDF."]
-    return "\n".join(lines)
-
-
-def _n(v) -> str:
-    return "—" if v is None else f"{v:.1f}"
 
 
 class ShowReporter(threading.Thread):

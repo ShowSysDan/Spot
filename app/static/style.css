@@ -379,3 +379,31 @@ body.wall.idle .wall-pick, body.wall.idle .wall-fs { opacity: 0; }
 }
 .tile .tile-value .v { display: inline-block; }
 .tile.tick .tile-value .v { animation: tick 0.8s ease-out; }
+
+/* ---- 1.8: loading feedback -------------------------------------------- */
+.is-busy-host { position: relative; }
+.busy-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 0.6rem;
+  background: color-mix(in srgb, var(--card) 78%, transparent); border-radius: inherit; z-index: 5;
+  color: var(--fg); font-weight: 500; backdrop-filter: blur(1px); }
+.busy-overlay .busy-time { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 2.5rem; }
+.spinner { width: 1.15rem; height: 1.15rem; border-radius: 50%; border: 2px solid var(--border);
+  border-top-color: var(--accent); animation: spin 0.8s linear infinite; display: inline-block; flex: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
+button.is-busy, .button.is-busy { cursor: progress; }
+.toast { position: fixed; right: 1rem; bottom: 1rem; z-index: 50; display: flex; align-items: center; gap: 0.6rem;
+  background: var(--card); color: var(--fg); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+  border-radius: 6px; padding: 0.6rem 0.9rem; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35); max-width: 22rem; }
+.toast.done { border-left-color: var(--ok); }
+@media print { .toast, .busy-overlay { display: none !important; } }
+
+/* ---- 1.9: logging page ------------------------------------------------ */
+.log-status { margin-bottom: 1rem; }
+.log-form { max-width: none; }
+.log-levels select { min-width: 9rem; }
+.log-levels td:first-child { width: 80%; }
+.log-filter { margin-bottom: 0.6rem; }
+.log-table td { vertical-align: top; }
+.log-table .log-msg { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.85rem; word-break: break-word; }
+.log-table .nowrap { white-space: nowrap; }
+.badge.warnb { color: var(--warn); }

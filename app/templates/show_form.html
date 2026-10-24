@@ -70,17 +70,13 @@
 
   <fieldset class="group">
     <legend>Send the report after the show <span class="muted">(optional)</span></legend>
-    <label>E-mail to
-      <input type="text" name="email_to" value="{{ show.email_to if show and show.email_to else '' }}"
-             placeholder="stage.manager@example.org, audio@example.org">
-      {% if not email_on %}<small class="muted">E-mail isn't set up yet (SPOT_SMTP_HOST) — see <a href="{{ url_for('web.setup') }}">Setup</a>.</small>{% endif %}
-    </label>
     <label>Callback URL
       <input type="text" name="callback_url" value="{{ show.callback_url if show and show.callback_url else '' }}"
              placeholder="https://321theater.example.org/hooks/spot">
-      <small class="muted">Spot POSTs the PDF and statistics here (multipart/form-data — see docs/API.md).</small>
+      <small class="muted">Spot POSTs the PDF and statistics here about 5 minutes after the show ends
+        (later with detection on, so a late finish is caught), retrying with backoff if delivery fails.
+        Format: docs/API.md §6.1. Leave blank and just download the PDF whenever you like.</small>
     </label>
-    <small class="muted">Sent about 5 minutes after the show ends, so late readings are included. Retries with backoff if delivery fails.</small>
   </fieldset>
 
   <div class="row">

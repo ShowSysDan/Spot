@@ -13,7 +13,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
-import re
+import time
 from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, Response, abort, current_app, g, jsonify, request
@@ -25,7 +25,7 @@ from ..db import session_scope
 from ..detect import DEFAULT_MIN_STEP, DEFAULT_WINDOW_MINUTES, MAX_WINDOW_MINUTES, pdf_meta, resolve_range
 from ..exports import render_overlay_pdf
 from ..models import ApiKey, Monitor, Reading, Show
-from ..notify import EMAIL_RE, callback_url_problem, one_line
+from ..notify import callback_url_problem, one_line
 from ..queries import PDF_MAX_POINTS, collect_overlay, compute_summary
 from ..shows import (
     MAX_SHOW_SECONDS,
@@ -42,6 +42,8 @@ from .params import MAX_IDS, detect_arg, max_points_arg, parse_ids, parse_range
 
 bp = Blueprint("v1", __name__)
 log = logging.getLogger("spot.api.v1")
+access_log = logging.getLogger("spot.api.access")
+security_log = logging.getLogger("spot.security")
 
 # Only touch api_keys.last_used_at this often per key, not on every request.
 LAST_USED_RESOLUTION = timedelta(minutes=5)
@@ -59,6 +61,30 @@ def _presented_key() -> str:
 
 
 @bp.before_request
+def _start_timer():
+    g.api_t0 = time.perf_counter()
+    g.api_key_name = None
+
+
+@bp.after_request
+def _access_log(resp):
+    """One line per API call (category "API requests" on Setup → Logging):
+    `GET /api/v1/stats?monitors=1,2&… 200 34ms 812B key="321Theater"`.
+    4xx are logged as warnings and 5xx as errors."""
+    ms = (time.perf_counter() - g.get("api_t0", time.perf_counter())) * 1000
+    target = request.full_path.rstrip("?")
+    if len(target) > 300:
+        target = target[:297] + "..."
+    level = logging.ERROR if resp.status_code >= 500 else (
+        logging.WARNING if resp.status_code >= 400 else logging.INFO)
+    size = resp.calculate_content_length()
+    access_log.log(level, "%s %s %d %.0fms %s key=%s", request.method, target, resp.status_code, ms,
+                   f"{size}B" if size is not None else "streamed",
+                   f'"{g.api_key_name}"' if g.get("api_key_name") else "-")
+    return resp
+
+
+@bp.before_request
 def _authenticate():
     key = _presented_key()
     if not key:
@@ -68,7 +94,8 @@ def _authenticate():
         row = s.scalars(select(ApiKey).where(ApiKey.key_hash == digest)).first()
         # compare_digest: constant-time even though we looked up by hash.
         if row is None or not row.enabled or not hmac.compare_digest(row.key_hash, digest):
-            log.warning("rejected API request from %s (bad or disabled key)", request.remote_addr)
+            security_log.warning("rejected API request %s %s (%s key)", request.method, request.path,
+                                 "disabled" if row is not None else "unknown")
             abort(401, description="invalid or disabled API key")
         now = datetime.now(timezone.utc)
         if row.last_used_at is None or now - row.last_used_at > LAST_USED_RESOLUTION:
@@ -277,14 +304,6 @@ def _apply_show_fields(s, show: Show, data: dict, partial: bool) -> None:
         show.monitors = list(_known_monitors(s, raw))
     if given("notes"):
         show.notes = _str_field(data, "notes", 10_000)
-    if given("email_to"):
-        emails = data.get("email_to") or []
-        if isinstance(emails, str):
-            emails = [emails]
-        if (not isinstance(emails, list)
-                or not all(isinstance(e, str) and re.fullmatch(EMAIL_RE, e.strip()) for e in emails)):
-            abort(400, description="email_to must be a list of e-mail addresses")
-        show.email_to = ", ".join(e.strip() for e in emails) or None
     if given("callback_url"):
         url = data.get("callback_url") or ""
         if not isinstance(url, str):
@@ -349,7 +368,7 @@ def shows_create():
     """Create a show, or update it when `external_id` already exists (upsert).
 
     Body: {"name", "start", "end", "monitors": [ids], "external_id"?,
-           "notes"?, "email_to"?: [addresses], "callback_url"?}
+           "notes"?, "callback_url"?, "auto_detect"?, "detect"?}
     """
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -431,8 +450,8 @@ def show_pdf_by_ref(ref: str):
 def _deliver(show_id: int | None = None, ref: str | None = None):
     with session_scope() as s:
         show = _show_or_404(s, show_id, ref)
-        if not (show.email_to or show.callback_url):
-            abort(400, description="show has no email_to or callback_url")
+        if not show.callback_url:
+            abort(400, description="show has no callback_url")
         sid = show.id
     err = deliver_show(current_app.config["SPOT"], sid, manual=True)
     if err:

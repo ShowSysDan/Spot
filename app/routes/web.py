@@ -22,16 +22,9 @@ from ..modbus import (
     poll_now,
 )
 from ..alerts import active_alerts_by_monitor
-from ..models import Alert, ApiKey, ModbusDevice, Monitor, ReportSchedule, Show
-from ..notify import EMAIL_RE, callback_url_problem, email_enabled, one_line, post_json, send_email
-from ..schedules import (
-    CADENCES,
-    WEEKDAYS,
-    describe as describe_schedule,
-    next_run,
-    run_schedule,
-    schedule_view,
-)
+from .. import logging_config as logcfg
+from ..models import Alert, ApiKey, ModbusDevice, Monitor, Show
+from ..notify import callback_url_problem, one_line, post_json
 from ..shows import (
     MAX_SHOW_SECONDS,
     deliver_show,
@@ -59,6 +52,8 @@ from .v1 import hash_key
 
 bp = Blueprint("web", __name__)
 log = logging.getLogger("spot.web")
+security_log = logging.getLogger("spot.security")
+export_log = logging.getLogger("spot.data")
 
 
 @bp.before_request
@@ -77,7 +72,7 @@ def _same_origin_posts():
     if not source:
         return None
     if source == "null" or urlsplit(source).netloc.lower() != request.host.lower():
-        log.warning("refused cross-site %s %s from origin=%s", request.method, request.path, source)
+        security_log.warning("refused cross-site %s %s from origin=%s", request.method, request.path, source)
         abort(403, description="Cross-site form submissions are not allowed.")
     return None
 
@@ -259,7 +254,6 @@ def alerts():
     cfg = current_app.config["SPOT"]
     return render_template("alerts.html", active=active, history=history,
                            configured=configured,
-                           email_on=email_enabled(cfg) and bool(cfg.alert_email_to),
                            webhook_on=bool(cfg.alert_webhook_url),
                            interval=cfg.alert_interval_seconds)
 
@@ -327,7 +321,7 @@ def _show_form(sid: int | None, prefill: dict | None):
     for m in monitors:
         m["location_key"] = m["location"] or ""
     return render_template("show_form.html", show=show, is_new=sid is None,
-                           monitors=monitors, email_on=email_enabled(current_app.config["SPOT"]))
+                           monitors=monitors)
 
 
 def _get_show_or_404(s, sid: int) -> Show:
@@ -362,9 +356,6 @@ def _save_show(sid: int | None):
                "A show can be at most 7 days long.")
         ids = [int(x) for x in request.form.getlist("ids") if x.isdigit()]
         _check(bool(ids), "Pick at least one monitor.")
-        emails = [e.strip() for e in _form_str("email_to").split(",") if e.strip()]
-        _check(all(re.fullmatch(EMAIL_RE, e) for e in emails),
-               "E-mail recipients must be addresses, comma-separated.")
         callback = _form_str("callback_url") or None
         window = _form_int("detect_window_minutes", "15", "Search window must be a whole number of minutes.")
         _check(1 <= window <= 60, "Search window must be 1–60 minutes.")
@@ -378,7 +369,6 @@ def _save_show(sid: int | None):
             show.name = name[:200]
             show.starts_at, show.ends_at = starts_at, ends_at
             show.notes = _form_str("notes") or None
-            show.email_to = ", ".join(emails) or None
             show.callback_url = callback
             show.auto_detect = bool(request.form.get("auto_detect"))
             show.detect_window_minutes = window
@@ -422,6 +412,7 @@ def show_report(sid: int):
         show = _get_show_or_404(s, sid)
         body = show_report_pdf(s, show)
         fname = report_filename(show)
+        export_log.info("export pdf show=%s id=%d bytes=%d", show.name, sid, len(body))
     return Response(body, mimetype="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
@@ -443,105 +434,6 @@ def show_delete(sid: int):
             s.delete(show)
     flash("Show deleted.", "success")
     return redirect(url_for("web.shows"))
-
-
-# ---------------------------------------------------------------------------
-# Scheduled reports
-# ---------------------------------------------------------------------------
-
-@bp.route("/setup/schedules")
-def schedules():
-    with session_scope() as s:
-        rows = [schedule_view(x) for x in s.scalars(select(ReportSchedule).order_by(ReportSchedule.name))]
-    return render_template("schedules.html", schedules=rows,
-                           email_on=email_enabled(current_app.config["SPOT"]))
-
-
-@bp.route("/setup/schedules/new", methods=["GET", "POST"])
-def schedule_new():
-    if request.method == "POST":
-        return _save_schedule(None)
-    return _schedule_form(None)
-
-
-@bp.route("/setup/schedules/<int:sid>/edit", methods=["GET", "POST"])
-def schedule_edit(sid: int):
-    if request.method == "POST":
-        return _save_schedule(sid)
-    return _schedule_form(sid)
-
-
-def _schedule_form(sid: int | None):
-    with session_scope() as s:
-        data = None
-        if sid is not None:
-            sched = s.get(ReportSchedule, sid)
-            if sched is None:
-                abort(404)
-            data = schedule_view(sched)
-        monitors = [monitor_view(m) for m in s.scalars(select(Monitor).order_by(Monitor.name))]
-    for m in monitors:
-        m["location_key"] = m["location"] or ""
-    return render_template("schedule_form.html", sched=data, monitors=monitors,
-                           cadences=CADENCES, weekdays=WEEKDAYS,
-                           email_on=email_enabled(current_app.config["SPOT"]))
-
-
-def _save_schedule(sid: int | None):
-    try:
-        name = one_line(_form_str("name"))[:200]
-        _check(bool(name), "Name is required.")
-        cadence = _form_str("cadence", "daily")
-        _check(cadence in CADENCES, "Unknown frequency.")
-        m = re.fullmatch(r"(\d{1,2}):(\d{2})", _form_str("send_time", "07:00"))
-        _check(m is not None and int(m[1]) < 24 and int(m[2]) < 60,
-               "Send time must be 24-hour HH:MM, e.g. 07:00.")
-        weekday = _form_int("weekday", "0", "Invalid weekday.")
-        _check(0 <= weekday <= 6, "Invalid weekday.")
-        emails = [e.strip() for e in _form_str("email_to").split(",") if e.strip()]
-        _check(bool(emails) and all(re.fullmatch(EMAIL_RE, e) for e in emails),
-               "Add at least one e-mail recipient (comma-separated).")
-        ids = [int(x) for x in request.form.getlist("ids") if x.isdigit()]
-        _check(bool(ids), "Pick at least one monitor.")
-        with session_scope() as s:
-            sched = ReportSchedule() if sid is None else s.get(ReportSchedule, sid)
-            if sched is None:
-                abort(404)
-            sched.name, sched.cadence = name, cadence
-            sched.send_hour, sched.send_minute = int(m[1]), int(m[2])
-            sched.weekday = weekday
-            sched.email_to = ", ".join(emails)
-            sched.enabled = bool(request.form.get("enabled"))
-            sched.monitors = list(s.scalars(select(Monitor).where(Monitor.id.in_(ids))))
-            sched.next_run_at = next_run(sched, datetime.now(timezone.utc))
-            s.add(sched)
-            s.flush()
-            log.info("report schedule %s: %s id=%d %s",
-                     "created" if sid is None else "updated", sched.name, sched.id, describe_schedule(sched))
-    except _FormError as e:
-        flash(str(e), "error")
-        return redirect(request.url)
-    flash("Schedule saved.", "success")
-    return redirect(url_for("web.schedules"))
-
-
-@bp.route("/setup/schedules/<int:sid>/send", methods=["POST"])
-def schedule_send(sid: int):
-    # Sends the most recently completed period without moving the schedule on.
-    err = run_schedule(current_app.config["SPOT"], sid, advance=False)
-    flash(f"Sending failed: {err}" if err else "Report sent.", "error" if err else "success")
-    return redirect(url_for("web.schedules"))
-
-
-@bp.route("/setup/schedules/<int:sid>/delete", methods=["POST"])
-def schedule_delete(sid: int):
-    with session_scope() as s:
-        sched = s.get(ReportSchedule, sid)
-        if sched:
-            log.info("report schedule deleted: %s id=%d", sched.name, sid)
-            s.delete(sched)
-    flash("Schedule deleted.", "success")
-    return redirect(url_for("web.schedules"))
 
 
 # ---------------------------------------------------------------------------
@@ -593,6 +485,86 @@ def api_key_delete(kid: int):
 
 
 # ---------------------------------------------------------------------------
+# Logging & syslog
+# ---------------------------------------------------------------------------
+
+@bp.route("/setup/logging", methods=["GET", "POST"])
+def logging_settings():
+    cfg = current_app.config["SPOT"]
+    if request.method == "POST":
+        try:
+            settings = _logging_form()
+        except _FormError as e:
+            flash(str(e), "error")
+            return redirect(url_for("web.logging_settings"))
+        err = logcfg.save_settings(settings)
+        log.info("logging settings changed: syslog=%s %s %s facility=%s app=%s levels=%s",
+                 "on" if settings.syslog_enabled else "off", settings.syslog_protocol,
+                 settings.syslog_address, settings.syslog_facility, settings.syslog_tag,
+                 ",".join(f"{k}={v}" for k, v in settings.levels.items()))
+        if err:
+            flash(f"Settings saved, but syslog isn't working: {err}", "error")
+        else:
+            flash("Logging settings saved and applied.", "success")
+        return redirect(url_for("web.logging_settings"))
+
+    level = request.args.get("level", "debug")
+    category = request.args.get("category", "")
+    entries = logcfg.recent(limit=300, min_level=level if level in logcfg.LEVELS else "debug",
+                            category=category if category in logcfg.CATEGORY_KEYS else "")
+    for e in entries:
+        e["local"] = format_local(e["ts"], "%m-%d %H:%M:%S")
+    st = logcfg.status()
+    for k in ("error_at", "last_sent_at"):
+        st[k + "_local"] = format_local(st[k], "%Y-%m-%d %H:%M:%S") if st[k] else None
+    return render_template("logging.html", settings=logcfg.current_settings(), status=st,
+                           categories=logcfg.CATEGORIES, levels=list(logcfg.LEVELS),
+                           facilities=logcfg.FACILITIES, entries=entries,
+                           env=logcfg.env_settings(cfg), level=level, category=category)
+
+
+def _logging_form() -> "logcfg.LogSettings":
+    enabled = bool(request.form.get("syslog_enabled"))
+    address = _form_str("syslog_address")
+    protocol = _form_str("syslog_protocol", "udp").lower()
+    facility = _form_str("syslog_facility", "local0").lower()
+    tag = _form_str("syslog_tag", "spot")
+    _check(protocol in ("udp", "tcp"), "Transport must be UDP or TCP.")
+    _check(facility in logcfg.FACILITIES, "Unknown syslog facility.")
+    _check(re.fullmatch(r"[A-Za-z0-9_.-]{1,32}", tag) is not None,
+           "App name: 1–32 letters, digits, '.', '_' or '-' (no spaces).")
+    _check(not enabled or bool(address), "Enter a syslog destination, or turn syslog off.")
+    _check(not address or address.startswith("/") or re.fullmatch(r"\[?[A-Za-z0-9_.:-]+\]?:\d{1,5}", address) is not None,
+           "Destination must be a local socket path (/dev/log) or host:port (loghost:514).")
+    levels = {}
+    for c in logcfg.CATEGORIES:
+        v = _form_str(f"level_{c.key}", c.default)
+        _check(v in logcfg.LEVELS, f"Unknown level for {c.label}.")
+        levels[c.key] = v
+    return logcfg.LogSettings(syslog_enabled=enabled, syslog_address=address,
+                              syslog_protocol=protocol, syslog_facility=facility,
+                              syslog_tag=tag, levels=levels)
+
+
+@bp.route("/setup/logging/test", methods=["POST"])
+def logging_test():
+    err = logcfg.send_test_message()
+    flash(f"Test message failed: {err}" if err else
+          "Test message sent to syslog — look for “Spot syslog test message”.",
+          "error" if err else "success")
+    return redirect(url_for("web.logging_settings"))
+
+
+@bp.route("/setup/logging/reset", methods=["POST"])
+def logging_reset():
+    err = logcfg.reset_to_env(current_app.config["SPOT"])
+    log.info("logging settings reset to .env defaults")
+    flash(f"Back to the .env settings, but syslog isn't working: {err}" if err
+          else "Back to the .env settings.", "error" if err else "success")
+    return redirect(url_for("web.logging_settings"))
+
+
+# ---------------------------------------------------------------------------
 # Setup hub + notification tests
 # ---------------------------------------------------------------------------
 
@@ -604,7 +576,6 @@ def setup():
             "modbus": s.query(ModbusDevice).count(),
             "monitors": s.query(Monitor).count(),
             "api_keys": s.query(ApiKey).filter(ApiKey.enabled.is_(True)).count(),
-            "schedules": s.query(ReportSchedule).filter(ReportSchedule.enabled.is_(True)).count(),
         }
     server_now = datetime.now().astimezone()
     display_now = now_local()
@@ -616,18 +587,7 @@ def setup():
         "differs": server_now.utcoffset() != display_now.utcoffset(),
     }
     return render_template("setup.html", cfg=cfg, counts=counts, clock=clock,
-                           email_on=email_enabled(cfg))
-
-
-@bp.route("/setup/test-email", methods=["POST"])
-def setup_test_email():
-    cfg = current_app.config["SPOT"]
-    to = [x.strip() for x in _form_str("to").split(",") if x.strip()] or list(cfg.alert_email_to)
-    err = send_email(cfg, to, "[Spot] Test e-mail",
-                     "This is a test message from Spot. E-mail delivery works.")
-    flash(f"Test e-mail failed: {err}" if err else f"Test e-mail sent to {', '.join(to)}.",
-          "error" if err else "success")
-    return redirect(url_for("web.setup"))
+                           log_status=logcfg.status())
 
 
 @bp.route("/setup/test-webhook", methods=["POST"])
@@ -637,6 +597,7 @@ def setup_test_webhook():
         flash("No alert webhook configured (set SPOT_ALERT_WEBHOOK_URL).", "error")
     else:
         err = post_json(cfg.alert_webhook_url, {"event": "test", "message": "Test from Spot"})
+        log.info("test webhook sent to %s: %s", cfg.alert_webhook_url, err or "ok")
         flash(f"Webhook failed: {err}" if err else "Test webhook delivered.",
               "error" if err else "success")
     return redirect(url_for("web.setup"))

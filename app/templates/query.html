@@ -72,7 +72,14 @@
     },
   });
 
-  async function runQuery() {
+  function runQuery() {
+    const span = new Date(Spot.toIso(form.end.value)) - new Date(Spot.toIso(form.start.value));
+    return Spot.busy(document.querySelector('.chart-wrap'), loadQuery, {
+      label: `Crunching ${Spot.rangeWords(span)} of readings…`,
+      buttons: [...form.querySelectorAll('button')],
+    });
+  }
+  async function loadQuery() {
     const qs = rangeQs();
     const [sr, mr] = await Promise.all([
       fetch(`/data/monitor/${monitorId}/series?${qs}&max_points=2000`),
@@ -118,10 +125,10 @@
 
   form.addEventListener('submit', e => { e.preventDefault(); runQuery(); });
   document.getElementById('btn-csv').addEventListener('click', () => {
-    window.location = `/data/monitor/${monitorId}/export.csv?${rangeQs()}`;
+    Spot.download(`/data/monitor/${monitorId}/export.csv?${rangeQs()}`, document.getElementById('btn-csv'), 'CSV');
   });
   document.getElementById('btn-pdf').addEventListener('click', () => {
-    window.location = `/data/monitor/${monitorId}/export.pdf?${rangeQs()}`;
+    Spot.download(`/data/monitor/${monitorId}/export.pdf?${rangeQs()}`, document.getElementById('btn-pdf'), 'PDF');
   });
   runQuery();
 })();

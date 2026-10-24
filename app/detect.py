@@ -227,7 +227,7 @@ def pdf_meta(det: dict | None) -> list[tuple[str, str]]:
 
 
 def describe(det: dict | None) -> str | None:
-    """One line for PDFs/e-mails, e.g. 'Actual 21:04–23:41 (start +4 min, end +11 min)'."""
+    """One line for PDFs and messages, e.g. 'Actual 21:04–23:41 (start +4 min, end +11 min)'."""
     if not det:
         return None
 
