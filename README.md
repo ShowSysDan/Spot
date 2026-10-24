@@ -320,6 +320,28 @@ migration.
 
 ## Using Spot
 
+### Page map
+
+| URL | Menu | What it's for |
+|-----|------|---------------|
+| `/` | Monitors | Live tiles per monitor (grouped by location) + Manage table |
+| `/wall` | Monitors → *Wall display* | Full-screen kiosk view (`?location=…`, `?ids=…`) |
+| `/monitors/new`, `/monitors/<id>/edit` | *+ New monitor*, Edit | Monitor settings: input, unit, location, colour, alerts, retention, rounding |
+| `/monitors/<id>` | (click a monitor) | Details, push examples with the auth token, purge / delete data |
+| `/monitors/<id>/dashboard` | Dashboard | Live chart, 1 min – 7 days |
+| `/monitors/<id>/query` | Query | Any range: stats, chart, CSV / PDF |
+| `/shows`, `/shows/new`, `/shows/<id>` | Shows | Performances: levels, detection, PDF, automatic report delivery |
+| `/reports` | Reports | Several monitors on one chart; PDF / CSV; load / save shows (`/overlay` redirects here) |
+| `/alerts` | Alerts | Active alerts (acknowledge), thresholds in use, history |
+| `/setup` | Setup | Hub: links below, time zone check, notification settings and test buttons (`/setup/test-email`, `/setup/test-webhook`) |
+| `/setup/schedules`, `/setup/schedules/new` | Setup → Scheduled reports | Daily / weekly / monthly e-mailed PDFs |
+| `/setup/api-keys` | Setup → API keys | Keys for `/api/v1` (321Theater etc.) |
+| `/modbus`, `/modbus/new`, `/modbus/<id>` | Setup → Modbus devices | Polled Modbus TCP sensors |
+| `/storage` | Setup → Storage | Database size and rows per monitor |
+| `/api/v1/…` | — | External API, see [docs/API.md](docs/API.md) |
+| `/api/ingest/<token>`, `/api/event/<token>` | — | Push readings / events in (see *Push data* below) |
+| `/data/…` | — | Internal JSON used by the pages (listed under *Query & export*); not a stable contract |
+
 ### Add a monitor
 
 Go to **New Monitor**. Pick a name, the unit, and the listener type. For
