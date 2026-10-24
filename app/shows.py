@@ -19,7 +19,7 @@ from .config import Config
 from .db import session_scope
 from .exports import render_overlay_pdf
 from .models import Show
-from .notify import post_multipart, send_email
+from .notify import callback_url_problem, post_multipart, send_email
 from .detect import HOLD as DETECT_HOLD, DetectOptions, describe as describe_detection, pdf_meta, resolve_range
 from .queries import PDF_MAX_POINTS, collect_overlay, compute_summary
 from .util import format_local, iso_local, monitor_color, safe_filename, to_local
@@ -149,51 +149,82 @@ def _due_shows(s: Session, now: datetime) -> list[Show]:
 
 
 def deliver_due(cfg: Config, now: datetime | None = None) -> int:
-    """Send every report that is due. Returns how many shows were handled."""
+    """Send every report that is due. Returns how many shows were handled.
+
+    Each show is isolated: one that fails (even with an unexpected error)
+    is recorded as a failed attempt and the rest still go out.
+    """
     now = now or datetime.now(timezone.utc)
     with session_scope() as s:
         ids = [sh.id for sh in _due_shows(s, now)]
     for sid in ids:
-        deliver_show(cfg, sid, now)
+        try:
+            deliver_show(cfg, sid, now)
+        except Exception:
+            log.exception("show report delivery crashed show_id=%d", sid)
     return len(ids)
 
 
-def deliver_show(cfg: Config, show_id: int, now: datetime | None = None) -> str | None:
-    """Build and send one show's report. Returns None on success or the error."""
+def deliver_show(cfg: Config, show_id: int, now: datetime | None = None,
+                 manual: bool = False) -> str | None:
+    """Build and send one show's report. Returns None on success or the error.
+
+    `manual` (the *Send now* button / API `deliver`): a successful send
+    before the report is due — i.e. before or during the show — is a
+    preview. It is noted, but doesn't count as delivery, so the real
+    post-show report still goes out automatically.
+    """
     now = now or datetime.now(timezone.utc)
-    with session_scope() as s:
-        show = s.get(Show, show_id)
-        if show is None:
-            return "show not found"
-        base = cfg.public_url
-        view = show_view(show, base)
-        rng = show_range(s, show)
-        stats = show_stats(s, show, rng)
-        pdf = show_report_pdf(s, show, rng)
-        detection = rng[2]
-        fname = report_filename(show)
-        email_to = [x.strip() for x in (show.email_to or "").split(",") if x.strip()]
-        callback = show.callback_url
-
     errors: list[str] = []
-    if email_to:
-        err = send_email(cfg, email_to, f"[Spot] Show report: {view['name']}",
-                         _email_body(view, stats, detection), [(fname, pdf, "application/pdf")])
-        if err:
-            errors.append(f"e-mail: {err}")
-    if callback:
-        metadata = {"event": "show.report", "show": view, "monitors": stats,
-                    "report_start": iso_local(rng[0]), "report_end": iso_local(rng[1]),
-                    "detection": detection}
-        err = post_multipart(callback, {"metadata": json.dumps(metadata, default=str)},
-                             [("report", fname, pdf, "application/pdf")])
-        if err:
-            errors.append(f"callback: {err}")
+    email_to: list[str] = []
+    callback = None
+    try:
+        with session_scope() as s:
+            show = s.get(Show, show_id)
+            if show is None:
+                return "show not found"
+            email_to = [x.strip() for x in (show.email_to or "").split(",") if x.strip()]
+            callback = show.callback_url
+            if not (email_to or callback):
+                return "show has no e-mail recipients or callback URL"
+            early = now < report_due_at(show)
+            view = show_view(show, cfg.public_url)
+            rng = show_range(s, show)
+            stats = show_stats(s, show, rng)
+            pdf = show_report_pdf(s, show, rng)
+            detection = rng[2]
+            fname = report_filename(show)
+
+        if email_to:
+            err = send_email(cfg, email_to, f"[Spot] Show report: {view['name']}",
+                             _email_body(view, stats, detection), [(fname, pdf, "application/pdf")])
+            if err:
+                errors.append(f"e-mail: {err}")
+        problem = callback_url_problem(callback, cfg) if callback else None
+        if problem:
+            errors.append(f"callback: {problem}")
+        elif callback:
+            metadata = {"event": "show.report", "show": view, "monitors": stats,
+                        "report_start": iso_local(rng[0]), "report_end": iso_local(rng[1]),
+                        "detection": detection, "final": not early}
+            err = post_multipart(callback, {"metadata": json.dumps(metadata, default=str)},
+                                 [("report", fname, pdf, "application/pdf")])
+            if err:
+                errors.append(f"callback: {err}")
+    except Exception as e:  # never leave a show stuck without recording the attempt
+        log.exception("show report build/send failed show_id=%d", show_id)
+        errors.append(f"internal error: {e.__class__.__name__}: {e}")
+        early = False
 
     with session_scope() as s:
         show = s.get(Show, show_id)
         if show is None:
             return "show not found"
+        if manual and early and not errors:
+            show.delivery_status = (f"preview sent {format_local(now, '%H:%M')}; "
+                                    "the final report still goes out after the show")
+            log.info("show report preview sent show=%s", show.name)
+            return None
         show.delivery_attempts += 1
         if errors:
             show.delivery_status = "; ".join(errors)

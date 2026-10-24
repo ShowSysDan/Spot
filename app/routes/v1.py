@@ -18,12 +18,14 @@ from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, Response, abort, current_app, g, jsonify, request
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from werkzeug.exceptions import HTTPException
 
 from ..db import session_scope
 from ..detect import DEFAULT_MIN_STEP, DEFAULT_WINDOW_MINUTES, MAX_WINDOW_MINUTES, pdf_meta, resolve_range
 from ..exports import render_overlay_pdf
 from ..models import ApiKey, Monitor, Reading, Show
+from ..notify import EMAIL_RE, callback_url_problem, one_line
 from ..queries import PDF_MAX_POINTS, collect_overlay, compute_summary
 from ..shows import (
     MAX_SHOW_SECONDS,
@@ -36,7 +38,7 @@ from ..shows import (
 )
 from ..util import iso_local, parse_iso_ts, to_local
 from ..version import __version__
-from .params import detect_arg, max_points_arg, parse_ids, parse_range
+from .params import MAX_IDS, detect_arg, max_points_arg, parse_ids, parse_range
 
 bp = Blueprint("v1", __name__)
 log = logging.getLogger("spot.api.v1")
@@ -89,6 +91,14 @@ def _monitor_ids_arg() -> list[int]:
     if not ids:
         abort(400, description="monitors is required, e.g. monitors=1,2,3")
     return ids
+
+
+def _detect_opts(s):
+    """detect_arg() plus: a named reference monitor must exist (404)."""
+    opts = detect_arg()
+    if opts and opts.monitor_id is not None:
+        _known_monitors(s, [opts.monitor_id])
+    return opts
 
 
 def _known_monitors(s, ids: list[int]) -> list[Monitor]:
@@ -144,7 +154,7 @@ def stats():
     start, end = parse_range()
     with session_scope() as s:
         monitors = _known_monitors(s, ids)
-        start, end, detection = resolve_range(s, ids, start, end, detect_arg())
+        start, end, detection = resolve_range(s, ids, start, end, _detect_opts(s))
         out = [{
             "id": m.id, "name": m.name, "unit": m.unit, "location": m.location,
             "stats": compute_summary(s, m.id, start, end, extended=True, unit=m.unit),
@@ -163,7 +173,7 @@ def series():
     max_points = max_points_arg() or 500
     with session_scope() as s:
         _known_monitors(s, ids)
-        start, end, detection = resolve_range(s, ids, start, end, detect_arg())
+        start, end, detection = resolve_range(s, ids, start, end, _detect_opts(s))
         data = collect_overlay(s, ids, start, end, max_points, with_summary=False)
     for m in data:
         m["points"] = [{"ts": iso_local(p["ts"]), "value": p["value"],
@@ -183,7 +193,7 @@ def report_pdf():
     title = (request.args.get("title") or "").strip()[:200] or None
     with session_scope() as s:
         _known_monitors(s, ids)
-        start, end, detection = resolve_range(s, ids, start, end, detect_arg())
+        start, end, detection = resolve_range(s, ids, start, end, _detect_opts(s))
         data = collect_overlay(s, ids, start, end, PDF_MAX_POINTS,
                                with_summary=True, extended=True)
     body = render_overlay_pdf(start, end, data, title=title, extra_meta=pdf_meta(detection))
@@ -196,6 +206,8 @@ def report_pdf():
 # ---------------------------------------------------------------------------
 
 def _show_or_404(s, show_id: int | None = None, ref: str | None = None) -> Show:
+    # Normalise the ref exactly as it was stored (one line, trimmed).
+    ref = one_line(ref) if ref is not None else None
     show = (s.get(Show, show_id) if show_id is not None else
             s.scalars(select(Show).where(Show.external_id == ref)).first())
     if show is None:
@@ -213,53 +225,80 @@ def _show_payload(s, show: Show, with_stats: bool = True) -> dict:
     return body
 
 
-def _apply_show_fields(s, show: Show, data: dict, partial: bool) -> None:
-    """Validate a JSON body and copy it onto `show`. Aborts 400 on bad input."""
-    def has(k):
-        return k in data and data[k] is not None
+def _str_field(data: dict, key: str, max_len: int, required: bool = False) -> str | None:
+    """A string field, on one line (CR/LF collapsed), trimmed, length-checked."""
+    v = data.get(key)
+    if v is None or v == "":
+        if required:
+            abort(400, description=f"{key} is required")
+        return None
+    if not isinstance(v, str):
+        abort(400, description=f"{key} must be a string")
+    v = one_line(v) if key != "notes" else v.strip()
+    if required and not v:
+        abort(400, description=f"{key} is required")
+    if len(v) > max_len:
+        abort(400, description=f"{key} must be at most {max_len} characters")
+    return v or None
 
-    if not partial or has("name"):
-        name = str(data.get("name") or "").strip()
-        if not name:
-            abort(400, description="name is required")
-        show.name = name[:200]
+
+def _apply_show_fields(s, show: Show, data: dict, partial: bool) -> None:
+    """Validate a JSON body and copy it onto `show`. Aborts 400 on bad input.
+
+    `partial=False` (POST create/upsert) replaces the whole show: optional
+    fields left out are cleared or reset to their defaults. `partial=True`
+    (PATCH) changes only the keys present.
+    """
+    def given(k):
+        return not partial or k in data
+
+    if given("name"):
+        show.name = _str_field(data, "name", 200, required=True)
     for key, attr in (("start", "starts_at"), ("end", "ends_at")):
-        if not partial or has(key):
-            if not has(key):
-                abort(400, description=f"{key} is required (ISO-8601)")
+        if given(key):
+            raw = data.get(key)
+            if not isinstance(raw, str) or not raw:
+                abort(400, description=f"{key} is required (ISO-8601 string)")
             try:
-                setattr(show, attr, parse_iso_ts(str(data[key])))
+                setattr(show, attr, parse_iso_ts(raw))
             except ValueError:
                 abort(400, description=f"{key} must be an ISO-8601 timestamp")
     if show.ends_at <= show.starts_at:
         abort(400, description="end must be after start")
     if (show.ends_at - show.starts_at).total_seconds() > MAX_SHOW_SECONDS:
         abort(400, description="a show can be at most 7 days long")
-    if not partial or "monitors" in data:
-        raw = data.get("monitors") or []
+    if given("monitors"):
+        raw = data.get("monitors")
         if (not isinstance(raw, list) or not raw
                 or not all(isinstance(x, int) and not isinstance(x, bool) for x in raw)):
             abort(400, description="monitors must be a non-empty list of monitor ids")
+        if len(set(raw)) > MAX_IDS:
+            abort(400, description=f"at most {MAX_IDS} monitors per show")
         show.monitors = list(_known_monitors(s, raw))
-    if "notes" in data:
-        show.notes = (str(data["notes"]).strip() or None) if data["notes"] is not None else None
-    if "email_to" in data:
-        emails = data["email_to"] or []
+    if given("notes"):
+        show.notes = _str_field(data, "notes", 10_000)
+    if given("email_to"):
+        emails = data.get("email_to") or []
         if isinstance(emails, str):
             emails = [emails]
-        if not all(isinstance(e, str) and "@" in e for e in emails):
+        if (not isinstance(emails, list)
+                or not all(isinstance(e, str) and re.fullmatch(EMAIL_RE, e.strip()) for e in emails)):
             abort(400, description="email_to must be a list of e-mail addresses")
         show.email_to = ", ".join(e.strip() for e in emails) or None
-    if "callback_url" in data:
-        url = (data["callback_url"] or "").strip()
-        if url and not re.match(r"^https?://", url):
-            abort(400, description="callback_url must be an http(s) URL")
-        show.callback_url = url or None
-    if "auto_detect" in data:
-        if not isinstance(data["auto_detect"], bool):
+    if given("callback_url"):
+        url = data.get("callback_url") or ""
+        if not isinstance(url, str):
+            abort(400, description="callback_url must be a string")
+        problem = callback_url_problem(url.strip(), current_app.config["SPOT"]) if url.strip() else None
+        if problem:
+            abort(400, description=problem)
+        show.callback_url = url.strip() or None
+    if given("auto_detect"):
+        v = data.get("auto_detect", False)
+        if not isinstance(v, bool):
             abort(400, description="auto_detect must be true or false")
-        show.auto_detect = data["auto_detect"]
-    if not partial or "detect" in data:
+        show.auto_detect = v
+    if given("detect"):
         _apply_detect_settings(s, show, data.get("detect") or {})
 
 
@@ -315,20 +354,28 @@ def shows_create():
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         abort(400, description="JSON object body required")
-    ext = (str(data["external_id"]).strip()[:128] or None) if data.get("external_id") is not None else None
-    with session_scope() as s:
-        show = s.scalars(select(Show).where(Show.external_id == ext)).first() if ext else None
-        created = show is None
-        if created:
-            show = Show(external_id=ext, source="api")
-        _apply_show_fields(s, show, data, partial=False)
-        _reset_delivery(show)
-        s.add(show)
-        s.flush()
-        body = _show_payload(s, show, with_stats=False)
-        log.info("show %s via API key=%s: %s id=%d ext=%s",
-                 "created" if created else "updated", g.api_key_name, show.name, show.id, ext)
-    return jsonify(body), 201 if created else 200
+    ext = _str_field(data, "external_id", 128)
+    # Two simultaneous creates with the same new external_id: the loser hits
+    # the unique constraint and simply retries as an update.
+    for attempt in (1, 2):
+        try:
+            with session_scope() as s:
+                show = s.scalars(select(Show).where(Show.external_id == ext)).first() if ext else None
+                created = show is None
+                if created:
+                    show = Show(external_id=ext, source="api")
+                _apply_show_fields(s, show, data, partial=False)
+                _reset_delivery(show)
+                s.add(show)
+                s.flush()
+                body = _show_payload(s, show, with_stats=False)
+                log.info("show %s via API key=%s: %s id=%d ext=%s",
+                         "created" if created else "updated", g.api_key_name, show.name, show.id, ext)
+            return jsonify(body), 201 if created else 200
+        except IntegrityError:
+            if attempt == 2 or not ext:
+                raise
+    raise AssertionError("unreachable")
 
 
 def _show_routes(show_id: int | None = None, ref: str | None = None):
@@ -387,7 +434,7 @@ def _deliver(show_id: int | None = None, ref: str | None = None):
         if not (show.email_to or show.callback_url):
             abort(400, description="show has no email_to or callback_url")
         sid = show.id
-    err = deliver_show(current_app.config["SPOT"], sid)
+    err = deliver_show(current_app.config["SPOT"], sid, manual=True)
     if err:
         return jsonify({"ok": False, "error": err}), 502
     return jsonify({"ok": True})

@@ -44,6 +44,9 @@ class Config:
     alert_email_to: tuple[str, ...] = ()
     alert_webhook_url: str = ""
     alert_interval_seconds: int = 15
+    # Optional lock-down for show-report callback URLs: hostnames and/or
+    # CIDR ranges. Empty = any host except link-local/reserved addresses.
+    callback_allow: tuple[str, ...] = ()
     # IANA zone for everything people see (24-hour). Storage stays UTC.
     timezone: str = "America/New_York"
 
@@ -82,6 +85,7 @@ class Config:
             alert_email_to=_csv(os.getenv("SPOT_ALERT_EMAIL_TO", "")),
             alert_webhook_url=os.getenv("SPOT_ALERT_WEBHOOK_URL", "").strip(),
             alert_interval_seconds=max(5, int(os.getenv("SPOT_ALERT_INTERVAL_SECONDS", "15"))),
+            callback_allow=_csv(os.getenv("SPOT_CALLBACK_ALLOW", "")),
             timezone=os.getenv("SPOT_TIMEZONE", "America/New_York").strip() or "America/New_York",
         )
 

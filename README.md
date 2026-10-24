@@ -2,7 +2,7 @@
 
 **Data acquisition, down to the last spot.**
 
-Current version: **1.7.0** — see [CHANGELOG.md](CHANGELOG.md). The running
+Current version: **1.7.1** — see [CHANGELOG.md](CHANGELOG.md). The running
 version is shown in the web UI footer, logged at startup, and stamped on every
 PDF report.
 
@@ -216,6 +216,7 @@ Set at least:
 | `SPOT_ALERT_EMAIL_TO` | Comma-separated alert recipients |
 | `SPOT_ALERT_WEBHOOK_URL` | Optional URL that receives alert JSON |
 | `SPOT_ALERT_INTERVAL_SECONDS` | How often alerts are evaluated (default `15`, min `5`) |
+| `SPOT_CALLBACK_ALLOW` | Optional. Hosts / CIDR ranges show-report callbacks may go to, e.g. `321theater.internal,10.20.0.0/16`; blank = any except link-local / reserved |
 
 ### 6. Smoke-test (foreground)
 
@@ -296,10 +297,17 @@ For remote syslog, set `SPOT_SYSLOG_ADDRESS=loghost.example.com:514`.
 
 ```bash
 cd ~/Spot
-git pull        # or copy in the new tree
-.venv/bin/pip install -r requirements.txt
+git pull
 sudo systemctl restart spot
 ```
+
+That's all an upgrade needs. On start, Spot creates any new tables and adds
+any new columns itself (existing data is never touched), and new settings
+all have defaults, so `.env` needs no changes. Re-run
+`.venv/bin/pip install -r requirements.txt` only when `requirements.txt`
+changed in the pull (`git diff HEAD@{1} -- requirements.txt` shows it), and
+`sudo ./scripts/install-service.sh` only when `spot.service` changed. The
+CHANGELOG lists what each version adds.
 
 Check the footer (or `journalctl -u spot | grep started`) to confirm the new
 version is running.

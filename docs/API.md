@@ -16,7 +16,7 @@ This is the contract for systems that talk to Spot — primarily
 10. [Security & operations](#10-security--operations)
 11. [Versioning policy](#11-versioning-policy)
 
-Spot version this document describes: **1.6.0**.
+Describes API v1 as of Spot **1.7.1**. `GET /` reports the running version.
 
 ---
 
@@ -137,7 +137,7 @@ see [5.1](#51-finding-the-actual-start-and-end-detect) for how it works.
 | `detect` | off | `1` / `true` turns detection on. |
 | `window_minutes` | `15` | How far either side of `start` and of `end` to look (1–60). |
 | `min_step` | `6` | Smallest sustained level change, in dB, that counts (0.5–60). |
-| `detect_monitor` | first dB monitor in `monitors` | Which monitor's levels decide the times. The detected range is then applied to every monitor in the request. |
+| `detect_monitor` | first dB monitor in `monitors` (in the order you list them) | Which monitor's levels decide the times. It may be any monitor, even one not in `monitors` (e.g. a stage mic deciding the times for a report on the house meters); an unknown id is a `404`. The detected range is then applied to every monitor in the request. |
 
 ### Monitor ids
 
@@ -145,11 +145,11 @@ Monitors (sensors) are identified by Spot's integer **`id`**. Ids never
 change or get reused while a monitor exists; renaming a monitor keeps its id.
 Get the list from `GET /monitors`. Endpoints that take several use
 `monitors=1,2,3` (comma-separated; `ids=` is accepted as an alias), at most
-50 per request.
+50 per request — more is a `400`, never silently trimmed.
 
 ### Responses and errors
 
-* JSON responses are `application/json; charset=utf-8`.
+* JSON responses are `application/json` (UTF-8).
 * Numbers are plain JSON numbers (full precision, not rounded). A statistic
   that has no data is `null`.
 * Errors always look like:
@@ -385,7 +385,7 @@ through the API are tagged `API` in Spot's UI and are visible to Spot users.
 | Field | Notes |
 |-------|-------|
 | `id` | Spot's id for the show. |
-| `external_id` | **Your** id (e.g. 321Theater's performance id). Unique in Spot. Optional, but strongly recommended — it makes create idempotent and lets you address the show without storing Spot's id. Max 128 chars. |
+| `external_id` | **Your** id (e.g. 321Theater's performance id). Unique in Spot. Optional, but strongly recommended — it makes create idempotent and lets you address the show without storing Spot's id. One line, max 128 chars, leading/trailing spaces trimmed (also when looking it up). |
 | `source` | `api` or `ui` (made by a person in Spot). |
 | `status` | `upcoming` (before `starts_at`), `live`, or `finished` (after `ends_at`), computed at request time. |
 | `starts_local` / `ends_local` | Human-friendly display strings; don't parse them. |
@@ -415,21 +415,24 @@ Shows that **overlap** a window, ordered by start time (max 500).
 #### `POST /shows`
 
 Create a show — or, if a show with the same `external_id` already exists,
-**replace** its fields (upsert). Safe to call repeatedly, e.g. every time
-321Theater saves the performance.
+**replace** it (upsert). Optional fields you leave out are cleared or reset
+to their defaults (no notes, no e-mail, no callback, detection off), so
+always send the full show. Safe to call repeatedly — even concurrently —
+e.g. every time 321Theater saves the performance. To change only some
+fields, use `PATCH`.
 
 Request body (JSON):
 
 | Field | Required | Notes |
 |-------|----------|-------|
-| `name` | yes | Max 200 chars. |
+| `name` | yes | String, max 200 chars. Line breaks are collapsed to spaces. |
 | `start` | yes | ISO-8601 (send an offset). |
 | `end` | yes | After `start`; at most 7 days later. |
 | `monitors` | yes | Non-empty array of monitor ids (integers). All must exist. |
 | `external_id` | recommended | Your id; enables upsert. |
 | `notes` | no | Free text. |
-| `email_to` | no | Array of addresses (or a single string). Needs e-mail configured in Spot. |
-| `callback_url` | no | `http://` or `https://` URL for the post-show report. |
+| `email_to` | no | Array of address strings (or a single string). Each must look like `name@host` with no spaces or commas. Needs e-mail configured in Spot. |
+| `callback_url` | no | `http://` or `https://` URL for the post-show report. Must resolve; link-local / reserved addresses (e.g. `169.254.x.x`) are refused, and if Spot's `SPOT_CALLBACK_ALLOW` is set the host must be on it. |
 | `auto_detect` | no | `true` to report on the actual start/end found in the levels. Default `false`. |
 | `detect` | no | `{"window_minutes": 15, "min_step": 6, "monitor": 3}` — all optional; defaults shown (`monitor` defaults to the first dB monitor). Sending `detect` sets all three; omitted keys go back to their defaults. |
 
@@ -497,9 +500,16 @@ simply ends at "now").
 #### `POST /shows/{id}/deliver` and `POST /shows/ref/{external_id}/deliver`
 
 Build and send the report immediately to the show's `callback_url` and/or
-`email_to`, regardless of timing. Returns `{"ok": true}`, or `502` with
+`email_to`. Returns `{"ok": true}`, or `502` with
 `{"ok": false, "error": "callback: HTTP 500"}` if the destination failed.
-`400` if the show has neither destination. Counts as a delivery attempt.
+`400` if the show has neither destination.
+
+* **Before the report is due** (before or during the show): this is a
+  **preview**. It's sent with `"final": false` in the callback metadata and
+  does **not** count as delivery — the real report still goes out
+  automatically after the show.
+* **After it's due:** a normal delivery (`"final": true`); counts as an
+  attempt and marks the show delivered on success.
 
 ---
 
@@ -644,9 +654,13 @@ Two parts:
   ],
   "report_start": "2026-10-24T19:34:20-04:00",
   "report_end": "2026-10-24T22:26:59-04:00",
-  "detection": null
+  "detection": null,
+  "final": true
 }
 ```
+
+`final` is `false` only for a manual preview sent before the show's report
+was due (see `…/deliver`); store those as provisional or ignore them.
 
 `report_start` / `report_end` are the range the statistics and PDF cover —
 the scheduled times, or the detected ones when the show has `auto_detect`
@@ -693,7 +707,7 @@ POSTed as JSON (`Content-Type: application/json`):
 |-------|-------|
 | `event` | `alert.raised` or `alert.cleared` (same `alert_id`). Also `test` when someone clicks *Send test webhook* in Spot. |
 | `kind` | `high`, `low` or `stale` (no data). |
-| `value` | The value judged (an average if the monitor averages over a window); `null` for `stale` with no data. |
+| `value` | The value judged: the window average if the monitor averages over a window, otherwise the latest reading (which, for a `stale` alert, is the last — old — value). `null` when there's no data at all. |
 | `started_at`, `cleared_at` | Eastern with offset, like every other Spot timestamp. |
 
 One attempt per event, 15 s timeout, no retries — alerts are also in Spot's
@@ -897,9 +911,15 @@ def spot_report():
   rejected keys (`spot.api.v1`, with the source address) to syslog.
 * **The web UI is unauthenticated** — anyone who can reach it can create
   API keys. Restrict it at the network or proxy level.
-* **Callback URLs** are called from the Spot server. Only point them at
-  systems you trust, and give the final URL — don't rely on redirects
-  being followed for a POST.
+* **Callback URLs** are called from the Spot server. Spot never follows
+  redirects (a 3xx counts as a failure), refuses link-local / reserved
+  addresses such as `169.254.169.254`, re-checks the URL at send time, and
+  can be restricted to specific hosts or subnets with
+  `SPOT_CALLBACK_ALLOW=321theater.internal,10.20.0.0/16`.
+* **Cross-site requests:** Spot's web forms refuse POSTs whose `Origin` /
+  `Referer` names another site, so a malicious page can't drive an
+  operator's browser (e.g. to create an API key). `/api/v1` uses keys, not
+  cookies, so it isn't affected.
 * **`SPOT_PUBLIC_URL`** (e.g. `http://spot.internal:6100`) makes the
   `report_pdf_url` / `spot_url` links absolute and correct in callbacks and
   e-mails. Without it, they're built from the incoming request (or relative,

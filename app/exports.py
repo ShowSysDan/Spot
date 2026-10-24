@@ -123,8 +123,8 @@ def render_chart_png(monitor_name: str, unit: str,
     _style_dark_axes(ax)
     if points:
         xs = [naive_local(p["ts"]) for p in points]
-        gaps = _gaps(xs)
-        _shade_gaps(ax, gaps)
+        gaps = _gap_after([p["ts"] for p in points])
+        _shade_gaps(ax, xs, gaps)
         if "min" in points[0]:
             bx, lo, hi = _split_at_gaps(xs, [p["min"] for p in points],
                                         [p["max"] for p in points], gaps=gaps)
@@ -139,7 +139,7 @@ def render_chart_png(monitor_name: str, unit: str,
                     fontsize=8, color=_DANGER_HEX, rotation=90,
                     verticalalignment="top")
     ax.set_ylabel(_mpl_text(unit))
-    ax.set_xlabel(f"Time ({_local_tz_name()})")
+    ax.set_xlabel(f"Time ({_zone_label(points[0]['ts'] if points else None, points[-1]['ts'] if points else None)})")
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d %H:%M:%S"))
     fig.autofmt_xdate()
     fig.tight_layout()
@@ -148,35 +148,40 @@ def render_chart_png(monitor_name: str, unit: str,
     return buf.getvalue()
 
 
-def _gaps(xs: list[datetime]) -> list[tuple[datetime, datetime]]:
-    """Stretches with no readings: pauses over 5× the median spacing (and
-    at least 30 s). Same rule as the web charts (spot.js findGaps)."""
-    if len(xs) < 3:
+def _gap_after(ts: list[datetime]) -> list[int]:
+    """Indices i where the pause from ts[i] to ts[i+1] is a gap: over 5× the
+    median spacing and at least 30 s (same rule as spot.js findGaps).
+
+    Uses the real (aware) timestamps, so the hour skipped when clocks spring
+    forward isn't mistaken for missing data.
+    """
+    if len(ts) < 3:
         return []
-    deltas = [(b - a).total_seconds() for a, b in zip(xs, xs[1:])]
+    deltas = [(b - a).total_seconds() for a, b in zip(ts, ts[1:])]
     limit = max(5 * statistics.median(deltas), 30.0)
-    return [(xs[i], xs[i + 1]) for i, d in enumerate(deltas) if d > limit]
+    return [i for i, d in enumerate(deltas) if d > limit]
 
 
-def _split_at_gaps(xs: list, *series: list, gaps) -> tuple[list, ...]:
+def _split_at_gaps(xs: list, *series: list, gaps: list[int]) -> tuple[list, ...]:
     """Insert NaN after each gap start so matplotlib breaks the line there."""
     if not gaps:
         return (xs, *series)
-    starts = {a for a, _ in gaps}
+    cut = set(gaps)
     out_x, outs = [], [[] for _ in series]
     for i, x in enumerate(xs):
         out_x.append(x)
         for o, ys in zip(outs, series):
             o.append(ys[i])
-        if x in starts:
+        if i in cut:
             out_x.append(x)
             for o in outs:
                 o.append(float("nan"))
     return (out_x, *outs)
 
 
-def _shade_gaps(ax, gaps) -> None:
-    for a, b in gaps:
+def _shade_gaps(ax, xs: list, gaps: list[int]) -> None:
+    for i in gaps:
+        a, b = xs[i], xs[i + 1]
         ax.axvspan(a, b, facecolor=_MUTED_HEX, alpha=0.10, hatch="///",
                    edgecolor=_BORDER_HEX, linewidth=0)
         ax.annotate("no data", xy=(a + (b - a) / 2, 0.02), xycoords=("data", "axes fraction"),
@@ -196,10 +201,15 @@ def _mpl_text(s: str) -> str:
     return " " + s if s.startswith("_") else s
 
 
-def _local_tz_name() -> str:
-    """Short timezone name for the server (e.g. 'EDT', 'EST', 'UTC')."""
-    name = now_local().tzname()
-    return name or "local"
+def _zone_label(start: datetime | None, end: datetime | None) -> str:
+    """Zone abbreviation(s) for the plotted range — 'EDT', or 'EDT/EST' when
+    it spans a daylight-saving change — not the zone at generation time."""
+    names = []
+    for dt in (start, end):
+        n = to_local(dt).tzname() if dt else None
+        if n and n not in names:
+            names.append(n)
+    return "/".join(names) or (now_local().tzname() or "local")
 
 
 # Brighter overlay palette tuned for dark backgrounds.
@@ -227,7 +237,8 @@ def render_overlay_chart_png(start: datetime, end: datetime,
         _style_dark_axes(ax)
         for m in groups[unit]:
             xs = [naive_local(p["ts"]) for p in m["points"]]
-            xs, ys = _split_at_gaps(xs, [p["value"] for p in m["points"]], gaps=_gaps(xs))
+            xs, ys = _split_at_gaps(xs, [p["value"] for p in m["points"]],
+                                    gaps=_gap_after([p["ts"] for p in m["points"]]))
             ax.plot(xs, ys, label=_mpl_text(m["name"]), linewidth=1.2, **_sparse_markers(xs),
                     color=m.get("color") or _OVERLAY_COLORS[color_idx % len(_OVERLAY_COLORS)])
             color_idx += 1
@@ -238,7 +249,7 @@ def render_overlay_chart_png(start: datetime, end: datetime,
         if legend is not None:
             for text in legend.get_texts():
                 text.set_color(_FG_HEX)
-    axes[-1].set_xlabel(f"Time ({_local_tz_name()})")
+    axes[-1].set_xlabel(f"Time ({_zone_label(start, end)})")
     axes[-1].xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d %H:%M:%S"))
     fig.autofmt_xdate()
     fig.tight_layout()

@@ -89,7 +89,11 @@ def create_app(config: Config | None = None) -> Flask:
         scheduler.stop()
         modbus.shutdown()
         manager.shutdown()
-        janitor.join(timeout=3.0)
+        # Let an in-progress pass (an e-mail, a report) finish before the
+        # database engine goes away.
+        for t in (janitor, alerts, show_reporter, scheduler):
+            if t.is_alive():
+                t.join(timeout=5.0)
         dispose_engine()
 
     atexit.register(_cleanup)

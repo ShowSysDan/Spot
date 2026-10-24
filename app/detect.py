@@ -55,7 +55,7 @@ class DetectOptions:
 
 def pick_reference(monitors: list[Monitor], wanted: int | None) -> Monitor | None:
     """The monitor whose levels decide the times: `wanted` if given, else the
-    first sound (dB) monitor in the list."""
+    first sound (dB) monitor in the list (in the order given)."""
     if wanted is not None:
         return next((m for m in monitors if m.id == wanted), None)
     return next((m for m in monitors if is_sound_unit(m.unit)), None)
@@ -191,15 +191,23 @@ def resolve_range(s: Session, ids: list[int], start: datetime, end: datetime,
     result for display (without internal keys), or None."""
     if opts is None:
         return start, end, None
-    monitors = s.scalars(select(Monitor).where(Monitor.id.in_(ids)).order_by(Monitor.id)).all()
-    ref = pick_reference(monitors, opts.monitor_id)
+    found = {m.id: m for m in s.scalars(select(Monitor).where(Monitor.id.in_(ids)))}
+    monitors = [found[i] for i in ids if i in found]  # keep the caller's order
+    if opts.monitor_id is not None:
+        # The reference may be any monitor — e.g. a stage mic decides the
+        # times for a report that only covers the house meters.
+        ref = found.get(opts.monitor_id) or s.get(Monitor, opts.monitor_id)
+        reason = f"reference monitor {opts.monitor_id} does not exist"
+    else:
+        ref = pick_reference(monitors, None)
+        reason = "no sound (dB) monitor to detect from"
     if ref is None:
         return start, end, {
             "start_detected": False, "end_detected": False,
             "scheduled_start": iso_local(start), "scheduled_end": iso_local(end),
             "start": iso_local(start), "end": iso_local(end),
-            "start_reason": "no sound (dB) monitor to detect from",
-            "end_reason": "no sound (dB) monitor to detect from",
+            "start_reason": reason,
+            "end_reason": reason,
             "window_minutes": opts.window_minutes, "min_step": opts.min_step,
             "monitor_id": None, "monitor_name": None,
             "start_step": None, "end_step": None,

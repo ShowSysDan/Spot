@@ -64,8 +64,12 @@ def parse_ids(name: str = "ids") -> list[int]:
         ids = [int(x) for x in ids_raw.split(",") if x.strip()]
     except ValueError:
         abort(400, description=f"{name} must be comma-separated integers")
-    # De-duplicate while keeping order; cap to keep one request bounded.
-    return list(dict.fromkeys(ids))[:MAX_IDS]
+    # De-duplicate while keeping order; refuse (rather than silently trim)
+    # more than one request should carry.
+    ids = list(dict.fromkeys(ids))
+    if len(ids) > MAX_IDS:
+        abort(400, description=f"at most {MAX_IDS} monitor ids per request")
+    return ids
 
 
 def detect_arg() -> DetectOptions | None:

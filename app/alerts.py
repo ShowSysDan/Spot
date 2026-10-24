@@ -225,7 +225,10 @@ class AlertEngine(threading.Thread):
         while not self._stop_event.is_set():
             try:
                 for ev in evaluate():
-                    notify(self.cfg, ev)
+                    try:
+                        notify(self.cfg, ev)
+                    except Exception:  # one bad notification mustn't drop the rest
+                        log.exception("alert notification failed alert_id=%s", ev.alert_id)
             except Exception:
                 log.exception("alert pass failed")
             if self._stop_event.wait(timeout=self.interval):

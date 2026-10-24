@@ -5,6 +5,7 @@ import math
 import re
 import secrets
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
 from flask import Blueprint, Response, abort, current_app, flash, redirect, render_template, request, url_for
 from sqlalchemy import select
 
@@ -22,7 +23,7 @@ from ..modbus import (
 )
 from ..alerts import active_alerts_by_monitor
 from ..models import Alert, ApiKey, ModbusDevice, Monitor, ReportSchedule, Show
-from ..notify import email_enabled, post_json, send_email
+from ..notify import EMAIL_RE, callback_url_problem, email_enabled, one_line, post_json, send_email
 from ..schedules import (
     CADENCES,
     WEEKDAYS,
@@ -60,13 +61,38 @@ bp = Blueprint("web", __name__)
 log = logging.getLogger("spot.web")
 
 
+@bp.before_request
+def _same_origin_posts():
+    """Cross-site request forgery guard for the (login-less) web UI.
+
+    Browsers attach Origin (or at least Referer) to form POSTs. A POST whose
+    Origin/Referer names another site is refused, so a page elsewhere can't
+    make an operator's browser create API keys, delete monitors, etc.
+    Requests with neither header (curl, scripts) are allowed — they aren't
+    a forged browser request.
+    """
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return None
+    source = request.headers.get("Origin") or request.headers.get("Referer")
+    if not source:
+        return None
+    if source == "null" or urlsplit(source).netloc.lower() != request.host.lower():
+        log.warning("refused cross-site %s %s from origin=%s", request.method, request.path, source)
+        abort(403, description="Cross-site form submissions are not allowed.")
+    return None
+
+
 VALID_LISTENER_TYPES = ("http", "tcp", "udp", "modbus")
 
 
 def _safe_next() -> str | None:
     """Same-site redirect target from a form's hidden `next` field, if any."""
     nxt = request.form.get("next") or ""
-    return nxt if nxt.startswith("/") and not nxt.startswith("//") else None
+    # Browsers treat "/\host" like "//host", so refuse backslashes as well.
+    parts = urlsplit(nxt)
+    if not nxt.startswith("/") or "\\" in nxt or parts.scheme or parts.netloc or nxt.startswith("//"):
+        return None
+    return nxt
 
 
 def _manager() -> ListenerManager:
@@ -327,7 +353,7 @@ def _form_ts(name: str, label: str) -> datetime:
 
 def _save_show(sid: int | None):
     try:
-        name = _form_str("name")
+        name = one_line(_form_str("name"))
         _check(bool(name), "Name is required.")
         starts_at = _form_ts("start", "Start")
         ends_at = _form_ts("end", "End")
@@ -337,15 +363,16 @@ def _save_show(sid: int | None):
         ids = [int(x) for x in request.form.getlist("ids") if x.isdigit()]
         _check(bool(ids), "Pick at least one monitor.")
         emails = [e.strip() for e in _form_str("email_to").split(",") if e.strip()]
-        _check(all("@" in e for e in emails), "E-mail recipients must be addresses, comma-separated.")
+        _check(all(re.fullmatch(EMAIL_RE, e) for e in emails),
+               "E-mail recipients must be addresses, comma-separated.")
         callback = _form_str("callback_url") or None
         window = _form_int("detect_window_minutes", "15", "Search window must be a whole number of minutes.")
         _check(1 <= window <= 60, "Search window must be 1–60 minutes.")
         min_step = _form_float("detect_min_step", "Minimum step must be a number.") or 6.0
         _check(0.5 <= min_step <= 60, "Minimum step must be 0.5–60 dB.")
         ref = _form_int("detect_monitor_id", None, "Invalid reference monitor.")
-        _check(callback is None or re.match(r"^https?://", callback) is not None,
-               "Callback URL must start with http:// or https://.")
+        problem = callback_url_problem(callback, current_app.config["SPOT"]) if callback else None
+        _check(problem is None, (problem or "").replace("callback_url", "Callback URL"))
         with session_scope() as s:
             show = Show(source="ui") if sid is None else _get_show_or_404(s, sid)
             show.name = name[:200]
@@ -401,7 +428,7 @@ def show_report(sid: int):
 
 @bp.route("/shows/<int:sid>/deliver", methods=["POST"])
 def show_deliver(sid: int):
-    err = deliver_show(current_app.config["SPOT"], sid)
+    err = deliver_show(current_app.config["SPOT"], sid, manual=True)
     flash(f"Sending the report failed: {err}" if err else "Report sent.",
           "error" if err else "success")
     return redirect(url_for("web.show_detail", sid=sid))
@@ -462,7 +489,7 @@ def _schedule_form(sid: int | None):
 
 def _save_schedule(sid: int | None):
     try:
-        name = _form_str("name")[:200]
+        name = one_line(_form_str("name"))[:200]
         _check(bool(name), "Name is required.")
         cadence = _form_str("cadence", "daily")
         _check(cadence in CADENCES, "Unknown frequency.")
@@ -472,7 +499,7 @@ def _save_schedule(sid: int | None):
         weekday = _form_int("weekday", "0", "Invalid weekday.")
         _check(0 <= weekday <= 6, "Invalid weekday.")
         emails = [e.strip() for e in _form_str("email_to").split(",") if e.strip()]
-        _check(bool(emails) and all("@" in e for e in emails),
+        _check(bool(emails) and all(re.fullmatch(EMAIL_RE, e) for e in emails),
                "Add at least one e-mail recipient (comma-separated).")
         ids = [int(x) for x in request.form.getlist("ids") if x.isdigit()]
         _check(bool(ids), "Pick at least one monitor.")

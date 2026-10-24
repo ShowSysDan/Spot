@@ -106,23 +106,49 @@ def run_schedule(cfg: Config, schedule_id: int, run_at: datetime | None = None,
     """
     now = datetime.now(timezone.utc)
     run_at = run_at or now
+    try:
+        err, label, name, recipients = _build_and_send(cfg, schedule_id, run_at)
+    except Exception as e:  # always record the run and move the schedule on
+        log.exception("scheduled report crashed schedule_id=%d", schedule_id)
+        err, label, name, recipients = f"internal error: {e.__class__.__name__}: {e}", "?", f"#{schedule_id}", []
+    if err == "schedule not found":
+        return err
+    with session_scope() as s:
+        sched = s.get(ReportSchedule, schedule_id)
+        if sched is not None:
+            sched.last_run_at = now
+            sched.last_status = f"failed: {err}" if err else f"sent ({label})"
+            if advance:
+                sched.next_run_at = next_run(sched, now)
+    if err:
+        log.error("scheduled report failed: %s err=%s", name, err)
+    else:
+        log.info("scheduled report sent: %s period=%s to=%s", name, label, recipients)
+    return err
+
+
+def _build_and_send(cfg: Config, schedule_id: int, run_at: datetime):
+    """Returns (error or None, period label, schedule name, recipients)."""
     with session_scope() as s:
         sched = s.get(ReportSchedule, schedule_id)
         if sched is None:
-            return "schedule not found"
+            return "schedule not found", "", "", []
         start, end = period_for(sched, run_at)
+        # Periods are [start, end): stop just short of the closing midnight so
+        # a reading at exactly 00:00 belongs to the next report only.
+        end_incl = end - timedelta(microseconds=1)
         ids = [m.id for m in sched.monitors]
         name = sched.name
         desc = describe(sched)
         recipients = [x.strip() for x in sched.email_to.split(",") if x.strip()]
         label = (f"{format_local(start, '%a %Y-%m-%d')}" if sched.cadence == "daily" else
                  f"{format_local(start, '%Y-%m-%d')} – {format_local(end - timedelta(seconds=1), '%Y-%m-%d')}")
-        data = collect_overlay(s, ids, start, end, PDF_MAX_POINTS,
+        data = collect_overlay(s, ids, start, end_incl, PDF_MAX_POINTS,
                                with_summary=True, extended=True) if ids else []
     if not ids:
         err = "no monitors selected"
     else:
-        pdf = render_overlay_pdf(start, end, data, title=f"{name} — {label}",
+        pdf = render_overlay_pdf(start, end_incl, data, title=f"{name} — {label}",
                                  extra_meta=[("Schedule", desc)])
         lines = [f"{name} — {label}", ""]
         for m in data:
@@ -136,18 +162,7 @@ def run_schedule(cfg: Config, schedule_id: int, run_at: datetime | None = None,
         fname = f"spot_{safe_filename(name)}_{to_local(start):%Y%m%d}.pdf"
         err = send_email(cfg, recipients, f"[Spot] {name} — {label}", "\n".join(lines),
                          [(fname, pdf, "application/pdf")])
-    with session_scope() as s:
-        sched = s.get(ReportSchedule, schedule_id)
-        if sched is not None:
-            sched.last_run_at = now
-            sched.last_status = f"failed: {err}" if err else f"sent ({label})"
-            if advance:
-                sched.next_run_at = next_run(sched, now)
-    if err:
-        log.error("scheduled report failed: %s err=%s", name, err)
-    else:
-        log.info("scheduled report sent: %s period=%s to=%s", name, label, recipients)
-    return err
+    return err, label, name, recipients
 
 
 def _n(v) -> str:
@@ -163,7 +178,10 @@ def run_due(cfg: Config) -> int:
     for sid, run_at in due:
         # Report on the period belonging to the *scheduled* time, so a
         # report caught up after downtime still covers the right day.
-        run_schedule(cfg, sid, run_at=run_at)
+        try:
+            run_schedule(cfg, sid, run_at=run_at)
+        except Exception:
+            log.exception("scheduled report pass failed schedule_id=%d", sid)
     return len(due)
 
 

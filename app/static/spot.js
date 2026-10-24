@@ -365,14 +365,17 @@
   // the tab is hidden so background tabs don't hammer the server.
   // Returns { setInterval(ms), pause(), resume(), now(), stop() }.
   function poller(fn, ms) {
-    let timer = null, running = false, paused = false, interval = ms, stopped = false;
+    let timer = null, running = false, paused = false, interval = ms, stopped = false, again = false;
     async function run() {
       timer = null;
       if (stopped || paused || document.hidden) return;
-      if (running) return;
+      // A refresh asked for mid-request (e.g. the window changed) runs as
+      // soon as the current one finishes, instead of being dropped.
+      if (running) { again = true; return; }
       running = true;
       try { await fn(); } catch (e) { console.warn('Spot poll failed:', e); }
       running = false;
+      if (again) { again = false; run(); return; }
       schedule();
     }
     function schedule() {

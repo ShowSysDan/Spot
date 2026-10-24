@@ -3,6 +3,61 @@
 All notable changes to Spot. The version number lives in `app/version.py`
 and is bumped with every change.
 
+## 1.7.1 — 2026-10-24
+
+Fixes from a full bug / memory review of 1.2–1.7.
+
+### Fixed
+- **A show or schedule name containing a line break could stop all report
+  delivery**: building the e-mail raised outside the error handling, the
+  attempt was never recorded, and the same show retried (and blocked the
+  rest of the queue) every minute. E-mail subjects are now forced onto one
+  line, message-building errors are caught, every show / schedule / alert
+  notification is isolated so one failure can't stop the others, and names
+  are collapsed to one line on input (API and web forms).
+- **"Send now" during a show cancelled the real post-show report.** A
+  manual send before the report is due is now a *preview* (`"final": false`
+  in the callback); the final report still goes out after the show.
+- **Callback URLs**: redirects are no longer followed; link-local /
+  reserved addresses (e.g. `169.254.169.254`) are refused; URLs are
+  re-checked at send time; new optional `SPOT_CALLBACK_ALLOW` host/CIDR
+  allow-list.
+- **Cross-site request forgery**: web-form POSTs whose Origin/Referer is
+  another site are refused (403).
+- Open-redirect hole in the `next` parameter (`/\evil.com`).
+- API show validation: wrong types now give 400 instead of 500 or being
+  accepted (`callback_url`, `email_to`, `name`, `notes`); e-mail addresses
+  are checked properly; `POST /shows` upsert now really replaces the show
+  (omitted optional fields are cleared); concurrent creates with the same
+  `external_id` no longer 500; `external_id` is trimmed the same way on
+  store and lookup.
+- More than 50 monitor ids is a 400 instead of being silently trimmed.
+- Detection: `detect_monitor` may now be any monitor (not only one in the
+  request) and an unknown id is a 404; the default reference follows the
+  order the monitors were listed in.
+- Scheduled reports no longer count a reading at exactly midnight in two
+  consecutive reports.
+- PDF charts: axis label shows the zone of the plotted range (EDT/EST)
+  rather than the zone at generation time; gaps are computed on real
+  timestamps so the spring-forward hour isn't hatched as missing.
+- Dashboard: changing the window during a fetch now refreshes as soon as
+  that fetch ends (it could wait up to a minute). Reports: an older preview
+  can no longer overwrite a newer one.
+- Shutdown waits for the alert, report and schedule threads to finish their
+  current pass before closing the database.
+- The web *Send now* route reports an error for a show with no recipients
+  instead of marking it delivered.
+- docs/API.md corrections (content type, alert `value`, version line).
+
+### Verified
+- Memory/threads: ~2,700 mixed requests (API stats with detection, PDFs,
+  wall, dashboards) — RSS plateaus ~220–235 MB, threads and file
+  descriptors constant. Browser heap, DOM nodes and listeners flat on the
+  home page, a 24 h dashboard and the wall display.
+- Upgrade from the previous `main` (pre-1.1) with live HTTP / TCP / Modbus
+  data via `git pull` + restart under the service's gunicorn settings:
+  schema migrated automatically, data kept, all pages and ingest working.
+
 ## 1.7.0 — 2026-10-24
 
 ### Added

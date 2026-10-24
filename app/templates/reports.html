@@ -140,8 +140,10 @@
     document.querySelectorAll('#picker .pick').forEach(l => (l.hidden = q !== '' && !l.dataset.filter.includes(q)));
   });
 
+  let runSeq = 0;
   async function run() {
     if (!selectedIds().length) return;
+    const seq = ++runSeq;  // only the newest preview may draw
     const p = rangeParams();
     p.set('max_points', '2000');
     p.set('summary', '1');
@@ -149,6 +151,7 @@
     if (!r.ok) { document.getElementById('hint').hidden = false;
       document.getElementById('hint').textContent = `Error: ${(await r.text()).slice(0, 200)}`; return; }
     const j = await r.json();
+    if (seq !== runSeq) return;
 
     // One Y axis per unit, alternating left/right.
     const axisFor = {};
