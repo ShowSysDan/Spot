@@ -3,6 +3,43 @@
 All notable changes to Spot. The version number lives in `app/version.py`
 and is bumped with every change.
 
+## 1.4.0 — 2026-10-24
+
+### Added
+- **Shows**: named time ranges with a set of monitors (`/shows`, new, edit,
+  detail page with levels table + chart, PDF/CSV, delete). Reports gains
+  *Load a show…* and *Save as show…*.
+- **Automatic show reports**: after a show ends (+5 min grace) Spot e-mails
+  the PDF to `email_to` and/or POSTs it with JSON statistics
+  (multipart/form-data) to `callback_url`; retries with exponential backoff,
+  up to 6 attempts; *Send now* on the show page.
+- **External API `/api/v1`** with API keys (Setup → API keys; SHA-256 hashed,
+  shown once, disable/delete, last-used): `GET /`, `/monitors`, `/stats`,
+  `/series`, `/report.pdf`, and shows CRUD with upsert by `external_id`,
+  per-show PDF and `deliver`. JSON errors throughout.
+- **Acoustic statistics**: Leq (energy-equivalent level), L10, L50, L90 for
+  units starting with "dB", plus p10/p50/p90 for every monitor — in the API,
+  show pages, Reports summary and PDF tables.
+- **docs/API.md**: the complete integration guide for 321Theater and other
+  systems.
+- **`SPOT_TIMEZONE`** (default `America/New_York`): one display zone, 24-hour,
+  for every time people see. Setup shows it beside the server's own zone.
+
+### Changed
+- **All times are US Eastern, 24-hour**, regardless of the viewer's
+  computer: chart axes and tooltips (Chart.js now uses the Luxon date
+  adapter with a fixed zone; date-fns adapter removed, Luxon vendored),
+  date pickers (date + 24-hour time box instead of the browser's 12-hour
+  control), quick ranges (Eastern midnights), summaries, PDFs, CSVs,
+  e-mails, download file names and API responses (ISO-8601 with offset).
+  Previously browser-side times followed each viewer's zone and locale.
+- Navigation: Monitors · Shows · Reports · Alerts · Setup.
+- Query helpers moved to `app/queries.py`, request parsing to
+  `app/routes/params.py` (shared by the web data endpoints and the API).
+- Report PDFs accept a title and extra metadata, and add Leq / L10 / L90
+  columns when dB monitors are included.
+- Alert webhook timestamps use the Eastern offset like everything else.
+
 ## 1.3.0 — 2026-10-24
 
 ### Added

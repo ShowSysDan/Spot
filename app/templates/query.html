@@ -25,7 +25,7 @@
   <button type="button" data-preset="yesterday">Yesterday</button>
   <button type="button" data-preset="week">This week</button>
 </div>
-<p class="muted">Times are in your browser's local timezone.</p>
+<p class="muted tz-note">Times are US Eastern, 24-hour.</p>
 
 <div id="summary" class="summary"></div>
 <div class="chart-wrap"><canvas id="chart"></canvas></div>
@@ -60,7 +60,7 @@
       animation: false, parsing: false, normalized: true,
       interaction: { mode: 'nearest', axis: 'x', intersect: false },
       scales: {
-        x: { type: 'time', time: { tooltipFormat: 'PPpp' }, grid: { color: '#2c313a' } },
+        x: { type: 'time', grid: { color: '#2c313a' } },
         y: { title: { display: true, text: unit }, grid: { color: '#2c313a' } },
       },
       plugins: {
@@ -100,10 +100,10 @@
   }
 
   function renderSummary(s, events) {
-    const at = ts => ts ? new Date(ts).toLocaleString() : '—';
+    const at = ts => Spot.fmtDateTime(ts);
     const u = Spot.escapeHtml(unit);
     document.getElementById('summary').innerHTML = `
-      <div class="card"><h3>Samples</h3><p>${s.count.toLocaleString()}</p></div>
+      <div class="card"><h3>Samples</h3><p>${Spot.fmtInt(s.count)}</p></div>
       <div class="card"><h3>Min</h3><p>${fmt(s.min)} ${u}</p><small>${at(s.min_at)}</small></div>
       <div class="card"><h3>Max</h3><p>${fmt(s.max)} ${u}</p><small>${at(s.max_at)}</small></div>
       <div class="card"><h3>Average</h3><p>${fmt(s.avg)} ${u}</p></div>

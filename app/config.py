@@ -44,6 +44,8 @@ class Config:
     alert_email_to: tuple[str, ...] = ()
     alert_webhook_url: str = ""
     alert_interval_seconds: int = 15
+    # IANA zone for everything people see (24-hour). Storage stays UTC.
+    timezone: str = "America/New_York"
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -80,6 +82,7 @@ class Config:
             alert_email_to=_csv(os.getenv("SPOT_ALERT_EMAIL_TO", "")),
             alert_webhook_url=os.getenv("SPOT_ALERT_WEBHOOK_URL", "").strip(),
             alert_interval_seconds=max(5, int(os.getenv("SPOT_ALERT_INTERVAL_SECONDS", "15"))),
+            timezone=os.getenv("SPOT_TIMEZONE", "America/New_York").strip() or "America/New_York",
         )
 
     @property

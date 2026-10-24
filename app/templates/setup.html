@@ -14,11 +14,29 @@
     <p class="muted">Database size, rows per monitor, retention.</p>
     <span class="badge off">{{ counts.monitors }} monitor{{ '' if counts.monitors == 1 else 's' }}</span>
   </a>
+  <a class="card setup-card" href="{{ url_for('web.api_keys') }}">
+    <h3>API keys</h3>
+    <p class="muted">Access for other systems such as 321Theater (<code>/api/v1</code>).</p>
+    <span class="badge off">{{ counts.api_keys }} active</span>
+  </a>
   <a class="card setup-card" href="{{ url_for('web.alerts') }}">
     <h3>Alerts</h3>
     <p class="muted">Active alerts, thresholds in use, and history.</p>
   </a>
 </section>
+
+<h2>Time</h2>
+<dl class="meta">
+  <dt>Display timezone</dt>
+  <dd><code>{{ clock.display_zone }}</code> — {{ clock.display_now }}
+    <div class="muted">Every time shown in Spot (pages, charts, PDFs, CSVs, e-mails) uses this zone, 24-hour.
+      Set with <code>SPOT_TIMEZONE</code>; data is stored in UTC.</div></dd>
+  <dt>Server clock</dt>
+  <dd>{{ clock.server_now }}
+    {% if clock.differs %}<div class="off">The server's own timezone ({{ clock.server_zone }}) differs from Spot's display zone.
+      That's fine — Spot always displays in <code>{{ clock.display_zone }}</code> — but logs from other tools on this server will use {{ clock.server_zone }}.</div>{% endif %}
+  </dd>
+</dl>
 
 <h2>Notifications</h2>
 <p class="muted">Configured in <code>.env</code> (restart Spot after changing). See the README section <em>Alerts &amp; notifications</em>.</p>

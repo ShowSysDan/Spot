@@ -258,3 +258,30 @@ tr.is-alerting td { background: rgba(248, 81, 73, 0.07); }
 .setup-card:hover { border-color: var(--accent); text-decoration: none; }
 .setup-card h3 { margin: 0 0 0.3rem; }
 .setup-card p { margin: 0 0 0.6rem; }
+
+/* ---- 1.4: shows, API keys -------------------------------------------- */
+.status-pill { display: inline-block; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+  padding: 0.05rem 0.45rem; border-radius: 999px; margin-right: 0.4rem; vertical-align: middle; border: 1px solid currentColor; }
+.status-pill.live { color: var(--ok); }
+.status-pill.upcoming { color: var(--accent); }
+.status-pill.finished { color: var(--off); }
+h1 .status-pill { font-size: 0.8rem; }
+.picker-inline { background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 0.3rem 0.7rem 0.6rem;
+  max-height: 22rem; overflow-y: auto; }
+.pick .muted { margin-left: auto; }
+.new-key { background: rgba(86, 211, 100, 0.08); border: 1px solid rgba(86, 211, 100, 0.45); border-radius: 8px;
+  padding: 0.8rem 1rem; margin-bottom: 1rem; }
+.new-key h3 { margin-top: 0; }
+code.key { font-size: 1rem; padding: 0.3rem 0.5rem; user-select: all; word-break: break-all; }
+.danger-zone { margin-top: 2rem; border-top: 1px solid var(--border); padding-top: 0.8rem; }
+.report-tools { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; margin: 0.2rem 0 0.6rem; }
+.report-tools select { padding: 0.4rem 0.5rem; border: 1px solid var(--border); border-radius: 4px; background: var(--card-2);
+  color: var(--fg); font: inherit; max-width: 100%; }
+.dt-field { display: inline-flex; gap: 0.4rem; }
+.dt-field input[type=date] { min-width: 9.5rem; }
+.dt-field input[type=text] { width: 6.5rem; font-variant-numeric: tabular-nums; }
+.dt-field input:invalid { border-color: var(--danger); }
+.form label.pick { display: flex; }
+.inline-form .dt-field input, .form .dt-field input {
+  padding: 0.5rem 0.65rem; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--card-2); color: var(--fg); font: inherit; }

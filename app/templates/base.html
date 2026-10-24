@@ -8,14 +8,27 @@
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='logo.svg') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=spot_version) }}">
   {# All browser libraries are vendored under static/vendor so Spot works offline. #}
+  <script>window.SPOT_TZ = {{ spot_timezone | tojson }};</script>
   <script src="{{ url_for('static', filename='vendor/chart-4.4.4.umd.min.js') }}"></script>
-  <script src="{{ url_for('static', filename='vendor/chartjs-adapter-date-fns-3.0.0.bundle.min.js') }}"></script>
+  <script src="{{ url_for('static', filename='vendor/luxon-3.5.0.min.js') }}"></script>
+  <script src="{{ url_for('static', filename='vendor/chartjs-adapter-luxon-1.3.1.umd.min.js') }}"></script>
   <script>
-    // Dark-mode defaults for every Chart.js chart on the site.
+    // Dark-mode defaults for every Chart.js chart on the site, and time axes
+    // in Spot's display timezone with 24-hour labels whatever the viewer's
+    // computer is set to.
     if (window.Chart) {
       Chart.defaults.color = '#cfd2d6';
       Chart.defaults.borderColor = '#2c313a';
       Chart.defaults.font.family = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+      const t = Chart.defaults.scales.time;
+      t.adapters = { date: { zone: window.SPOT_TZ, locale: 'en-US' } };
+      t.time = Object.assign(t.time || {}, {
+        tooltipFormat: 'yyyy-MM-dd HH:mm:ss ZZZZ',
+        displayFormats: { millisecond: 'HH:mm:ss.SSS', second: 'HH:mm:ss', minute: 'HH:mm',
+                          hour: 'HH:mm', day: 'MMM d', week: 'MMM d', month: 'MMM yyyy',
+                          quarter: 'MMM yyyy', year: 'yyyy' },
+      });
+      t.ticks = Object.assign(t.ticks || {}, { major: { enabled: true } });
     }
   </script>
   <script src="{{ url_for('static', filename='spot.js', v=spot_version) }}"></script>
@@ -31,12 +44,14 @@
     <nav>
       <a href="{{ url_for('web.index') }}"
          class="{{ 'active' if ep == 'web.index' or (ep.startswith('web.monitor_') and ep != 'web.monitor_new') }}">Monitors</a>
+      <a href="{{ url_for('web.shows') }}"
+         class="{{ 'active' if ep.startswith('web.show') }}">Shows</a>
       <a href="{{ url_for('web.reports') }}"
          class="{{ 'active' if ep == 'web.reports' }}" title="Compare monitors and export PDF / CSV reports">Reports</a>
       <a href="{{ url_for('web.alerts') }}" class="{{ 'active' if ep == 'web.alerts' }}">Alerts{%
         if spot_alert_count %} <span class="nav-badge" title="{{ spot_alert_count }} active, unacknowledged">{{ spot_alert_count }}</span>{% endif %}</a>
       <a href="{{ url_for('web.setup') }}"
-         class="{{ 'active' if ep == 'web.setup' or ep.startswith('web.modbus_') or ep == 'web.storage' }}">Setup</a>
+         class="{{ 'active' if ep.startswith('web.setup') or ep.startswith('web.api_key') or ep.startswith('web.modbus_') or ep == 'web.storage' }}">Setup</a>
       <a href="{{ url_for('web.monitor_new') }}" class="nav-cta {{ 'active' if ep == 'web.monitor_new' }}">+ New monitor</a>
     </nav>
   </header>
@@ -53,7 +68,8 @@
     {% block content %}{% endblock %}
   </main>
   <footer>
-    <small>Spot v{{ spot_version }} &middot; Postgres schema <code>{{ spot_schema }}</code></small>
+    <small>Spot v{{ spot_version }} &middot; Postgres schema <code>{{ spot_schema }}</code>
+      &middot; <span class="tz-note">times US Eastern, 24-hour</span></small>
   </footer>
 </body>
 </html>

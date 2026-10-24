@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Shows — Spot{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Shows</h1>
+  <div class="page-tools">
+    <input type="search" id="filter" placeholder="Filter shows…" aria-label="Filter shows">
+    <a class="button primary" href="{{ url_for('web.show_new') }}">+ New show</a>
+  </div>
+</div>
+<p class="muted">
+  A show is a named time range — a performance, rehearsal or event — and the monitors that matter for it.
+  Each one gets min / max / average (plus Leq, L10 and L90 for dB monitors) and a PDF report, which can be
+  e-mailed or sent to another system automatically once the show ends. 321Theater can create shows
+  through the <a href="{{ url_for('web.api_keys') }}">API</a>.
+</p>
+
+{% macro show_rows(rows) %}
+<table class="grid">
+  <thead><tr><th>Show</th><th>When</th><th class="num">Length</th><th>Monitors</th><th>Report</th><th></th></tr></thead>
+  <tbody>
+  {% for sh in rows %}
+    <tr data-filter="{{ (sh.name ~ ' ' ~ (sh.external_id or '') ~ ' ' ~ (sh.monitors|map(attribute='name')|join(' ')))|lower }}">
+      <td>
+        <span class="status-pill {{ sh.status }}">{{ sh.status }}</span>
+        <a href="{{ url_for('web.show_detail', sid=sh.id) }}">{{ sh.name }}</a>
+        {% if sh.source == 'api' %}<span class="badge off" title="Created through the API{% if sh.external_id %} (ref {{ sh.external_id }}){% endif %}">API</span>{% endif %}
+      </td>
+      <td>{{ sh.starts_local }} – {{ sh.ends_local }}</td>
+      <td class="num">{{ sh.duration_minutes // 60 }}h {{ '%02d'|format(sh.duration_minutes % 60) }}m</td>
+      <td>{{ sh.monitors|map(attribute='name')|join(', ') }}</td>
+      <td>
+        {% if sh.delivered_at %}<span class="ok" title="{{ sh.delivered_at|localtime }}">sent</span>
+        {% elif sh.delivery_status %}<span class="badge bad" title="{{ sh.delivery_status }}">failed</span>
+        {% elif sh.email_to or sh.callback_url %}<span class="muted">after show</span>
+        {% else %}<span class="muted">—</span>{% endif %}
+      </td>
+      <td class="actions"><a href="{{ url_for('web.show_report', sid=sh.id) }}">PDF</a></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endmacro %}
+
+<h2>Now &amp; upcoming</h2>
+{% if current %}{{ show_rows(current) }}{% else %}<p class="muted">Nothing scheduled.</p>{% endif %}
+
+<h2>Past <span class="muted">most recent 100</span></h2>
+{% if past %}{{ show_rows(past) }}{% else %}<p class="muted">No past shows yet.</p>{% endif %}
+
+<script>
+(function () {
+  const f = document.getElementById('filter');
+  f.addEventListener('input', () => {
+    const q = f.value.trim().toLowerCase();
+    document.querySelectorAll('tr[data-filter]').forEach(r => (r.hidden = q !== '' && !r.dataset.filter.includes(q)));
+  });
+})();
+</script>
+{% endblock %}

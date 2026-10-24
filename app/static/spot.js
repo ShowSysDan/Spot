@@ -20,7 +20,7 @@
     }
     const abs = Math.abs(v);
     const digits = abs >= 1000 ? 1 : abs >= 1 ? 2 : 4;
-    return Number(v.toFixed(digits)).toLocaleString(undefined, { maximumFractionDigits: digits });
+    return Number(v.toFixed(digits)).toLocaleString('en-US', { maximumFractionDigits: digits });
   }
 
   // "12s ago", "4m ago", "3h ago", "2d ago".
@@ -42,17 +42,72 @@
     return `${Math.round(sec / 86400)} days`;
   }
 
-  // datetime-local inputs speak browser-local time with no offset.
-  function toLocalInput(d) {
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
-           `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-  }
-  function toIso(s) { return s ? new Date(s).toISOString() : ''; }
+  // ---- Time: everything is shown in Spot's display zone (SPOT_TZ, default
+  // America/New_York), 24-hour, regardless of the viewer's computer. Data
+  // travels as UTC ISO-8601; only display and form inputs use wall time.
+  const TZ = window.SPOT_TZ || 'America/New_York';
+  const wallFmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: TZ, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short',
+  });
 
-  // Named quick ranges shared by the Query and Reports pages.
+  // Wall-clock fields of an instant in SPOT_TZ: {year, month, day, hour, minute, second, zone}.
+  function wall(d) {
+    const o = {};
+    for (const p of wallFmt.formatToParts(new Date(d))) o[p.type] = p.value;
+    return { year: +o.year, month: +o.month, day: +o.day, hour: +o.hour % 24,
+             minute: +o.minute, second: +o.second, zone: o.timeZoneName };
+  }
+
+  // Offset of SPOT_TZ from UTC at instant `ms`, in ms (EDT = -4h).
+  function zoneOffset(ms) {
+    const w = wall(ms);
+    return Date.UTC(w.year, w.month - 1, w.day, w.hour, w.minute, w.second) - Math.floor(ms / 1000) * 1000;
+  }
+
+  // The instant at which SPOT_TZ's clock reads the given wall time.
+  // Month is 1-based; out-of-range days roll over (day 0 = last of prev month).
+  function fromWall(year, month, day, hour = 0, minute = 0, second = 0) {
+    const guess = Date.UTC(year, month - 1, day, hour, minute, second);
+    let t = guess - zoneOffset(guess);
+    const again = guess - zoneOffset(t);  // correct across a DST change
+    if (again !== t) t = again;
+    return new Date(t);
+  }
+
+  // "2026-10-24 17:39:24" (+ " EDT" with {zone: true}; no seconds with {seconds: false}).
+  function fmtDateTime(ts, opts) {
+    if (!ts) return '—';
+    const o = Object.assign({ seconds: true, zone: false }, opts);
+    const w = wall(ts);
+    let out = `${w.year}-${pad(w.month)}-${pad(w.day)} ${pad(w.hour)}:${pad(w.minute)}`;
+    if (o.seconds) out += `:${pad(w.second)}`;
+    return o.zone ? `${out} ${w.zone}` : out;
+  }
+  // "17:39:24"
+  function fmtTime(ts) {
+    if (!ts) return '—';
+    const w = wall(ts);
+    return `${pad(w.hour)}:${pad(w.minute)}:${pad(w.second)}`;
+  }
+  // "EDT" / "EST" right now (for "times are Eastern" hints).
+  function zoneName() { return wall(Date.now()).zone; }
+
+  // datetime-local inputs hold SPOT_TZ wall time.
+  function toLocalInput(d) {
+    const w = wall(d);
+    return `${w.year}-${pad(w.month)}-${pad(w.day)}T${pad(w.hour)}:${pad(w.minute)}:${pad(w.second)}`;
+  }
+  function toIso(s) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/.exec(s || '');
+    return m ? fromWall(+m[1], +m[2], +m[3], +m[4], +m[5], +(m[6] || 0)).toISOString() : '';
+  }
+
+  // Named quick ranges shared by the Query and Reports pages. "Today",
+  // "yesterday" and "this week" use SPOT_TZ midnights.
   function presetRange(name) {
     const now = new Date();
-    const startOfDay = d => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const w = wall(now);
     const hours = h => [new Date(now - h * 3600e3), now];
     switch (name) {
       case '1h': return hours(1);
@@ -60,16 +115,11 @@
       case '24h': return hours(24);
       case '7d': return hours(24 * 7);
       case '30d': return hours(24 * 30);
-      case 'today': return [startOfDay(now), now];
-      case 'yesterday': {
-        const end = startOfDay(now);
-        return [new Date(end.getFullYear(), end.getMonth(), end.getDate() - 1), end];
-      }
+      case 'today': return [fromWall(w.year, w.month, w.day), now];
+      case 'yesterday': return [fromWall(w.year, w.month, w.day - 1), fromWall(w.year, w.month, w.day)];
       case 'week': {
-        const sod = startOfDay(now);
-        const monday = new Date(sod.getFullYear(), sod.getMonth(),
-                                sod.getDate() - ((sod.getDay() + 6) % 7));
-        return [monday, now];
+        const dow = new Date(Date.UTC(w.year, w.month - 1, w.day)).getUTCDay();  // 0 = Sunday
+        return [fromWall(w.year, w.month, w.day - ((dow + 6) % 7)), now];
       }
       default: return null;
     }
@@ -249,6 +299,69 @@
     return `rgba(${parseInt(m[1], 16)},${parseInt(m[2], 16)},${parseInt(m[3], 16)},${a})`;
   }
 
-  window.Spot = { alpha, escapeHtml, fmtValue, timeAgo, fmtDuration, toLocalInput, toIso,
+  const fmtInt = n => Number(n || 0).toLocaleString('en-US');
+
+  // Native datetime-local controls follow the viewer's OS clock format (often
+  // 12-hour) and can't be forced to 24-hour. Each one is swapped for a date
+  // picker plus a 24-hour "HH:MM:SS" text box. The original input stays in the
+  // form (hidden) and its .value keeps the same "YYYY-MM-DDTHH:MM:SS" shape,
+  // so page scripts and form posts don't notice the difference.
+  const nativeValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+  function normTime(t) {
+    const m = /^\s*(\d{1,2})(?::(\d{1,2}))?(?::(\d{1,2}))?\s*$/.exec(t || '');
+    if (!m || +m[1] > 23 || +(m[2] || 0) > 59 || +(m[3] || 0) > 59) return null;
+    return `${pad(+m[1])}:${pad(+(m[2] || 0))}:${pad(+(m[3] || 0))}`;
+  }
+  function upgradeDateTime(inp) {
+    const initial = nativeValue.get.call(inp);
+    const wrap = document.createElement('span');
+    wrap.className = 'dt-field';
+    const d = document.createElement('input');
+    d.type = 'date';
+    const t = document.createElement('input');
+    Object.assign(t, { type: 'text', inputMode: 'numeric', placeholder: 'HH:MM:SS', size: 8,
+                       title: '24-hour time, e.g. 19:30 or 19:30:00' });
+    d.required = t.required = inp.required;
+    d.setAttribute('aria-label', 'Date');
+    t.setAttribute('aria-label', 'Time (24-hour)');
+    inp.type = 'hidden';
+    inp.required = false;
+    inp.after(wrap);
+    wrap.append(d, t);
+    Object.defineProperty(inp, 'value', {
+      configurable: true,
+      get() { const tt = normTime(t.value); return d.value && tt ? `${d.value}T${tt}` : ''; },
+      set(v) {
+        const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}(?::\d{2})?)/.exec(v || '');
+        d.value = m ? m[1] : '';
+        t.value = m ? normTime(m[2]) : '';
+        nativeValue.set.call(inp, v || '');
+      },
+    });
+    inp.value = initial;
+    const sync = () => {
+      t.setCustomValidity(t.value && !normTime(t.value) ? 'Use 24-hour time, e.g. 19:30' : '');
+      nativeValue.set.call(inp, inp.value);
+      inp.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    d.addEventListener('input', sync);
+    t.addEventListener('input', sync);
+    t.addEventListener('blur', () => { const n = normTime(t.value); if (n) t.value = n; });
+  }
+  // Pages' inline scripts may already have set values; the swap carries them over.
+  document.addEventListener('DOMContentLoaded', () =>
+    document.querySelectorAll('input[type=datetime-local]').forEach(upgradeDateTime));
+
+  // Fill every .tz-note with the zone in use, e.g. "Times are US Eastern (EDT), 24-hour."
+  function zoneLabel() {
+    return TZ === 'America/New_York' ? 'US Eastern' : TZ.replace(/_/g, ' ');
+  }
+  document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.tz-note').forEach(el => {
+      el.textContent = `Times are ${zoneLabel()} (${zoneName()}), 24-hour.`;
+    });
+  });
+
+  window.Spot = { TZ, wall, fromWall, fmtDateTime, fmtTime, zoneName, fmtInt, alpha, escapeHtml, fmtValue, timeAgo, fmtDuration, toLocalInput, toIso,
                   presetRange, bindPresets, store, sparkline, poller };
 })();

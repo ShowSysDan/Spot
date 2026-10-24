@@ -2,7 +2,7 @@
 
 **Data acquisition, down to the last spot.**
 
-Current version: **1.3.0** — see [CHANGELOG.md](CHANGELOG.md). The running
+Current version: **1.4.0** — see [CHANGELOG.md](CHANGELOG.md). The running
 version is shown in the web UI footer, logged at startup, and stamped on every
 PDF report.
 
@@ -44,6 +44,17 @@ and lets you browse, query, graph, and export the data.
   a *no data for N seconds* alert. Alerting tiles glow red, dashboards draw the
   threshold lines, the menu shows a count, and every raise / recovery goes
   to syslog and optionally e-mail and a JSON webhook.
+- **Shows** — named time ranges (a performance, rehearsal, event) with
+  their monitors. Each gets min / max / average plus **Leq, L10 and L90** for
+  dB monitors, and a PDF report that Spot can e-mail and/or POST to another
+  system automatically after the show ends.
+- **External API** (`/api/v1`, API-key protected) for systems such as
+  321Theater: list monitors, pull statistics, series and PDF reports for any
+  time range, and create/update shows. Full guide: **[docs/API.md](docs/API.md)**.
+- **US Eastern, 24-hour everywhere** — every time on screen, in charts, PDFs,
+  CSVs and e-mails is shown in `SPOT_TIMEZONE` (default America/New_York,
+  EST/EDT handled automatically), whatever the viewer's computer is set to.
+  Data is stored in UTC.
 - **Locations & colours** — an optional location label groups tiles on the
   Monitors page (e.g. per theater); each monitor can have its own colour,
   used for its tile, chart line and PDF reports.
@@ -180,6 +191,7 @@ Set at least:
 | `SPOT_INGEST_ALLOW`   | Optional CSV of allowed source IPs           |
 | `SPOT_JANITOR_INTERVAL_SECONDS` | Retention-cleanup interval (default `3600`) |
 | `SPOT_DEFAULT_RETENTION_DAYS` | Global default retention; blank = keep forever |
+| `SPOT_TIMEZONE`       | Display zone for all times, 24-hour (default `America/New_York`) |
 | `SPOT_PUBLIC_URL`     | Optional. Base URL used for links in e-mails / webhooks, e.g. `http://spot.internal:6100` |
 | `SPOT_SMTP_HOST`      | Optional. Mail server for alert / report e-mails; blank = e-mail off |
 | `SPOT_SMTP_PORT`      | Default `587` |
@@ -398,6 +410,54 @@ open/closed state and the filter box are remembered per browser).
   interval for Modbus monitors (minimum 30 s).
 - Polling pauses while the browser tab is hidden.
 
+### Time & timezone
+
+Spot stores every timestamp in UTC and shows every time — pages, charts,
+date pickers, PDFs, CSV files, e-mails, API responses — in **one display
+zone, 24-hour**: `SPOT_TIMEZONE`, default `America/New_York` (EST/EDT switch
+automatically). It does not depend on the viewer's computer or on the
+server's own timezone setting, so a server reinstalled with a UTC clock
+can't silently shift reports. Setup → *Time* shows the display zone next to
+the server's own and warns if they differ (harmless, but logs from other
+tools will use the server's zone).
+
+Date/time fields are a date picker plus a 24-hour `HH:MM:SS` box. Quick
+ranges like *Today* and *This week* start at Eastern midnight. CSV
+timestamps carry their offset (`2026-10-24T19:30:00-04:00`); download
+file names use Eastern time.
+
+### Shows
+
+`/shows` lists upcoming, live and past shows. A show is a name, a start and
+end, and the monitors that matter for it — e.g. *Hamilton — Sat 7:30 PM* with
+the Walt Disney Theater's sound meters.
+
+- **Create** with *+ New show*, from Reports (*Save as show…* takes the
+  selected monitors and range), or from another system via the API.
+- **Show page** — when, delivery status, a levels table (samples, min, max,
+  average, and for dB monitors **Leq** — the energy-average level, the
+  standard "average loudness" — plus **L10** (loud passages) and **L90**
+  (background)), a chart, and *Download PDF* / *CSV* / *Open in Reports*.
+- **Automatic report** — give a show e-mail recipients and/or a callback URL
+  and Spot sends its PDF about 5 minutes after it ends (so late readings are
+  included), retrying with backoff (1, 2, 4, 8, 16 min; 6 attempts) if
+  delivery fails. *Send now* / *Send again* on the show page sends
+  immediately. Editing a show re-arms delivery.
+- Reports has a **Load a show…** menu that fills in a show's monitors and
+  range.
+
+### External API (321Theater and other systems)
+
+Other applications reach Spot over HTTP at `/api/v1`, authenticated with API
+keys created under **Setup → API keys** (shown once; stored hashed). They
+can list monitors with latest values, get statistics (including Leq / L10 /
+L90), downsampled series and PDF reports for any monitors and time range,
+and create, update, delete and fetch shows by their own `external_id`.
+Spot can push each show's report to a callback URL when it ends.
+
+**Everything an integrator needs — endpoints, payloads, errors, callback
+format, retry rules and code samples — is in [docs/API.md](docs/API.md).**
+
 ### Alerts & notifications
 
 Set thresholds on a monitor's **Edit** page, in the *Alerts* box:
@@ -436,7 +496,7 @@ Where alerts show up:
   "monitor": {"id": 1, "name": "Stage Left dB", "unit": "dB", "location": "Walt Disney Theater"},
   "value": 101.79,
   "threshold": 95.0,
-  "started_at": "2026-10-24T21:39:24+00:00",
+  "started_at": "2026-10-24T17:39:24-04:00",
   "cleared_at": null,
   "url": "http://spot.internal:6100/monitors/1/dashboard"
 }

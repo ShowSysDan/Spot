@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}API keys — Spot{% endblock %}
+{% block content %}
+<h1>API keys</h1>
+<p class="muted">
+  Keys let other systems — such as 321Theater — use Spot's external API at <code>{{ request.host_url }}api/v1/</code>:
+  list monitors, pull statistics and PDF reports for any time range, and create shows.
+  The full guide is <code>docs/API.md</code> in the Spot repository.
+</p>
+
+{% if new_key %}
+<div class="new-key">
+  <h3>New key for “{{ new_key_name }}”</h3>
+  <p>Copy it now — Spot stores only a hash, so it <strong>can't be shown again</strong>.</p>
+  <p><code class="key">{{ new_key }}</code> <button type="button" class="button" data-copy="{{ new_key }}">Copy</button></p>
+  <p class="muted">Use it as <code>Authorization: Bearer {{ new_key[:10] }}…</code> or <code>X-API-Key: {{ new_key[:10] }}…</code></p>
+</div>
+{% endif %}
+
+<form method="post" class="form inline-form">
+  <label>New key name <input type="text" name="name" maxlength="120" required placeholder="e.g. 321Theater production"></label>
+  <button type="submit" class="primary">Create key</button>
+</form>
+
+{% if keys %}
+<table class="grid" style="margin-top:1rem">
+  <thead><tr><th>Name</th><th>Key starts with</th><th>Created</th><th>Last used</th><th>Status</th><th></th></tr></thead>
+  <tbody>
+  {% for k in keys %}
+    <tr>
+      <td>{{ k.name }}</td>
+      <td><code>{{ k.prefix }}…</code></td>
+      <td>{{ k.created }}</td>
+      <td>{{ k.last_used }}</td>
+      <td>{% if k.enabled %}<span class="badge ok">enabled</span>{% else %}<span class="badge off">disabled</span>{% endif %}</td>
+      <td class="actions">
+        <form method="post" action="{{ url_for('web.api_key_toggle', kid=k.id) }}" class="inline">
+          <button type="submit" class="link">{{ 'Disable' if k.enabled else 'Enable' }}</button>
+        </form>
+        <form method="post" action="{{ url_for('web.api_key_delete', kid=k.id) }}" class="inline"
+              data-confirm="Delete API key &quot;{{ k.name }}&quot;? Anything using it will stop working.">
+          <button type="submit" class="link danger">Delete</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No keys yet.</p>
+{% endif %}
+<p class="muted">“Last used” is updated at most every 5 minutes.</p>
+{% endblock %}

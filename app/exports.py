@@ -19,7 +19,7 @@ matplotlib.use("Agg")
 import matplotlib.dates as mdates
 from matplotlib.figure import Figure
 
-from .util import format_local, naive_local, to_local
+from .util import format_local, naive_local, now_local, to_local
 from .version import __version__
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter, landscape
@@ -159,7 +159,7 @@ def _mpl_text(s: str) -> str:
 
 def _local_tz_name() -> str:
     """Short timezone name for the server (e.g. 'EDT', 'EST', 'UTC')."""
-    name = datetime.now().astimezone().tzname()
+    name = now_local().tzname()
     return name or "local"
 
 
@@ -384,7 +384,7 @@ def _draw_dark_page(canvas, doc) -> None:
                       f"Spot  ·  {_TAGLINE}")
 
     # Footer right: generated stamp + page number
-    stamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %Z")
+    stamp = now_local().strftime("%Y-%m-%d %H:%M %Z")
     canvas.setFillColor(_MUTED)
     canvas.setFont("Helvetica", 8.5)
     canvas.drawRightString(w - 0.5 * inch, 0.32 * inch,
@@ -497,30 +497,45 @@ def _range_meta(start: datetime, end: datetime) -> tuple[str, str]:
     return ("Range", f"{format_local(start)} &nbsp;&rarr;&nbsp; {format_local(end)}")
 
 
-def render_overlay_pdf(start: datetime, end: datetime, monitors: list[dict]) -> bytes:
+def render_overlay_pdf(start: datetime, end: datetime, monitors: list[dict],
+                       title: str | None = None,
+                       extra_meta: list[tuple[str, str]] | None = None) -> bytes:
     """Branded one-page PDF: stacked overlay chart + per-monitor summary table.
 
-    `monitors` is a list of {name, unit, points: [{ts, value, ...}], summary},
-    where `summary` holds exact SQL aggregates (points may be downsampled).
+    `monitors` is a list of {name, unit, color, points: [{ts, value, ...}],
+    summary}, where `summary` holds exact SQL aggregates (points may be
+    downsampled). When summaries carry acoustic figures (`leq`, see
+    queries.compute_summary) the table gains Leq / L10 / L90 columns.
+    `title` replaces the monitor-name heading (e.g. a show name) and
+    `extra_meta` adds (label, plain text) pairs to the metadata line.
     """
     units = sorted({m.get("unit", "") for m in monitors if m.get("unit")})
-    rows = [["Monitor", "Unit", "Samples", "Min", "Max", "Avg"]]
+    acoustic = any("leq" in m["summary"] for m in monitors)
+    header = ["Monitor", "Unit", "Samples", "Min", "Max", "Avg"]
+    widths = [2.5, 0.8, 1.0, 0.9, 0.9, 0.9]
+    if acoustic:
+        header += ["Leq", "L10", "L90"]
+        widths += [0.9, 0.9, 0.9]
+    rows = [header]
     for m in monitors:
         summ = m["summary"]
-        rows.append([m["name"], m["unit"], f"{summ['count']:,}",
-                     _fmt(summ["min"]), _fmt(summ["max"]), _fmt(summ["avg"])])
+        row = [m["name"], m["unit"], f"{summ['count']:,}",
+               _fmt(summ["min"]), _fmt(summ["max"]), _fmt(summ["avg"])]
+        if acoustic:
+            row += [_fmt(summ.get("leq")), _fmt(summ.get("l10")), _fmt(summ.get("l90"))]
+        rows.append(row)
     # Shrink the table as monitors are added so typical reports stay on one
     # page; past that, the header row repeats on the overflow page.
     n = len(monitors)
     font_size = 12 if n <= 3 else 9 if n <= 6 else 8
-    tbl = Table(rows, colWidths=[2.5 * inch, 1.0 * inch, 1.0 * inch,
-                                 1.0 * inch, 1.0 * inch, 1.0 * inch], repeatRows=1)
+    tbl = Table(rows, colWidths=[w * inch for w in widths], repeatRows=1)
     tbl.setStyle(_dark_table_style(header_row=True, font_size=font_size))
+    meta = [_range_meta(start, end),
+            ("Monitors", str(len(monitors))),
+            ("Units", _xml_escape(", ".join(units)) if units else "—")]
+    meta += [(label, _xml_escape(value)) for label, value in extra_meta or []]
     return _build_report(
-        "Spot report", _join_monitor_names(monitors),
-        [_range_meta(start, end),
-         ("Monitors", str(len(monitors))),
-         ("Units", _xml_escape(", ".join(units)) if units else "—")],
+        title or "Spot report", title or _join_monitor_names(monitors), meta,
         render_overlay_chart_png(start, end, monitors),
         "Per-monitor summary", [Spacer(1, 0.08 * inch), tbl],
         chart_height_in=4.0 if n <= 3 else 3.4,

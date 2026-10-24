@@ -3,8 +3,9 @@ from __future__ import annotations
 import logging
 import math
 import re
+import secrets
 from datetime import datetime, timezone
-from flask import Blueprint, current_app, flash, redirect, render_template, request, url_for
+from flask import Blueprint, Response, abort, current_app, flash, redirect, render_template, request, url_for
 from sqlalchemy import select
 
 from ..db import session_scope
@@ -20,8 +21,16 @@ from ..modbus import (
     poll_now,
 )
 from ..alerts import active_alerts_by_monitor
-from ..models import Alert, ModbusDevice, Monitor
+from ..models import Alert, ApiKey, ModbusDevice, Monitor, Show
 from ..notify import email_enabled, post_json, send_email
+from ..shows import (
+    MAX_SHOW_SECONDS,
+    deliver_show,
+    report_filename,
+    show_report_pdf,
+    show_stats,
+    show_view,
+)
 from ..portalloc import PORT_RANGE_END, PORT_RANGE_START, allocate_port
 from ..storage import storage_overview
 from ..util import (
@@ -29,10 +38,14 @@ from ..util import (
     format_bytes,
     format_local,
     get_modbus_device_or_404,
+    local_naive_to_utc,
+    now_local,
     get_monitor_or_404,
     modbus_device_view,
     monitor_view,
+    parse_iso_ts,
 )
+from .v1 import hash_key
 
 bp = Blueprint("web", __name__)
 log = logging.getLogger("spot.web")
@@ -219,6 +232,200 @@ def _duration_text(td) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Shows
+# ---------------------------------------------------------------------------
+
+@bp.route("/shows")
+def shows():
+    now = datetime.now(timezone.utc)
+    with session_scope() as s:
+        current = [show_view(x) for x in s.scalars(
+            select(Show).where(Show.ends_at >= now).order_by(Show.starts_at).limit(200))]
+        past = [show_view(x) for x in s.scalars(
+            select(Show).where(Show.ends_at < now).order_by(Show.starts_at.desc()).limit(100))]
+    return render_template("shows.html", current=current, past=past)
+
+
+@bp.route("/shows/new", methods=["GET", "POST"])
+def show_new():
+    if request.method == "POST":
+        return _save_show(None)
+    prefill = {
+        "monitor_ids": [int(x) for x in request.args.get("ids", "").split(",") if x.isdigit()],
+        "starts_at": request.args.get("start"),
+        "ends_at": request.args.get("end"),
+        "name": request.args.get("name", ""),
+    }
+    return _show_form(None, prefill)
+
+
+@bp.route("/shows/<int:sid>/edit", methods=["GET", "POST"])
+def show_edit(sid: int):
+    if request.method == "POST":
+        return _save_show(sid)
+    return _show_form(sid, None)
+
+
+def _show_form(sid: int | None, prefill: dict | None):
+    with session_scope() as s:
+        show = show_view(_get_show_or_404(s, sid)) if sid is not None else prefill
+        monitors = [monitor_view(m) for m in s.scalars(select(Monitor).order_by(Monitor.name))]
+    for m in monitors:
+        m["location_key"] = m["location"] or ""
+    return render_template("show_form.html", show=show, is_new=sid is None,
+                           monitors=monitors, email_on=email_enabled(current_app.config["SPOT"]))
+
+
+def _get_show_or_404(s, sid: int) -> Show:
+    show = s.get(Show, sid)
+    if show is None:
+        abort(404)
+    return show
+
+
+def _form_ts(name: str, label: str) -> datetime:
+    """The browser sends `<name>_iso` (UTC, set by JS); without JS fall back to
+    the raw datetime-local value read as server-local time."""
+    raw_iso = _form_str(f"{name}_iso")
+    raw = raw_iso or _form_str(name)
+    _check(bool(raw), f"{label} is required.")
+    try:
+        if raw_iso:
+            return parse_iso_ts(raw_iso)
+        return local_naive_to_utc(datetime.fromisoformat(raw).replace(tzinfo=None))
+    except ValueError:
+        raise _FormError(f"{label} is not a valid date and time.") from None
+
+
+def _save_show(sid: int | None):
+    try:
+        name = _form_str("name")
+        _check(bool(name), "Name is required.")
+        starts_at = _form_ts("start", "Start")
+        ends_at = _form_ts("end", "End")
+        _check(ends_at > starts_at, "End must be after start.")
+        _check((ends_at - starts_at).total_seconds() <= MAX_SHOW_SECONDS,
+               "A show can be at most 7 days long.")
+        ids = [int(x) for x in request.form.getlist("ids") if x.isdigit()]
+        _check(bool(ids), "Pick at least one monitor.")
+        emails = [e.strip() for e in _form_str("email_to").split(",") if e.strip()]
+        _check(all("@" in e for e in emails), "E-mail recipients must be addresses, comma-separated.")
+        callback = _form_str("callback_url") or None
+        _check(callback is None or re.match(r"^https?://", callback) is not None,
+               "Callback URL must start with http:// or https://.")
+        with session_scope() as s:
+            show = Show(source="ui") if sid is None else _get_show_or_404(s, sid)
+            show.name = name[:200]
+            show.starts_at, show.ends_at = starts_at, ends_at
+            show.notes = _form_str("notes") or None
+            show.email_to = ", ".join(emails) or None
+            show.callback_url = callback
+            show.monitors = list(s.scalars(select(Monitor).where(Monitor.id.in_(ids))))
+            # Any edit re-arms report delivery for after the show ends.
+            show.delivered_at = None
+            show.delivery_attempts = 0
+            show.delivery_status = None
+            show.next_attempt_at = None
+            s.add(show)
+            s.flush()
+            new_id = show.id
+            log.info("show %s: %s id=%d %s → %s monitors=%s",
+                     "created" if sid is None else "updated", show.name, show.id,
+                     starts_at.isoformat(), ends_at.isoformat(), ids)
+    except _FormError as e:
+        flash(str(e), "error")
+        return redirect(request.url)
+    flash("Show saved.", "success")
+    return redirect(url_for("web.show_detail", sid=new_id))
+
+
+@bp.route("/shows/<int:sid>")
+def show_detail(sid: int):
+    with session_scope() as s:
+        show = _get_show_or_404(s, sid)
+        view = show_view(show)
+        stats = show_stats(s, show) if view["status"] != "upcoming" else []
+    return render_template("show_detail.html", show=view, stats=stats)
+
+
+@bp.route("/shows/<int:sid>/report.pdf")
+def show_report(sid: int):
+    with session_scope() as s:
+        show = _get_show_or_404(s, sid)
+        body = show_report_pdf(s, show)
+        fname = report_filename(show)
+    return Response(body, mimetype="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
+@bp.route("/shows/<int:sid>/deliver", methods=["POST"])
+def show_deliver(sid: int):
+    err = deliver_show(current_app.config["SPOT"], sid)
+    flash(f"Sending the report failed: {err}" if err else "Report sent.",
+          "error" if err else "success")
+    return redirect(url_for("web.show_detail", sid=sid))
+
+
+@bp.route("/shows/<int:sid>/delete", methods=["POST"])
+def show_delete(sid: int):
+    with session_scope() as s:
+        show = s.get(Show, sid)
+        if show:
+            log.info("show deleted: %s id=%d", show.name, sid)
+            s.delete(show)
+    flash("Show deleted.", "success")
+    return redirect(url_for("web.shows"))
+
+
+# ---------------------------------------------------------------------------
+# API keys
+# ---------------------------------------------------------------------------
+
+@bp.route("/setup/api-keys", methods=["GET", "POST"])
+def api_keys():
+    new_key = None
+    if request.method == "POST":
+        name = _form_str("name")[:120]
+        if not name:
+            flash("Give the key a name, e.g. the system that will use it.", "error")
+            return redirect(url_for("web.api_keys"))
+        # Shown exactly once, in this response — never flashed, because flash
+        # messages live in the (signed, not encrypted) session cookie.
+        new_key = "spot_" + secrets.token_urlsafe(32)
+        with session_scope() as s:
+            s.add(ApiKey(name=name, key_hash=hash_key(new_key), prefix=new_key[:10]))
+        log.info("API key created: %s", name)
+    with session_scope() as s:
+        keys = [{"id": k.id, "name": k.name, "prefix": k.prefix, "enabled": k.enabled,
+                 "created": format_local(k.created_at),
+                 "last_used": format_local(k.last_used_at) if k.last_used_at else "never"}
+                for k in s.scalars(select(ApiKey).order_by(ApiKey.created_at))]
+    return render_template("api_keys.html", keys=keys, new_key=new_key,
+                           new_key_name=_form_str("name") if new_key else None)
+
+
+@bp.route("/setup/api-keys/<int:kid>/toggle", methods=["POST"])
+def api_key_toggle(kid: int):
+    with session_scope() as s:
+        k = s.get(ApiKey, kid)
+        if k:
+            k.enabled = not k.enabled
+            log.info("API key %s: %s", "enabled" if k.enabled else "disabled", k.name)
+    return redirect(url_for("web.api_keys"))
+
+
+@bp.route("/setup/api-keys/<int:kid>/delete", methods=["POST"])
+def api_key_delete(kid: int):
+    with session_scope() as s:
+        k = s.get(ApiKey, kid)
+        if k:
+            log.info("API key deleted: %s", k.name)
+            s.delete(k)
+    flash("API key deleted.", "success")
+    return redirect(url_for("web.api_keys"))
+
+
+# ---------------------------------------------------------------------------
 # Setup hub + notification tests
 # ---------------------------------------------------------------------------
 
@@ -229,8 +436,18 @@ def setup():
         counts = {
             "modbus": s.query(ModbusDevice).count(),
             "monitors": s.query(Monitor).count(),
+            "api_keys": s.query(ApiKey).filter(ApiKey.enabled.is_(True)).count(),
         }
-    return render_template("setup.html", cfg=cfg, counts=counts,
+    server_now = datetime.now().astimezone()
+    display_now = now_local()
+    clock = {
+        "display_zone": cfg.timezone,
+        "display_now": display_now.strftime("%Y-%m-%d %H:%M:%S %Z (UTC%z)"),
+        "server_zone": server_now.tzname(),
+        "server_now": server_now.strftime("%Y-%m-%d %H:%M:%S %Z (UTC%z)"),
+        "differs": server_now.utcoffset() != display_now.utcoffset(),
+    }
+    return render_template("setup.html", cfg=cfg, counts=counts, clock=clock,
                            email_on=email_enabled(cfg))
 
 
@@ -313,7 +530,10 @@ def reports():
     """Compare monitors on one chart and export PDF/CSV reports."""
     with session_scope() as s:
         rows = [monitor_view(m) for m in s.query(Monitor).order_by(Monitor.name).all()]
-    return render_template("reports.html", monitors=rows)
+        recent_shows = [show_view(x) for x in s.scalars(
+            select(Show).where(Show.starts_at <= datetime.now(timezone.utc))
+            .order_by(Show.starts_at.desc()).limit(50))]
+    return render_template("reports.html", monitors=rows, shows=recent_shows)
 
 
 @bp.route("/overlay")

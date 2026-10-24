@@ -46,6 +46,17 @@
       <button type="button" id="btn-pdf">Download PDF</button>
       <button type="button" id="btn-csv">Download CSV</button>
     </form>
+    <div class="report-tools">
+      {% if shows %}
+      <select id="load-show" aria-label="Load a show">
+        <option value="">Load a show…</option>
+        {% for sh in shows %}
+        <option value="{{ sh.id }}" data-ids="{{ sh.monitor_ids|join(',') }}" data-start="{{ sh.starts_at }}" data-end="{{ sh.ends_at }}">{{ sh.starts_local }} · {{ sh.name }}</option>
+        {% endfor %}
+      </select>
+      {% endif %}
+      <button type="button" id="btn-save-show" class="button">Save as show…</button>
+    </div>
     <div class="chips" id="presets" role="group" aria-label="Quick ranges">
       <button type="button" data-preset="1h">Last hour</button>
       <button type="button" data-preset="6h">6 h</button>
@@ -56,13 +67,16 @@
       <button type="button" data-preset="yesterday">Yesterday</button>
       <button type="button" data-preset="week">This week</button>
     </div>
+    <p class="muted tz-note">Times are US Eastern, 24-hour.</p>
     <p class="muted" id="hint">Select at least one monitor to preview.</p>
 
     <div class="chart-wrap"><canvas id="chart"></canvas></div>
 
     <table class="grid" id="summary" hidden>
       <thead><tr><th>Monitor</th><th>Unit</th><th class="num">Samples</th>
-        <th class="num">Min</th><th class="num">Max</th><th class="num">Average</th><th class="num">Events</th></tr></thead>
+        <th class="num">Min</th><th class="num">Max</th><th class="num">Average</th>
+        <th class="num acoustic" title="Energy-equivalent level">Leq</th><th class="num acoustic" title="Level exceeded 10% of the time">L10</th>
+        <th class="num acoustic" title="Level exceeded 90% of the time">L90</th><th class="num">Events</th></tr></thead>
       <tbody></tbody>
     </table>
   </section>
@@ -123,7 +137,7 @@
 
     // One Y axis per unit, alternating left/right.
     const axisFor = {};
-    const scales = { x: { type: 'time', time: { tooltipFormat: 'PPpp' }, grid: { color: '#2c313a' },
+    const scales = { x: { type: 'time', grid: { color: '#2c313a' },
                           min: new Date(j.start).valueOf(), max: new Date(j.end).valueOf() } };
     j.monitors.forEach(m => {
       if (m.unit in axisFor) return;
@@ -154,9 +168,14 @@
       const f = v => Spot.escapeHtml(Spot.fmtValue(v));
       return `<tr><td><span class="swatch" style="background:${Spot.escapeHtml(m.color || COLORS[i % COLORS.length])}"></span>
         <a href="/monitors/${m.id}">${Spot.escapeHtml(m.name)}</a></td><td>${Spot.escapeHtml(m.unit)}</td>
-        <td class="num">${(s.count || 0).toLocaleString()}</td><td class="num">${f(s.min)}</td>
-        <td class="num">${f(s.max)}</td><td class="num">${f(s.avg)}</td><td class="num">${s.events || 0}</td></tr>`;
+        <td class="num">${Spot.fmtInt(s.count)}</td><td class="num">${f(s.min)}</td>
+        <td class="num">${f(s.max)}</td><td class="num">${f(s.avg)}</td>
+        <td class="num acoustic">${f(s.leq)}</td><td class="num acoustic">${f(s.l10)}</td><td class="num acoustic">${f(s.l90)}</td>
+        <td class="num">${s.events || 0}</td></tr>`;
     }).join('');
+    // Leq / L10 / L90 only mean something for dB monitors.
+    const acoustic = j.monitors.some(m => m.summary && 'leq' in m.summary);
+    document.querySelectorAll('#summary .acoustic').forEach(c => (c.hidden = !acoustic));
     document.getElementById('summary').hidden = false;
     history.replaceState(null, '', `?${rangeParams()}`);
   }
@@ -168,6 +187,24 @@
   document.getElementById('btn-csv').addEventListener('click', () => {
     if (selectedIds().length) window.location = `/data/overlay/export.csv?${rangeParams()}`;
   });
+  const loadShow = document.getElementById('load-show');
+  if (loadShow) loadShow.addEventListener('change', () => {
+    const o = loadShow.selectedOptions[0];
+    if (!o.value) return;
+    const ids = new Set(o.dataset.ids.split(','));
+    boxes.forEach(b => (b.checked = ids.has(b.value)));
+    form.start.value = Spot.toLocalInput(new Date(o.dataset.start));
+    form.end.value = Spot.toLocalInput(new Date(o.dataset.end));
+    document.querySelectorAll('#presets [data-preset]').forEach(b => b.classList.remove('active'));
+    syncCount();
+    run();
+  });
+  document.getElementById('btn-save-show').addEventListener('click', () => {
+    const p = new URLSearchParams({ ids: selectedIds().join(','),
+      start: Spot.toIso(form.start.value), end: Spot.toIso(form.end.value) });
+    location.href = `{{ url_for('web.show_new') }}?${p}`;
+  });
+
   syncCount();
   if (selectedIds().length) run();
 })();

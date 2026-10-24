@@ -106,7 +106,7 @@
       normalized: true,
       interaction: { mode: 'nearest', axis: 'x', intersect: false },
       scales: {
-        x: { type: 'time', time: { tooltipFormat: 'PPpp' }, grid: { color: '#2c313a' } },
+        x: { type: 'time', grid: { color: '#2c313a' } },
         y: { title: { display: true, text: unit }, grid: { color: '#2c313a' }, beginAtZero: zero.checked },
       },
       plugins: {
@@ -139,7 +139,7 @@
   function renderAlerts(alerts) {
     document.getElementById('alert-banners').innerHTML = (alerts || []).map(a =>
       `<div class="alert-banner ${a.acknowledged ? 'is-acked' : ''}"><strong>${Spot.escapeHtml(a.kind.toUpperCase())}</strong>
-       ${Spot.escapeHtml(a.message)} <span class="muted">since ${new Date(a.started_at).toLocaleString()}</span></div>`).join('');
+       ${Spot.escapeHtml(a.message)} <span class="muted">since ${Spot.fmtDateTime(a.started_at)}</span></div>`).join('');
   }
 
   let ctrl = null;
@@ -172,7 +172,7 @@
     const last = j.points.length && !bucketed ? j.points[j.points.length - 1] : null;
     if (last) {
       document.getElementById('cur').textContent = fmt(last.value);
-      document.getElementById('cur-at').textContent = new Date(last.ts).toLocaleTimeString();
+      document.getElementById('cur-at').textContent = Spot.fmtTime(last.ts);
     } else {
       // Bucketed or empty window: ask for the true latest reading instead.
       const lr = await fetch(`/data/monitor/${monitorId}/latest`);
@@ -180,23 +180,23 @@
         const l = await lr.json();
         document.getElementById('cur').textContent = fmt(l.value);
         document.getElementById('cur-at').textContent = l.ts
-          ? `${new Date(l.ts).toLocaleString()} (${Spot.timeAgo(l.ts)})` : 'no data yet';
+          ? `${Spot.fmtDateTime(l.ts)} (${Spot.timeAgo(l.ts)})` : 'no data yet';
       }
     }
-    const at = ts => ts ? new Date(ts).toLocaleString() : '';
+    const at = ts => ts ? Spot.fmtDateTime(ts) : '';
     document.getElementById('s-min').textContent = fmt(st.min);
     document.getElementById('s-max').textContent = fmt(st.max);
     document.getElementById('s-avg').textContent = fmt(st.avg);
     document.getElementById('s-min-at').textContent = at(st.min_at);
     document.getElementById('s-max-at').textContent = at(st.max_at);
-    document.getElementById('s-count').textContent = (st.count ?? 0).toLocaleString();
+    document.getElementById('s-count').textContent = Spot.fmtInt(st.count);
     document.getElementById('s-bucket').textContent = bucketed
       ? `chart shows ${Spot.fmtDuration(j.bucket_seconds)} averages` : '';
 
     const ev = document.getElementById('events');
     ev.innerHTML = j.events.length
       ? j.events.slice(-15).reverse().map(e =>
-          `<li><time>${new Date(e.ts).toLocaleString()}</time> ${Spot.escapeHtml(e.label)}</li>`).join('')
+          `<li><time>${Spot.fmtDateTime(e.ts)}</time> ${Spot.escapeHtml(e.label)}</li>`).join('')
       : '<li class="muted">none in this window</li>';
   }
 

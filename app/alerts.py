@@ -25,6 +25,7 @@ from .config import Config
 from .db import session_scope
 from .models import Alert, Monitor, Reading
 from .notify import email_enabled, post_json, send_email
+from .util import format_local, iso_local
 
 log = logging.getLogger("spot.alerts")
 
@@ -184,8 +185,8 @@ def notify(cfg: Config, ev: AlertEvent) -> None:
             f"Monitor:  {ev.monitor_name}",
             f"Location: {ev.location}" if ev.location else "",
             f"Value:    {_num(ev.value)} {ev.unit}",
-            f"Started:  {ev.started_at.astimezone():%Y-%m-%d %H:%M:%S %Z}",
-            f"Cleared:  {ev.cleared_at.astimezone():%Y-%m-%d %H:%M:%S %Z}" if ev.cleared_at else "",
+            f"Started:  {format_local(ev.started_at)}",
+            f"Cleared:  {format_local(ev.cleared_at)}" if ev.cleared_at else "",
             f"Live:     {link}" if link else "",
         ]))
         send_email(cfg, cfg.alert_email_to, f"[Spot] {summary}", body)
@@ -199,8 +200,8 @@ def notify(cfg: Config, ev: AlertEvent) -> None:
                         "unit": ev.unit, "location": ev.location},
             "value": ev.value,
             "threshold": ev.threshold,
-            "started_at": ev.started_at.isoformat(),
-            "cleared_at": ev.cleared_at.isoformat() if ev.cleared_at else None,
+            "started_at": iso_local(ev.started_at),
+            "cleared_at": iso_local(ev.cleared_at),
             "url": link or None,
         })
 

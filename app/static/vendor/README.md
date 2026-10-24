@@ -3,15 +3,25 @@
 Spot serves every browser dependency itself so the UI works on an internal
 network with no internet access. Nothing is loaded from a CDN.
 
-| File | Package | Version | Source tarball SHA-1 (npm `dist.shasum`) |
-|------|---------|---------|------------------------------------------|
+| File | Package (file in tarball) | Version | npm tarball SHA-1 (`dist.shasum`) |
+|------|---------------------------|---------|-----------------------------------|
 | `chart-4.4.4.umd.min.js` | [chart.js](https://www.npmjs.com/package/chart.js) (`dist/chart.umd.js`) | 4.4.4 | `b682d2e7249f7a0cbb1b1d31c840266ae9db64b7` |
-| `chartjs-adapter-date-fns-3.0.0.bundle.min.js` | [chartjs-adapter-date-fns](https://www.npmjs.com/package/chartjs-adapter-date-fns) (`dist/chartjs-adapter-date-fns.bundle.min.js`, includes date-fns) | 3.0.0 | `c25f63c7f317c1f96f9a7c44bd45eeedb8a478e5` |
+| `luxon-3.5.0.min.js` | [luxon](https://www.npmjs.com/package/luxon) (`build/global/luxon.min.js`) | 3.5.0 | `6b6f65c5cd1d61d1fd19dbf07ee87a50bf4b8e20` |
+| `chartjs-adapter-luxon-1.3.1.umd.min.js` | [chartjs-adapter-luxon](https://www.npmjs.com/package/chartjs-adapter-luxon) (`dist/chartjs-adapter-luxon.umd.min.js`) | 1.3.1 | `8ad8be7cc1521bacd6cd2ff4b013669d4dd49364` |
 
-Both are MIT licensed; licence texts are alongside.
+The only change from the published files: the trailing `//# sourceMappingURL=`
+comment is removed, since the `.map` files aren't shipped (it would just make
+browser dev tools log a 404).
 
-To upgrade: download the package tarball from the npm registry
+Luxon (not date-fns) is the Chart.js date adapter because it can render time
+axes in a fixed timezone — Spot shows every time in `SPOT_TIMEZONE`
+(default America/New_York, 24-hour) regardless of the viewer's computer.
+
+All three are MIT licensed; licence texts are alongside.
+
+To upgrade: download the tarball from the npm registry
 (`https://registry.npmjs.org/<pkg>/-/<pkg>-<ver>.tgz`), check its SHA-1
 against `dist.shasum` from `https://registry.npmjs.org/<pkg>/<ver>`, copy the
-file above out of `package/dist/`, rename it with the new version, update
-`app/templates/base.html`, and update this table.
+file listed above out of the tarball, drop the sourceMappingURL line, rename
+it with the new version, update `app/templates/base.html`, and update this
+table.

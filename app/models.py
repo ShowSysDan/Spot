@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     BigInteger,
+    Column,
     Boolean,
     DateTime,
     Float,
@@ -13,6 +14,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    Table,
     UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -150,3 +152,57 @@ class Alert(Base):
     __table_args__ = (
         Index("ix_alerts_open", "monitor_id", "cleared_at"),
     )
+
+
+show_monitors = Table(
+    "show_monitors",
+    Base.metadata,
+    Column("show_id", Integer, ForeignKey("shows.id", ondelete="CASCADE"), primary_key=True),
+    Column("monitor_id", Integer, ForeignKey("monitors.id", ondelete="CASCADE"), primary_key=True),
+)
+
+
+class Show(Base):
+    """A named time range (a performance, rehearsal, event) and the monitors
+    that matter for it. Created in the UI or by an external system such as
+    321Theater, which identifies its shows with `external_id`.
+
+    After `ends_at` (plus a short grace period) Spot can e-mail the show's
+    report to `email_to` and/or POST it to `callback_url`.
+    """
+    __tablename__ = "shows"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    external_id: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True)
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="ui")  # ui | api
+    email_to: Mapped[str | None] = mapped_column(Text, nullable=True)  # comma-separated
+    callback_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Report delivery bookkeeping (e-mail and/or callback after the show ends).
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    delivery_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    delivery_status: Mapped[str | None] = mapped_column(Text, nullable=True)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow,
+                                                 onupdate=_utcnow, nullable=False)
+
+    monitors: Mapped[list["Monitor"]] = relationship(
+        "Monitor", secondary=show_monitors, order_by="Monitor.name")
+
+
+class ApiKey(Base):
+    """Credential for the external /api/v1 endpoints. Only a SHA-256 hash of
+    the key is stored; the key itself is shown once, when it is created."""
+    __tablename__ = "api_keys"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    prefix: Mapped[str] = mapped_column(String(16), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
