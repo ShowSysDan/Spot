@@ -206,3 +206,34 @@ class ApiKey(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+schedule_monitors = Table(
+    "schedule_monitors",
+    Base.metadata,
+    Column("schedule_id", Integer, ForeignKey("report_schedules.id", ondelete="CASCADE"), primary_key=True),
+    Column("monitor_id", Integer, ForeignKey("monitors.id", ondelete="CASCADE"), primary_key=True),
+)
+
+
+class ReportSchedule(Base):
+    """A recurring e-mailed PDF report covering the previous full period:
+    daily → yesterday, weekly → the 7 days before the send day, monthly →
+    last calendar month. Times are in the display timezone."""
+    __tablename__ = "report_schedules"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    cadence: Mapped[str] = mapped_column(String(16), nullable=False, default="daily")  # daily | weekly | monthly
+    send_hour: Mapped[int] = mapped_column(Integer, nullable=False, default=7)
+    send_minute: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    weekday: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # weekly only; 0 = Monday
+    email_to: Mapped[str] = mapped_column(Text, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_status: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    monitors: Mapped[list["Monitor"]] = relationship(
+        "Monitor", secondary=schedule_monitors, order_by="Monitor.name")

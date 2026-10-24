@@ -2,7 +2,7 @@
 
 **Data acquisition, down to the last spot.**
 
-Current version: **1.4.0** — see [CHANGELOG.md](CHANGELOG.md). The running
+Current version: **1.5.0** — see [CHANGELOG.md](CHANGELOG.md). The running
 version is shown in the web UI footer, logged at startup, and stamped on every
 PDF report.
 
@@ -48,6 +48,11 @@ and lets you browse, query, graph, and export the data.
   their monitors. Each gets min / max / average plus **Leq, L10 and L90** for
   dB monitors, and a PDF report that Spot can e-mail and/or POST to another
   system automatically after the show ends.
+- **Scheduled reports** — daily, weekly or monthly PDF reports e-mailed
+  automatically, each covering the previous complete Eastern-time period.
+- **Wall display** (`/wall`) — a full-screen kiosk view with huge numbers,
+  sparklines, alert colours and a 24-hour clock, for a control-room or
+  backstage screen. Filter by location; bookmark one per screen.
 - **External API** (`/api/v1`, API-key protected) for systems such as
   321Theater: list monitors, pull statistics, series and PDF reports for any
   time range, and create/update shows. Full guide: **[docs/API.md](docs/API.md)**.
@@ -445,6 +450,43 @@ the Walt Disney Theater's sound meters.
   immediately. Editing a show re-arms delivery.
 - Reports has a **Load a show…** menu that fills in a show's monitors and
   range.
+
+### Scheduled reports
+
+**Setup → Scheduled reports** sends a PDF report by e-mail on a schedule
+(needs `SPOT_SMTP_HOST`). Each report covers the previous **complete**
+period in Eastern time, never a partial one:
+
+| Frequency | Sent | Covers |
+|-----------|------|--------|
+| Daily | every day at HH:MM | yesterday 00:00 – 24:00 |
+| Weekly | the chosen weekday at HH:MM | the 7 days before that day (Monday → last Mon–Sun) |
+| Monthly | the 1st at HH:MM | the previous calendar month |
+
+The e-mail body lists min / max / average (and Leq for dB monitors) per
+monitor; the PDF is attached. *Send now* e-mails the most recent complete
+period without changing the schedule. The next send time is stored, so a
+restart neither skips nor repeats a report; if Spot was down at send time,
+the missed report goes out once when it's back (for the period it was due
+for). Daylight-saving days are handled (the fall-back day is 25 hours).
+
+### Wall display
+
+`/wall` (or *Wall display* on the Monitors page) is a full-screen view for a
+TV or monitor:
+
+- One big tile per enabled monitor: name, value sized to fill the tile,
+  unit, a 30-minute sparkline, "N ago", and the monitor's colour.
+- Alerting tiles turn red with a `HIGH` / `LOW` / `STALE` tag (amber once
+  acknowledged); readings older than 5 minutes are greyed.
+- A large 24-hour Eastern clock. Values refresh every 3 seconds; the value
+  flashes in the monitor's colour when it changes.
+- `?location=Walt%20Disney%20Theater` limits it to one location (the menu in
+  the header does the same); `?ids=1,2` picks monitors. Bookmark the URL
+  per screen.
+- **F** or the ⛶ button toggles full screen; the mouse cursor hides after 3
+  seconds of no movement; the browser is asked to keep the screen awake
+  (works over HTTPS; on plain HTTP set the display's own sleep timer off).
 
 ### External API (321Theater and other systems)
 

@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{ title }} — Spot wall</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='logo.svg') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=spot_version) }}">
+  <script>window.SPOT_TZ = {{ spot_timezone | tojson }};</script>
+  <script src="{{ url_for('static', filename='spot.js', v=spot_version) }}"></script>
+</head>
+<body class="wall">
+  {# Kiosk view: no navigation, big numbers, auto-refresh. Bookmark it per
+     screen, e.g. /wall?location=Walt%20Disney%20Theater #}
+  <header class="wall-head">
+    <img src="{{ url_for('static', filename='logo.svg') }}" alt="" class="wall-logo">
+    <div class="wall-title">
+      <h1>{{ title }}</h1>
+      <form method="get" class="wall-pick">
+        <select name="location" onchange="this.form.submit()" aria-label="Location">
+          <option value="">All monitors</option>
+          {% for loc in locations %}<option {% if loc == location %}selected{% endif %}>{{ loc }}</option>{% endfor %}
+        </select>
+      </form>
+    </div>
+    <div class="wall-clock"><span id="clock">--:--:--</span><small id="clock-date"></small></div>
+    <button type="button" class="button wall-fs" id="fs" title="Full screen (F)">⛶</button>
+  </header>
+
+  {% if not monitors %}
+    <p class="wall-empty">No enabled monitors here. <a href="{{ url_for('web.index') }}">Back to Spot</a></p>
+  {% endif %}
+  {# Columns for a landscape screen: 1→1, 2→2, 3→3, 4→2, 5–6→3, 7–8→4, 9→3, 10–12→4, 13+→5 #}
+  {% set n = monitors|length %}
+  {% set cols = [1, 1, 2, 3, 2, 3, 3, 4, 4, 3, 4, 4, 4][n] if n < 13 else 5 %}
+  <main class="wall-grid" style="--cols: {{ cols }}">
+    {% for m in monitors %}
+    <section class="wall-tile" id="w-{{ m.id }}" data-id="{{ m.id }}" style="--tile-color: {{ m.display_color }}"
+             data-decimals="{{ m.decimal_places if m.decimal_places is not none else '' }}"
+             data-high="{{ m.alert_high if m.alert_high is not none else '' }}" data-low="{{ m.alert_low if m.alert_low is not none else '' }}">
+      <div class="wall-name">{{ m.name }}</div>
+      <div class="wall-value"><span class="v">—</span><span class="u">{{ m.unit }}</span></div>
+      <canvas class="spark" aria-hidden="true"></canvas>
+      <div class="wall-foot"><span class="alert-tag"></span><span class="ago">waiting…</span></div>
+    </section>
+    {% endfor %}
+  </main>
+  <footer class="wall-foot-bar"><span id="conn" class="live-pill"><span class="dot"></span> live</span>
+    <a href="{{ url_for('web.index') }}">Spot v{{ spot_version }}</a></footer>
+
+<script>
+(function () {
+  const tiles = new Map([...document.querySelectorAll('.wall-tile')].map(el => [Number(el.dataset.id), {
+    el, v: el.querySelector('.v'), ago: el.querySelector('.ago'), tag: el.querySelector('.alert-tag'),
+    spark: el.querySelector('.spark'), decimals: el.dataset.decimals,
+    color: el.style.getPropertyValue('--tile-color').trim(), data: null,
+  }]));
+  const ids = [...tiles.keys()].join(',');
+  let win = {};
+
+  function paint(t, now) {
+    const d = t.data; if (!d) return;
+    const prev = t.v.textContent, txt = Spot.fmtValue(d.value, t.decimals);
+    t.v.textContent = txt;
+    if (prev !== txt && prev !== '—') { t.el.classList.remove('tick'); void t.el.offsetWidth; t.el.classList.add('tick'); }
+    const age = d.ts ? now - new Date(d.ts) : Infinity;
+    t.el.classList.toggle('is-old', age > 5 * 60e3);
+    t.ago.textContent = d.ts ? Spot.timeAgo(d.ts, now) : 'no data';
+    const alerts = d.alerts || [];
+    t.el.classList.toggle('is-alerting', alerts.some(a => !a.acknowledged));
+    t.el.classList.toggle('is-acked', alerts.length > 0 && alerts.every(a => a.acknowledged));
+    t.tag.textContent = alerts.map(a => a.kind.toUpperCase()).join(' · ');
+    Spot.sparkline(t.spark, d.spark, Object.assign({ color: t.color, fill: Spot.alpha(t.color, 0.18) }, win));
+  }
+  async function refresh() {
+    if (!ids) return;
+    const r = await fetch(`/data/latest?ids=${ids}&spark_minutes=30`);
+    document.getElementById('conn').classList.toggle('down', !r.ok);
+    if (!r.ok) return;
+    const j = await r.json();
+    win = { start: new Date(j.spark_start).valueOf(), end: new Date(j.now).valueOf() };
+    const now = Date.now();
+    for (const m of j.monitors) { const t = tiles.get(m.id); if (t) { t.data = m; paint(t, now); } }
+  }
+  Spot.poller(() => refresh().catch(() => document.getElementById('conn').classList.add('down')), 3000);
+
+  function clock() {
+    const w = Spot.wall(Date.now()), p = n => String(n).padStart(2, '0');
+    document.getElementById('clock').textContent = `${p(w.hour)}:${p(w.minute)}:${p(w.second)}`;
+    document.getElementById('clock-date').textContent = `${Spot.fmtDateTime(Date.now(), { seconds: false }).slice(0, 10)} ${w.zone}`;
+  }
+  clock(); setInterval(clock, 1000);
+  setInterval(() => { const now = Date.now(); tiles.forEach(t => paint(t, now)); }, 5000);
+  window.addEventListener('resize', () => tiles.forEach(t => t.data && paint(t, Date.now())));
+
+  // Full screen on button or "F"; keep the screen awake where the browser allows it.
+  const fs = () => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(() => {});
+  document.getElementById('fs').addEventListener('click', fs);
+  document.addEventListener('keydown', e => { if (e.key === 'f' || e.key === 'F') fs(); });
+  let lock = null;
+  async function keepAwake() {
+    try { if ('wakeLock' in navigator && !document.hidden) lock = await navigator.wakeLock.request('screen'); } catch (_) { /* needs https; ignore */ }
+  }
+  document.addEventListener('visibilitychange', keepAwake); keepAwake();
+  // Hide the cursor when idle.
+  let idle;
+  document.addEventListener('mousemove', () => {
+    document.body.classList.remove('idle'); clearTimeout(idle);
+    idle = setTimeout(() => document.body.classList.add('idle'), 3000);
+  });
+})();
+</script>
+</body>
+</html>

@@ -21,8 +21,16 @@ from ..modbus import (
     poll_now,
 )
 from ..alerts import active_alerts_by_monitor
-from ..models import Alert, ApiKey, ModbusDevice, Monitor, Show
+from ..models import Alert, ApiKey, ModbusDevice, Monitor, ReportSchedule, Show
 from ..notify import email_enabled, post_json, send_email
+from ..schedules import (
+    CADENCES,
+    WEEKDAYS,
+    describe as describe_schedule,
+    next_run,
+    run_schedule,
+    schedule_view,
+)
 from ..shows import (
     MAX_SHOW_SECONDS,
     deliver_show,
@@ -174,6 +182,25 @@ def monitor_dashboard(mid: int):
     with session_scope() as s:
         data = monitor_view(get_monitor_or_404(s, mid))
     return render_template("dashboard.html", monitor=data)
+
+
+# ---------------------------------------------------------------------------
+# Wall display
+# ---------------------------------------------------------------------------
+
+@bp.route("/wall")
+def wall():
+    """Full-screen kiosk view. ?location=Name and/or ?ids=1,2 narrow it."""
+    location = request.args.get("location") or None
+    ids = {int(x) for x in request.args.get("ids", "").split(",") if x.isdigit()}
+    with session_scope() as s:
+        all_monitors = [monitor_view(m) for m in s.scalars(
+            select(Monitor).where(Monitor.enabled.is_(True)).order_by(Monitor.name))]
+    locations = sorted({m["location"] for m in all_monitors if m["location"]})
+    shown = [m for m in all_monitors
+             if (not location or m["location"] == location) and (not ids or m["id"] in ids)]
+    return render_template("wall.html", monitors=shown, locations=locations,
+                           location=location, title=location or "All monitors")
 
 
 # ---------------------------------------------------------------------------
@@ -378,6 +405,105 @@ def show_delete(sid: int):
 
 
 # ---------------------------------------------------------------------------
+# Scheduled reports
+# ---------------------------------------------------------------------------
+
+@bp.route("/setup/schedules")
+def schedules():
+    with session_scope() as s:
+        rows = [schedule_view(x) for x in s.scalars(select(ReportSchedule).order_by(ReportSchedule.name))]
+    return render_template("schedules.html", schedules=rows,
+                           email_on=email_enabled(current_app.config["SPOT"]))
+
+
+@bp.route("/setup/schedules/new", methods=["GET", "POST"])
+def schedule_new():
+    if request.method == "POST":
+        return _save_schedule(None)
+    return _schedule_form(None)
+
+
+@bp.route("/setup/schedules/<int:sid>/edit", methods=["GET", "POST"])
+def schedule_edit(sid: int):
+    if request.method == "POST":
+        return _save_schedule(sid)
+    return _schedule_form(sid)
+
+
+def _schedule_form(sid: int | None):
+    with session_scope() as s:
+        data = None
+        if sid is not None:
+            sched = s.get(ReportSchedule, sid)
+            if sched is None:
+                abort(404)
+            data = schedule_view(sched)
+        monitors = [monitor_view(m) for m in s.scalars(select(Monitor).order_by(Monitor.name))]
+    for m in monitors:
+        m["location_key"] = m["location"] or ""
+    return render_template("schedule_form.html", sched=data, monitors=monitors,
+                           cadences=CADENCES, weekdays=WEEKDAYS,
+                           email_on=email_enabled(current_app.config["SPOT"]))
+
+
+def _save_schedule(sid: int | None):
+    try:
+        name = _form_str("name")[:200]
+        _check(bool(name), "Name is required.")
+        cadence = _form_str("cadence", "daily")
+        _check(cadence in CADENCES, "Unknown frequency.")
+        m = re.fullmatch(r"(\d{1,2}):(\d{2})", _form_str("send_time", "07:00"))
+        _check(m is not None and int(m[1]) < 24 and int(m[2]) < 60,
+               "Send time must be 24-hour HH:MM, e.g. 07:00.")
+        weekday = _form_int("weekday", "0", "Invalid weekday.")
+        _check(0 <= weekday <= 6, "Invalid weekday.")
+        emails = [e.strip() for e in _form_str("email_to").split(",") if e.strip()]
+        _check(bool(emails) and all("@" in e for e in emails),
+               "Add at least one e-mail recipient (comma-separated).")
+        ids = [int(x) for x in request.form.getlist("ids") if x.isdigit()]
+        _check(bool(ids), "Pick at least one monitor.")
+        with session_scope() as s:
+            sched = ReportSchedule() if sid is None else s.get(ReportSchedule, sid)
+            if sched is None:
+                abort(404)
+            sched.name, sched.cadence = name, cadence
+            sched.send_hour, sched.send_minute = int(m[1]), int(m[2])
+            sched.weekday = weekday
+            sched.email_to = ", ".join(emails)
+            sched.enabled = bool(request.form.get("enabled"))
+            sched.monitors = list(s.scalars(select(Monitor).where(Monitor.id.in_(ids))))
+            sched.next_run_at = next_run(sched, datetime.now(timezone.utc))
+            s.add(sched)
+            s.flush()
+            log.info("report schedule %s: %s id=%d %s",
+                     "created" if sid is None else "updated", sched.name, sched.id, describe_schedule(sched))
+    except _FormError as e:
+        flash(str(e), "error")
+        return redirect(request.url)
+    flash("Schedule saved.", "success")
+    return redirect(url_for("web.schedules"))
+
+
+@bp.route("/setup/schedules/<int:sid>/send", methods=["POST"])
+def schedule_send(sid: int):
+    # Sends the most recently completed period without moving the schedule on.
+    err = run_schedule(current_app.config["SPOT"], sid, advance=False)
+    flash(f"Sending failed: {err}" if err else "Report sent.", "error" if err else "success")
+    return redirect(url_for("web.schedules"))
+
+
+@bp.route("/setup/schedules/<int:sid>/delete", methods=["POST"])
+def schedule_delete(sid: int):
+    with session_scope() as s:
+        sched = s.get(ReportSchedule, sid)
+        if sched:
+            log.info("report schedule deleted: %s id=%d", sched.name, sid)
+            s.delete(sched)
+    flash("Schedule deleted.", "success")
+    return redirect(url_for("web.schedules"))
+
+
+# ---------------------------------------------------------------------------
 # API keys
 # ---------------------------------------------------------------------------
 
@@ -437,6 +563,7 @@ def setup():
             "modbus": s.query(ModbusDevice).count(),
             "monitors": s.query(Monitor).count(),
             "api_keys": s.query(ApiKey).filter(ApiKey.enabled.is_(True)).count(),
+            "schedules": s.query(ReportSchedule).filter(ReportSchedule.enabled.is_(True)).count(),
         }
     server_now = datetime.now().astimezone()
     display_now = now_local()

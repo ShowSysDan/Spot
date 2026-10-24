@@ -3,6 +3,19 @@
 All notable changes to Spot. The version number lives in `app/version.py`
 and is bumped with every change.
 
+## 1.5.0 — 2026-10-24
+
+### Added
+- **Scheduled reports** (Setup → Scheduled reports): daily / weekly /
+  monthly e-mailed PDFs covering the previous complete Eastern-time period;
+  per-schedule monitors, recipients, send time (24-hour) and weekday; *Send
+  now*; last-run status. A scheduler thread checks every 30 s; missed runs
+  are caught up once after downtime; DST-correct periods.
+- **Wall display** (`/wall`): full-screen kiosk view — large auto-sized
+  values, sparklines, alert colours, 24-hour Eastern clock, location filter,
+  full-screen toggle (F), idle cursor hiding, screen wake lock where
+  available. Linked from the Monitors page.
+
 ## 1.4.0 — 2026-10-24
 
 ### Added

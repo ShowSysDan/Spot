@@ -6,6 +6,7 @@
   {% if monitors %}
   <div class="page-tools">
     <input type="search" id="filter" placeholder="Filter by name or unit…" aria-label="Filter monitors">
+    <a class="button" href="{{ url_for('web.wall') }}" title="Full-screen display for a control-room or backstage screen">Wall display</a>
     <span id="live-status" class="live-pill" title="Values refresh every 5 seconds while this tab is visible">
       <span class="dot"></span> live
     </span>

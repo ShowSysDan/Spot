@@ -5,6 +5,7 @@ from werkzeug.exceptions import HTTPException
 
 from .alerts import AlertEngine, open_alert_count
 from .config import Config
+from .schedules import ReportScheduler
 from .shows import ShowReporter
 from .db import dispose_engine, init_engine, init_schema
 from .janitor import JanitorThread
@@ -35,6 +36,7 @@ def create_app(config: Config | None = None) -> Flask:
     app.config["SPOT_JANITOR"] = janitor
     alerts = AlertEngine(cfg)
     show_reporter = ShowReporter(cfg)
+    scheduler = ReportScheduler(cfg)
 
     from .routes.web import bp as web_bp
     from .routes.api import bp as api_bp
@@ -76,6 +78,7 @@ def create_app(config: Config | None = None) -> Flask:
     janitor.start()
     alerts.start()
     show_reporter.start()
+    scheduler.start()
 
     import atexit
 
@@ -83,6 +86,7 @@ def create_app(config: Config | None = None) -> Flask:
         janitor.stop()
         alerts.stop()
         show_reporter.stop()
+        scheduler.stop()
         modbus.shutdown()
         manager.shutdown()
         janitor.join(timeout=3.0)

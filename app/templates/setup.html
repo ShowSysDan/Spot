@@ -19,6 +19,11 @@
     <p class="muted">Access for other systems such as 321Theater (<code>/api/v1</code>).</p>
     <span class="badge off">{{ counts.api_keys }} active</span>
   </a>
+  <a class="card setup-card" href="{{ url_for('web.schedules') }}">
+    <h3>Scheduled reports</h3>
+    <p class="muted">Daily, weekly or monthly PDF reports by e-mail.</p>
+    <span class="badge off">{{ counts.schedules }} active</span>
+  </a>
   <a class="card setup-card" href="{{ url_for('web.alerts') }}">
     <h3>Alerts</h3>
     <p class="muted">Active alerts, thresholds in use, and history.</p>
