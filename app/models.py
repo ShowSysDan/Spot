@@ -213,3 +213,14 @@ class ApiKey(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+
+
+class Setting(Base):
+    """Small key/value store for settings changed in the UI (e.g. logging),
+    which take precedence over .env. `value` is JSON."""
+    __tablename__ = "settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow,
+                                                 onupdate=_utcnow, nullable=False)

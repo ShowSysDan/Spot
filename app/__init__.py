@@ -8,7 +8,7 @@ from .config import Config
 from .shows import ShowReporter
 from .db import dispose_engine, init_engine, init_schema
 from .janitor import JanitorThread
-from .logging_config import configure_logging
+from .logging_config import configure_logging, load_stored_settings
 from .listeners import ListenerManager
 from .modbus import ModbusManager
 from .util import format_local, parse_iso_ts, set_display_timezone
@@ -26,6 +26,7 @@ def create_app(config: Config | None = None) -> Flask:
     set_display_timezone(cfg.timezone)  # raises on an unknown zone name: fail fast
     init_engine(cfg)
     init_schema(cfg)
+    load_stored_settings(cfg)  # logging settings saved on Setup → Logging win over .env
 
     manager = ListenerManager(cfg)
     modbus = ModbusManager(cfg)

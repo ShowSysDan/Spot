@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, Response, abort, current_app, g, jsonify, request
@@ -41,6 +42,8 @@ from .params import MAX_IDS, detect_arg, max_points_arg, parse_ids, parse_range
 
 bp = Blueprint("v1", __name__)
 log = logging.getLogger("spot.api.v1")
+access_log = logging.getLogger("spot.api.access")
+security_log = logging.getLogger("spot.security")
 
 # Only touch api_keys.last_used_at this often per key, not on every request.
 LAST_USED_RESOLUTION = timedelta(minutes=5)
@@ -58,6 +61,30 @@ def _presented_key() -> str:
 
 
 @bp.before_request
+def _start_timer():
+    g.api_t0 = time.perf_counter()
+    g.api_key_name = None
+
+
+@bp.after_request
+def _access_log(resp):
+    """One line per API call (category "API requests" on Setup → Logging):
+    `GET /api/v1/stats?monitors=1,2&… 200 34ms 812B key="321Theater"`.
+    4xx are logged as warnings and 5xx as errors."""
+    ms = (time.perf_counter() - g.get("api_t0", time.perf_counter())) * 1000
+    target = request.full_path.rstrip("?")
+    if len(target) > 300:
+        target = target[:297] + "..."
+    level = logging.ERROR if resp.status_code >= 500 else (
+        logging.WARNING if resp.status_code >= 400 else logging.INFO)
+    size = resp.calculate_content_length()
+    access_log.log(level, "%s %s %d %.0fms %s key=%s", request.method, target, resp.status_code, ms,
+                   f"{size}B" if size is not None else "streamed",
+                   f'"{g.api_key_name}"' if g.get("api_key_name") else "-")
+    return resp
+
+
+@bp.before_request
 def _authenticate():
     key = _presented_key()
     if not key:
@@ -67,7 +94,8 @@ def _authenticate():
         row = s.scalars(select(ApiKey).where(ApiKey.key_hash == digest)).first()
         # compare_digest: constant-time even though we looked up by hash.
         if row is None or not row.enabled or not hmac.compare_digest(row.key_hash, digest):
-            log.warning("rejected API request from %s (bad or disabled key)", request.remote_addr)
+            security_log.warning("rejected API request %s %s (%s key)", request.method, request.path,
+                                 "disabled" if row is not None else "unknown")
             abort(401, description="invalid or disabled API key")
         now = datetime.now(timezone.utc)
         if row.last_used_at is None or now - row.last_used_at > LAST_USED_RESOLUTION:

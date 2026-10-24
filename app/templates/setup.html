@@ -19,6 +19,11 @@
     <p class="muted">Access for other systems such as 321Theater (<code>/api/v1</code>).</p>
     <span class="badge off">{{ counts.api_keys }} active</span>
   </a>
+  <a class="card setup-card" href="{{ url_for('web.logging_settings') }}">
+    <h3>Logging &amp; syslog</h3>
+    <p class="muted">Syslog destination, what gets logged, recent log lines.</p>
+    <span class="badge {{ 'ok' if log_status.connected else 'off' }}">syslog {{ 'connected' if log_status.connected else ('not working' if log_status.enabled else 'off') }}</span>
+  </a>
   <a class="card setup-card" href="{{ url_for('web.alerts') }}">
     <h3>Alerts</h3>
     <p class="muted">Active alerts, thresholds in use, and history.</p>

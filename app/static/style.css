@@ -396,3 +396,14 @@ button.is-busy, .button.is-busy { cursor: progress; }
   border-radius: 6px; padding: 0.6rem 0.9rem; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35); max-width: 22rem; }
 .toast.done { border-left-color: var(--ok); }
 @media print { .toast, .busy-overlay { display: none !important; } }
+
+/* ---- 1.9: logging page ------------------------------------------------ */
+.log-status { margin-bottom: 1rem; }
+.log-form { max-width: none; }
+.log-levels select { min-width: 9rem; }
+.log-levels td:first-child { width: 80%; }
+.log-filter { margin-bottom: 0.6rem; }
+.log-table td { vertical-align: top; }
+.log-table .log-msg { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.85rem; word-break: break-word; }
+.log-table .nowrap { white-space: nowrap; }
+.badge.warnb { color: var(--warn); }

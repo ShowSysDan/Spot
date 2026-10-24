@@ -21,7 +21,7 @@ from ..queries import (
 )
 from ..exports import iter_csv, render_overlay_pdf, render_pdf
 from ..models import Monitor, Reading
-from ..util import get_monitor_or_404, monitor_color, safe_filename, to_local
+from ..util import get_monitor_or_404, iso_local, monitor_color, safe_filename, to_local
 from .params import detect_arg, int_arg, max_points_arg, parse_ids, parse_range
 
 bp = Blueprint("data", __name__)
@@ -214,6 +214,7 @@ def export_csv(mid: int):
     stmt = (select(Reading.ts, Reading.value, Reading.label)
             .where(range_clause(mid, start, end))
             .order_by(Reading.ts.asc()))
+    log.info("export csv monitor=%s range=%s..%s", name, iso_local(start), iso_local(end))
     return _stream_csv(stmt, False, _filename(name, start, end, "csv"))
 
 
@@ -257,6 +258,8 @@ def overlay_export_pdf():
                                    with_summary=True, extended=True)
     body = render_overlay_pdf(start, end, monitors, extra_meta=pdf_meta(detection))
     fname = _filename("report", start, end, "pdf")
+    log.info("export pdf report monitors=%s range=%s..%s detect=%s bytes=%d",
+             [m["name"] for m in monitors], iso_local(start), iso_local(end), bool(detection), len(body))
     return Response(body, mimetype="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
@@ -278,6 +281,7 @@ def overlay_export_csv():
             .where(Reading.ts >= start, Reading.ts <= end)
             .order_by(Reading.ts.asc(), Monitor.name.asc()))
     fname = _filename("report", start, end, "csv")
+    log.info("export csv report monitor_ids=%s range=%s..%s", ids, iso_local(start), iso_local(end))
     return _stream_csv(stmt, True, fname)
 
 
@@ -292,6 +296,7 @@ def export_pdf(mid: int):
         name, unit, color = m.name, m.unit, monitor_color(m.id, m.color)
     body = render_pdf(name, unit, start, end, points,
                       [(e["ts"], e["label"]) for e in events], summary_data, color=color)
+    log.info("export pdf monitor=%s range=%s..%s bytes=%d", name, iso_local(start), iso_local(end), len(body))
     return Response(body, mimetype="application/pdf",
                     headers={"Content-Disposition":
                              f'attachment; filename="{_filename(name, start, end, "pdf")}"'})

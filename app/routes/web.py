@@ -22,6 +22,7 @@ from ..modbus import (
     poll_now,
 )
 from ..alerts import active_alerts_by_monitor
+from .. import logging_config as logcfg
 from ..models import Alert, ApiKey, ModbusDevice, Monitor, Show
 from ..notify import callback_url_problem, one_line, post_json
 from ..shows import (
@@ -51,6 +52,8 @@ from .v1 import hash_key
 
 bp = Blueprint("web", __name__)
 log = logging.getLogger("spot.web")
+security_log = logging.getLogger("spot.security")
+export_log = logging.getLogger("spot.data")
 
 
 @bp.before_request
@@ -69,7 +72,7 @@ def _same_origin_posts():
     if not source:
         return None
     if source == "null" or urlsplit(source).netloc.lower() != request.host.lower():
-        log.warning("refused cross-site %s %s from origin=%s", request.method, request.path, source)
+        security_log.warning("refused cross-site %s %s from origin=%s", request.method, request.path, source)
         abort(403, description="Cross-site form submissions are not allowed.")
     return None
 
@@ -409,6 +412,7 @@ def show_report(sid: int):
         show = _get_show_or_404(s, sid)
         body = show_report_pdf(s, show)
         fname = report_filename(show)
+        export_log.info("export pdf show=%s id=%d bytes=%d", show.name, sid, len(body))
     return Response(body, mimetype="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
@@ -481,6 +485,86 @@ def api_key_delete(kid: int):
 
 
 # ---------------------------------------------------------------------------
+# Logging & syslog
+# ---------------------------------------------------------------------------
+
+@bp.route("/setup/logging", methods=["GET", "POST"])
+def logging_settings():
+    cfg = current_app.config["SPOT"]
+    if request.method == "POST":
+        try:
+            settings = _logging_form()
+        except _FormError as e:
+            flash(str(e), "error")
+            return redirect(url_for("web.logging_settings"))
+        err = logcfg.save_settings(settings)
+        log.info("logging settings changed: syslog=%s %s %s facility=%s app=%s levels=%s",
+                 "on" if settings.syslog_enabled else "off", settings.syslog_protocol,
+                 settings.syslog_address, settings.syslog_facility, settings.syslog_tag,
+                 ",".join(f"{k}={v}" for k, v in settings.levels.items()))
+        if err:
+            flash(f"Settings saved, but syslog isn't working: {err}", "error")
+        else:
+            flash("Logging settings saved and applied.", "success")
+        return redirect(url_for("web.logging_settings"))
+
+    level = request.args.get("level", "debug")
+    category = request.args.get("category", "")
+    entries = logcfg.recent(limit=300, min_level=level if level in logcfg.LEVELS else "debug",
+                            category=category if category in logcfg.CATEGORY_KEYS else "")
+    for e in entries:
+        e["local"] = format_local(e["ts"], "%m-%d %H:%M:%S")
+    st = logcfg.status()
+    for k in ("error_at", "last_sent_at"):
+        st[k + "_local"] = format_local(st[k], "%Y-%m-%d %H:%M:%S") if st[k] else None
+    return render_template("logging.html", settings=logcfg.current_settings(), status=st,
+                           categories=logcfg.CATEGORIES, levels=list(logcfg.LEVELS),
+                           facilities=logcfg.FACILITIES, entries=entries,
+                           env=logcfg.env_settings(cfg), level=level, category=category)
+
+
+def _logging_form() -> "logcfg.LogSettings":
+    enabled = bool(request.form.get("syslog_enabled"))
+    address = _form_str("syslog_address")
+    protocol = _form_str("syslog_protocol", "udp").lower()
+    facility = _form_str("syslog_facility", "local0").lower()
+    tag = _form_str("syslog_tag", "spot")
+    _check(protocol in ("udp", "tcp"), "Transport must be UDP or TCP.")
+    _check(facility in logcfg.FACILITIES, "Unknown syslog facility.")
+    _check(re.fullmatch(r"[A-Za-z0-9_.-]{1,32}", tag) is not None,
+           "App name: 1–32 letters, digits, '.', '_' or '-' (no spaces).")
+    _check(not enabled or bool(address), "Enter a syslog destination, or turn syslog off.")
+    _check(not address or address.startswith("/") or re.fullmatch(r"\[?[A-Za-z0-9_.:-]+\]?:\d{1,5}", address) is not None,
+           "Destination must be a local socket path (/dev/log) or host:port (loghost:514).")
+    levels = {}
+    for c in logcfg.CATEGORIES:
+        v = _form_str(f"level_{c.key}", c.default)
+        _check(v in logcfg.LEVELS, f"Unknown level for {c.label}.")
+        levels[c.key] = v
+    return logcfg.LogSettings(syslog_enabled=enabled, syslog_address=address,
+                              syslog_protocol=protocol, syslog_facility=facility,
+                              syslog_tag=tag, levels=levels)
+
+
+@bp.route("/setup/logging/test", methods=["POST"])
+def logging_test():
+    err = logcfg.send_test_message()
+    flash(f"Test message failed: {err}" if err else
+          "Test message sent to syslog — look for “Spot syslog test message”.",
+          "error" if err else "success")
+    return redirect(url_for("web.logging_settings"))
+
+
+@bp.route("/setup/logging/reset", methods=["POST"])
+def logging_reset():
+    err = logcfg.reset_to_env(current_app.config["SPOT"])
+    log.info("logging settings reset to .env defaults")
+    flash(f"Back to the .env settings, but syslog isn't working: {err}" if err
+          else "Back to the .env settings.", "error" if err else "success")
+    return redirect(url_for("web.logging_settings"))
+
+
+# ---------------------------------------------------------------------------
 # Setup hub + notification tests
 # ---------------------------------------------------------------------------
 
@@ -502,7 +586,8 @@ def setup():
         "server_now": server_now.strftime("%Y-%m-%d %H:%M:%S %Z (UTC%z)"),
         "differs": server_now.utcoffset() != display_now.utcoffset(),
     }
-    return render_template("setup.html", cfg=cfg, counts=counts, clock=clock)
+    return render_template("setup.html", cfg=cfg, counts=counts, clock=clock,
+                           log_status=logcfg.status())
 
 
 @bp.route("/setup/test-webhook", methods=["POST"])
@@ -512,6 +597,7 @@ def setup_test_webhook():
         flash("No alert webhook configured (set SPOT_ALERT_WEBHOOK_URL).", "error")
     else:
         err = post_json(cfg.alert_webhook_url, {"event": "test", "message": "Test from Spot"})
+        log.info("test webhook sent to %s: %s", cfg.alert_webhook_url, err or "ok")
         flash(f"Webhook failed: {err}" if err else "Test webhook delivered.",
               "error" if err else "success")
     return redirect(url_for("web.setup"))

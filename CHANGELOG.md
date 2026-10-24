@@ -3,6 +3,35 @@
 All notable changes to Spot. The version number lives in `app/version.py`
 and is bumped with every change.
 
+## 1.9.0 — 2026-10-24
+
+### Added
+- **Setup → Logging & syslog** (`/setup/logging`), applied live without a
+  restart and stored in the database (overrides `.env`; *Reset to .env*):
+  syslog on/off, destination (local socket or `host:port`), **UDP or TCP**,
+  **app name** (syslog tag), facility; one level per log category (Alerts,
+  API requests, Security, Data ingest, UI changes, Show reports & webhooks,
+  Listeners & Modbus, Exports, System); syslog status (connected, sent,
+  failed, last error) and *Send test message*; a filterable view of the last
+  500 log lines.
+- **API access log**: one line per `/api/v1` request — method, path,
+  status, duration, size, API key name, source IP (4xx warning, 5xx error).
+- **Source IP** (`[src=…]`) on every line logged while handling a web or API
+  request, so UI changes and API calls are attributable.
+- `spot.security` logger for rejected API keys, refused cross-site posts and
+  ingest from outside `SPOT_INGEST_ALLOW`; export logging for CSV/PDF
+  downloads.
+- New `.env` settings `SPOT_SYSLOG_PROTOCOL` and `SPOT_SYSLOG_APP_NAME`;
+  new `settings` table (created automatically).
+
+### Fixed
+- An unusable syslog destination (e.g. `/dev/log` missing) was ignored
+  silently; it's now reported at start-up and on the Logging page.
+- Syslog over TCP never reconnected after the collector restarted, and lost
+  the first line after a disconnect without noticing. Spot's own sender
+  frames lines RFC 3164 with timestamp and hostname, reconnects, detects a
+  closed connection before writing, and counts undeliverable lines.
+
 ## 1.8.0 — 2026-10-24
 
 ### Removed

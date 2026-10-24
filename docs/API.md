@@ -16,7 +16,7 @@ This is the contract for systems that talk to Spot — primarily
 10. [Security & operations](#10-security--operations)
 11. [Versioning policy](#11-versioning-policy)
 
-Describes API v1 as of Spot **1.8.0**. `GET /` reports the running version.
+Describes API v1 as of Spot **1.9.0**. `GET /` reports the running version.
 
 ---
 
@@ -901,8 +901,11 @@ def spot_report():
   network, put it behind a reverse proxy with TLS (nginx, Caddy, Traefik)
   and use `https://` URLs.
 * **API keys** are only for `/api/v1`. Store them like passwords; prefer one
-  key per integrating system so they can be revoked independently. Spot logs
-  rejected keys (`spot.api.v1`, with the source address) to syslog.
+  key per integrating system so they can be revoked independently.
+* **Logging:** every `/api/v1` call is logged (method, path, status, time,
+  size, key *name* — never the key itself — and source IP) and can go to
+  syslog; rejected keys are logged under *Security*. See Setup → Logging in
+  Spot, or the README section *Logging & syslog*.
 * **The web UI is unauthenticated** — anyone who can reach it can create
   API keys. Restrict it at the network or proxy level.
 * **Callback URLs** are called from the Spot server. Spot never follows

@@ -2,7 +2,7 @@
 
 **Data acquisition, down to the last spot.**
 
-Current version: **1.8.0** — see [CHANGELOG.md](CHANGELOG.md). The running
+Current version: **1.9.0** — see [CHANGELOG.md](CHANGELOG.md). The running
 version is shown in the web UI footer, logged at startup, and stamped on every
 PDF report.
 
@@ -197,9 +197,15 @@ Set at least:
 | `SPOT_DB_SCHEMA`      | `spot` (or any name; will be created)        |
 | `SPOT_WEB_HOST`       | `0.0.0.0` (bind everywhere) or a specific IP |
 | `SPOT_WEB_PORT`       | e.g. `6100`                                  |
-| `SPOT_SYSLOG_ADDRESS` | `/dev/log` for local rsyslog                 |
+| `SPOT_SYSLOG_ADDRESS` | `/dev/log` for local rsyslog, or `host:port` for a remote collector; blank = syslog off |
+| `SPOT_SYSLOG_PROTOCOL`| `udp` (default) or `tcp` — remote syslog only |
+| `SPOT_SYSLOG_APP_NAME`| Program name on each syslog line (default `spot`) |
 | `SPOT_SYSLOG_FACILITY`| e.g. `local0`                                |
-| `SPOT_LOG_LEVEL`      | `INFO` / `DEBUG` / `WARNING`                 |
+| `SPOT_LOG_LEVEL`      | Default level for every log category: `INFO` / `DEBUG` / `WARNING` / `ERROR` |
+
+The syslog settings and per-category levels can also be changed live on
+**Setup → Logging** (no restart); settings saved there take precedence over
+`.env` until you press *Reset to .env*.
 | `SPOT_SECRET_KEY`     | Any random string                            |
 | `SPOT_INGEST_ALLOW`   | Optional CSV of allowed source IPs           |
 | `SPOT_JANITOR_INTERVAL_SECONDS` | Retention-cleanup interval (default `3600`) |
@@ -272,8 +278,12 @@ sudo ufw allow 6101:6199/udp      # UDP monitors (auto-assigned in this range)
 
 ### 9. Syslog
 
-If `SPOT_SYSLOG_ADDRESS=/dev/log`, messages reach the local syslog daemon.
-To route Spot's `local0` messages to a dedicated file, drop a file at
+Spot always writes its log to the service log (`journalctl -u spot`). It can
+also send every line to syslog — set it up in `.env` or, more easily, on
+**Setup → Logging** (see *Logging & syslog* below).
+
+With `SPOT_SYSLOG_ADDRESS=/dev/log`, lines reach this server's syslog
+daemon. To route them to a dedicated file, drop a file at
 `/etc/rsyslog.d/30-spot.conf`:
 
 ```
@@ -281,9 +291,11 @@ if $programname == 'spot' then /var/log/spot.log
 & stop
 ```
 
-then `sudo systemctl restart rsyslog`.
+then `sudo systemctl restart rsyslog`. (If you change the **app name** on
+the Logging page, use that name in the rule instead of `spot`.)
 
-For remote syslog, set `SPOT_SYSLOG_ADDRESS=loghost.example.com:514`.
+For a remote collector, set `SPOT_SYSLOG_ADDRESS=loghost.example.com:514`
+and optionally `SPOT_SYSLOG_PROTOCOL=tcp`.
 
 ### 10. Upgrades
 
@@ -327,6 +339,7 @@ migration.
 | `/alerts` | Alerts | Active alerts (acknowledge), thresholds in use, history |
 | `/setup` | Setup | Hub: links below, time zone check, webhook settings and test button (`/setup/test-webhook`) |
 | `/setup/api-keys` | Setup → API keys | Keys for `/api/v1` (321Theater etc.) |
+| `/setup/logging` | Setup → Logging & syslog | Syslog destination / transport / app name / facility, what to log, recent log |
 | `/modbus`, `/modbus/new`, `/modbus/<id>` | Setup → Modbus devices | Polled Modbus TCP sensors |
 | `/storage` | Setup → Storage | Database size and rows per monitor |
 | `/api/v1/…` | — | External API, see [docs/API.md](docs/API.md) |
@@ -796,21 +809,60 @@ without waiting for the janitor.
 
 ---
 
-## Logging / syslog details
+## Logging & syslog
 
-All Spot loggers are children of `spot.*`:
+Every log line goes to **stderr** (the service log, `journalctl -u spot`)
+and, when enabled, to **syslog**. **Setup → Logging** (`/setup/logging`)
+controls both, live:
 
-- `spot.web`        — UI actions (monitor created/updated/deleted, toggled, purged)
-- `spot.api`        — HTTP ingest + allow-list rejections
-- `spot.listeners`  — TCP/UDP listener start/stop/bind errors
-- `spot.modbus`     — Modbus poller start/stop, read failures, decode errors
-- `spot.ingest`     — malformed payloads
-- `spot.janitor`    — retention purges (rows deleted per monitor per pass)
-- `spot.db`         — schema bring-up
-- `spot.data`       — query/export
+**Status** — whether syslog is connected, lines sent, failures and the
+last error (a failure is never silent; it shows here and as a banner),
+whether the settings come from `.env` or were saved on the page, and a
+*Send test message* button.
 
-The same records go to **stderr** (visible in `journalctl -u spot`)
-**and** syslog (the facility you set in `SPOT_SYSLOG_FACILITY`).
+**Syslog settings**
+
+| Setting | Notes |
+|---------|-------|
+| Send to syslog | On / off. |
+| Destination | `/dev/log` (this server's rsyslog / journald) or `host:port`. |
+| Transport | UDP or TCP for a remote collector. TCP is newline-framed (what rsyslog / syslog-ng expect) and reconnects by itself after the collector restarts; a line that can't be delivered is counted as failed, not lost silently. |
+| App name | The program name on each line, `spot[pid]:` by default. 1–32 letters, digits, `.`, `_`, `-`. rsyslog `$programname` rules match on it. |
+| Facility | `local0`–`local7`, `user`, `daemon`, … |
+
+Lines are RFC 3164: `<PRI>Oct 24 18:54:40 host spot[1234]: spot.api.access INFO: GET /api/v1/stats?monitors=1 200 18ms 444B key="321Theater" [src=10.0.0.5]`.
+The timestamp is in Spot's display zone (Eastern); the severity in `PRI`
+follows the line's level. Lines logged while handling a web or API request
+end with `[src=<client IP>]`, so UI changes and API calls are attributable.
+
+**What to log** — one level per category (*Off*, *Error*, *Warning*,
+*Info*, *Debug*; each includes the more serious ones). Defaults follow
+`SPOT_LOG_LEVEL`.
+
+| Category | Default | Logs |
+|----------|---------|------|
+| Alerts | info | alert raised (warning) / recovered (info); webhook failures |
+| API requests | info | one line per `/api/v1` call: method, path, status, time, size, API key name, source IP (4xx as warning, 5xx as error); shows created / changed / deleted via the API |
+| Security | info | rejected or disabled API keys, refused cross-site form posts, ingest from outside `SPOT_INGEST_ALLOW` |
+| Data ingest | warning | malformed payloads; at *Debug* every accepted reading (busy!) |
+| Changes in the web UI | info | monitors, shows, Modbus devices, API keys, acknowledgements and settings created / changed / deleted |
+| Show reports & webhooks | info | show report deliveries to callback URLs and their retries |
+| Listeners & Modbus | info | TCP/UDP listeners starting / stopping / failing to bind; Modbus read and decode errors |
+| Exports | info | CSV and PDF downloads (which monitors, which range) |
+| System | info | start-up, database schema, retention purges |
+
+*Off* silences a category everywhere, the service log included.
+
+**Recent log** — the last 500 lines (from all categories, whatever goes to
+syslog) are kept in memory and shown at the bottom of the page, filterable
+by level and category; handy to confirm something is being logged without
+logging in to the server. It starts empty after a restart.
+
+Under the hood these are Python loggers under `spot.*` (`spot.alerts`,
+`spot.api.access`, `spot.api.v1`, `spot.security`, `spot.ingest`,
+`spot.api`, `spot.web`, `spot.shows`, `spot.notify`, `spot.listeners`,
+`spot.modbus`, `spot.data`, `spot.db`, `spot.janitor`); the category map is
+in `app/logging_config.py`.
 
 ---
 

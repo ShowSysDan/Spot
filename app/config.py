@@ -39,6 +39,10 @@ class Config:
     # Optional lock-down for show-report callback URLs: hostnames and/or
     # CIDR ranges. Empty = any host except link-local/reserved addresses.
     callback_allow: tuple[str, ...] = ()
+    # Remote syslog transport (udp | tcp) and the app name ("tag") on each
+    # syslog line. Both editable later on Setup → Logging.
+    syslog_protocol: str = "udp"
+    syslog_tag: str = "spot"
     # IANA zone for everything people see (24-hour). Storage stays UTC.
     timezone: str = "America/New_York"
 
@@ -72,6 +76,8 @@ class Config:
             alert_interval_seconds=max(5, int(os.getenv("SPOT_ALERT_INTERVAL_SECONDS", "15"))),
             callback_allow=_csv(os.getenv("SPOT_CALLBACK_ALLOW", "")),
             timezone=os.getenv("SPOT_TIMEZONE", "America/New_York").strip() or "America/New_York",
+            syslog_protocol=(os.getenv("SPOT_SYSLOG_PROTOCOL", "udp").strip().lower() or "udp"),
+            syslog_tag=(os.getenv("SPOT_SYSLOG_APP_NAME", "spot").strip() or "spot"),
         )
 
     @property
