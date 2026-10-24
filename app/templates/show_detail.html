@@ -99,20 +99,21 @@
   if (!r.ok) return;
   const j = await r.json();
   const axisFor = {};
-  const scales = { x: { type: 'time', grid: { color: '#2c313a' },
+  const scales = { x: { type: 'time', grid: {},
                         min: new Date(j.start).valueOf(), max: new Date(j.end).valueOf() } };
   j.monitors.forEach(m => {
     if (m.unit in axisFor) return;
     const i = Object.keys(axisFor).length, id = i ? `y${i}` : 'y';
     axisFor[m.unit] = id;
     scales[id] = { position: i % 2 ? 'right' : 'left', title: { display: true, text: m.unit },
-                   grid: { drawOnChartArea: i === 0, color: '#2c313a' } };
+                   grid: { drawOnChartArea: i === 0 } };
   });
   new Chart(document.getElementById('chart'), {
     type: 'line',
     data: { datasets: j.monitors.map(m => ({ label: `${m.name} (${m.unit})`, borderColor: m.color, borderWidth: 1.3,
       pointRadius: 0, pointHitRadius: 6, yAxisID: axisFor[m.unit],
-      data: m.points.map(pt => ({ x: new Date(pt.ts).valueOf(), y: pt.value })) })) },
+      data: (pts => Spot.breakAtGaps(pts, Spot.findGaps(pts, { bucketMs: (m.bucket_seconds || 0) * 1000 })))(
+        m.points.map(pt => ({ x: new Date(pt.ts).valueOf(), y: pt.value }))) })) },
     options: { animation: false, parsing: false, normalized: true, scales,
                interaction: { mode: 'nearest', axis: 'x', intersect: false },
                plugins: { legend: { position: 'bottom' },

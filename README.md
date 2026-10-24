@@ -2,7 +2,7 @@
 
 **Data acquisition, down to the last spot.**
 
-Current version: **1.6.0** — see [CHANGELOG.md](CHANGELOG.md). The running
+Current version: **1.7.0** — see [CHANGELOG.md](CHANGELOG.md). The running
 version is shown in the web UI footer, logged at startup, and stamped on every
 PDF report.
 
@@ -64,6 +64,12 @@ and lets you browse, query, graph, and export the data.
   CSVs and e-mails is shown in `SPOT_TIMEZONE` (default America/New_York,
   EST/EDT handled automatically), whatever the viewer's computer is set to.
   Data is stored in UTC.
+- **Honest charts** — where a sensor stopped reporting, lines break and the
+  gap is hatched ("no data") instead of drawing a straight line across it,
+  on screen and in PDFs.
+- **Light theme & printing** — a ☀/☾ toggle in the menu bar switches the UI to
+  a light theme (remembered per browser); printing any page gives a clean,
+  light layout without menus and buttons.
 - **Locations & colours** — an optional location label groups tiles on the
   Monitors page (e.g. per theater); each monitor can have its own colour,
   used for its tile, chart line and PDF reports.
@@ -413,11 +419,27 @@ open/closed state and the filter box are remembered per browser).
   *decimal places* when set.
 - The sparkline covers the last hour (60 one-minute averages); the
   bottom-right figure is the low–high of those averages.
+- A small arrow next to the value shows the direction of travel — the last
+  5 minutes against the 15 before (↑ / ↓ with the change, → when steady);
+  the value flashes briefly in the monitor's colour when it changes.
 - The dot is green while the monitor is reporting, amber once its newest
   reading is older than the stale threshold, and grey when it is long
   overdue or has no data. The threshold is 5 minutes, or 3× the poll
   interval for Modbus monitors (minimum 30 s).
 - Polling pauses while the browser tab is hidden.
+
+### Gaps, themes and printing
+
+- **Gaps:** a pause longer than 5× the sensor's usual spacing (and at least
+  30 s) is a gap. Chart lines break there and the stretch is hatched with a
+  "no data" label — dashboards, Query, Reports, show pages and PDFs alike.
+  On a dashboard, "nothing yet" at the start of the window and "nothing
+  lately" at the end are shaded too.
+- **Theme:** the ☀/☾ button at the right of the menu switches between the
+  dark and light themes; the choice is stored in that browser. The wall
+  display always stays dark. PDF reports keep Spot's dark branded style.
+- **Printing:** browser print uses a light, chrome-free layout (no menus,
+  filters or buttons; charts and tables kept together).
 
 ### Time & timezone
 

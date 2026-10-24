@@ -36,6 +36,7 @@
   const monitorId = {{ monitor.id }};
   const unit = {{ monitor.unit | tojson }};
   const decimals = {{ monitor.decimal_places | tojson }};
+  const color = {{ monitor.display_color | tojson }};
   const fmt = v => Spot.fmtValue(v, decimals);
   const form = document.getElementById('qform');
 
@@ -52,16 +53,16 @@
     type: 'line',
     data: { datasets: [
       { label: 'min', data: [], borderWidth: 0, pointRadius: 0, fill: false },
-      { label: 'max', data: [], borderWidth: 0, pointRadius: 0, fill: '-1', backgroundColor: 'rgba(88,166,255,0.16)' },
-      { label: unit, data: [], borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.12)',
+      { label: 'max', data: [], borderWidth: 0, pointRadius: 0, fill: '-1', backgroundColor: Spot.alpha(color, 0.16) },
+      { label: unit, data: [], borderColor: color, backgroundColor: Spot.alpha(color, 0.12),
         borderWidth: 1.2, pointRadius: 0, pointHitRadius: 6, fill: 'origin' },
     ] },
     options: {
       animation: false, parsing: false, normalized: true,
       interaction: { mode: 'nearest', axis: 'x', intersect: false },
       scales: {
-        x: { type: 'time', grid: { color: '#2c313a' } },
-        y: { title: { display: true, text: unit }, grid: { color: '#2c313a' } },
+        x: { type: 'time', grid: {} },
+        y: { title: { display: true, text: unit }, grid: {} },
       },
       plugins: {
         legend: { display: false },
@@ -83,8 +84,12 @@
       return;
     }
     const series = await sr.json(), summary = await mr.json();
-    const xy = key => series.points.map(p => ({ x: new Date(p.ts).valueOf(), y: p[key] }));
     const bucketed = !!series.bucket_seconds;
+    const gaps = Spot.findGaps(series.points.map(p => ({ x: new Date(p.ts).valueOf() })),
+      { bucketMs: (series.bucket_seconds || 0) * 1000,
+        start: new Date(series.start).valueOf(), end: new Date(series.end).valueOf() });
+    const xy = key => Spot.breakAtGaps(series.points.map(p => ({ x: new Date(p.ts).valueOf(), y: p[key] })), gaps);
+    chart.options.plugins.spotGaps = { gaps };
     chart.data.datasets[0].data = bucketed ? xy('min') : [];
     chart.data.datasets[1].data = bucketed ? xy('max') : [];
     chart.data.datasets[2].data = xy('value');

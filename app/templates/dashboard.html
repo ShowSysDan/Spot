@@ -106,8 +106,8 @@
       normalized: true,
       interaction: { mode: 'nearest', axis: 'x', intersect: false },
       scales: {
-        x: { type: 'time', grid: { color: '#2c313a' } },
-        y: { title: { display: true, text: unit }, grid: { color: '#2c313a' }, beginAtZero: zero.checked },
+        x: { type: 'time', grid: {} },
+        y: { title: { display: true, text: unit }, grid: {}, beginAtZero: zero.checked },
       },
       plugins: {
         legend: { display: false },
@@ -126,7 +126,7 @@
 
   // Keep alert thresholds inside the y range so their lines stay visible.
   function fitThresholds() {
-    const ys = chart.data.datasets[2].data.map(p => p.y);
+    const ys = chart.data.datasets[2].data.map(p => p.y).filter(v => v !== null);
     const marks = [alertHigh, alertLow].filter(v => v !== null);
     if (!marks.length || !ys.length) {
       chart.options.scales.y.suggestedMin = chart.options.scales.y.suggestedMax = undefined;
@@ -153,10 +153,14 @@
     if (!r.ok || sec !== windowSec) return;
     const j = await r.json();
     const end = new Date(j.now).valueOf();
-    const line = j.points.map(p => ({ x: new Date(p.ts).valueOf(), y: p.value }));
+    const raw = j.points.map(p => ({ x: new Date(p.ts).valueOf(), y: p.value }));
     const bucketed = !!j.bucket_seconds;
-    chart.data.datasets[0].data = bucketed ? j.points.map(p => ({ x: new Date(p.ts).valueOf(), y: p.min })) : [];
-    chart.data.datasets[1].data = bucketed ? j.points.map(p => ({ x: new Date(p.ts).valueOf(), y: p.max })) : [];
+    const gaps = Spot.findGaps(raw, { bucketMs: (j.bucket_seconds || 0) * 1000, start: end - sec * 1000, end });
+    const line = Spot.breakAtGaps(raw, gaps);
+    const band = key => Spot.breakAtGaps(j.points.map(p => ({ x: new Date(p.ts).valueOf(), y: p[key] })), gaps);
+    chart.data.datasets[0].data = bucketed ? band('min') : [];
+    chart.data.datasets[1].data = bucketed ? band('max') : [];
+    chart.options.plugins.spotGaps = { gaps };
     chart.data.datasets[0].hidden = chart.data.datasets[1].hidden = !bucketed;
     chart.data.datasets[2].data = line;
     chart.data.datasets[2].fill = bucketed ? false : 'origin';

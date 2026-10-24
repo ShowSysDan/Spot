@@ -218,7 +218,7 @@
       const ctx = chart.ctx;
       const px = v => Math.min(right, Math.max(left, x.getPixelForValue(v)));
       ctx.save();
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+      ctx.fillStyle = cssVar('--range-dim', 'rgba(0, 0, 0, 0.35)');
       ctx.fillRect(left, top, px(o.start) - left, bottom - top);
       ctx.fillRect(px(o.end), top, right - px(o.end), bottom - top);
       ctx.restore();
@@ -249,6 +249,78 @@
     },
   };
   if (window.Chart) window.Chart.register(eventLinesPlugin, thresholdLinesPlugin, rangePlugin);
+
+  // ---- Data gaps. A chart line drawn straight across a stretch with no
+  // readings looks like a steady value; instead the line is broken there and
+  // the stretch shaded. A gap is a pause much longer than the sensor's usual
+  // spacing: more than 5× the median interval, at least 3 buckets when the
+  // series is downsampled, and never under 30 s.
+  function findGaps(points, opts) {
+    const o = Object.assign({ bucketMs: 0, start: null, end: null }, opts);
+    const xs = points.map(p => p.x);
+    const gaps = [];
+    if (xs.length >= 3) {
+      const d = [];
+      for (let i = 1; i < xs.length; i++) d.push(xs[i] - xs[i - 1]);
+      const sorted = [...d].sort((a, b) => a - b);
+      const median = sorted[Math.floor(sorted.length / 2)];
+      const limit = Math.max(5 * median, 3 * o.bucketMs, 30e3);
+      for (let i = 0; i < d.length; i++) if (d[i] > limit) gaps.push([xs[i], xs[i + 1]]);
+      // Edges: nothing yet at the start of the window / nothing lately.
+      if (o.start != null && xs[0] - o.start > limit) gaps.unshift([o.start, xs[0]]);
+      if (o.end != null && o.end - xs[xs.length - 1] > limit) gaps.push([xs[xs.length - 1], o.end]);
+    }
+    return gaps;
+  }
+  // Insert a null after each gap start so Chart.js breaks the line there.
+  function breakAtGaps(points, gaps) {
+    if (!gaps.length) return points;
+    const starts = new Set(gaps.map(g => g[0]));
+    const out = [];
+    for (const p of points) { out.push(p); if (starts.has(p.x)) out.push({ x: p.x + 1, y: null }); }
+    return out;
+  }
+  // Chart.js plugin: hatch the gaps. options.plugins.spotGaps = { gaps: [[a, b], …] }
+  const gapsPlugin = {
+    id: 'spotGaps',
+    beforeDatasetsDraw(chart, _args, o) {
+      const gaps = (o && o.gaps) || [];
+      const x = chart.scales.x;
+      if (!gaps.length || !x) return;
+      const { left, right, top, bottom } = chart.chartArea;
+      const ctx = chart.ctx;
+      ctx.save();
+      ctx.beginPath(); ctx.rect(left, top, right - left, bottom - top); ctx.clip();
+      ctx.fillStyle = cssVar('--gap-fill', 'rgba(138, 146, 157, 0.10)');
+      ctx.strokeStyle = cssVar('--gap-hatch', 'rgba(138, 146, 157, 0.22)');
+      ctx.lineWidth = 1;
+      for (const [a, b] of gaps) {
+        const x0 = Math.max(left, x.getPixelForValue(a)), x1 = Math.min(right, x.getPixelForValue(b));
+        if (x1 - x0 < 1) continue;
+        ctx.fillRect(x0, top, x1 - x0, bottom - top);
+        ctx.beginPath();
+        for (let k = x0 - (bottom - top); k < x1; k += 8) {
+          ctx.moveTo(Math.max(k, x0), top + Math.max(0, x0 - k));
+          ctx.lineTo(Math.min(k + (bottom - top), x1), top + Math.min(bottom - top, x1 - k));
+        }
+        ctx.stroke();
+        if (x1 - x0 > 46) {
+          ctx.fillStyle = cssVar('--muted', '#8a929d');
+          ctx.font = '11px system-ui, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText('no data', (x0 + x1) / 2, bottom - 6);
+          ctx.fillStyle = cssVar('--gap-fill', 'rgba(138, 146, 157, 0.10)');
+        }
+      }
+      ctx.restore();
+    },
+  };
+  if (window.Chart) window.Chart.register(gapsPlugin);
+
+  function cssVar(name, fallback) {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v || fallback;
+  }
 
   // One line describing a detection result, for pages.
   function describeDetection(d) {
@@ -408,6 +480,15 @@
   document.addEventListener('DOMContentLoaded', () =>
     document.querySelectorAll('input[type=datetime-local]').forEach(upgradeDateTime));
 
+  // Light / dark theme toggle (remembered per browser). Charts read their
+  // colours when created, so the page reloads to redraw them.
+  document.addEventListener('click', e => {
+    if (!e.target.closest('#theme-toggle')) return;
+    const light = document.documentElement.dataset.theme !== 'light';
+    store.set('spot.theme', light ? 'light' : 'dark');
+    location.reload();
+  });
+
   // Fill every .tz-note with the zone in use, e.g. "Times are US Eastern (EDT), 24-hour."
   function zoneLabel() {
     return TZ === 'America/New_York' ? 'US Eastern' : TZ.replace(/_/g, ' ');
@@ -418,6 +499,6 @@
     });
   });
 
-  window.Spot = { describeDetection, TZ, wall, fromWall, fmtDateTime, fmtTime, zoneName, fmtInt, alpha, escapeHtml, fmtValue, timeAgo, fmtDuration, toLocalInput, toIso,
+  window.Spot = { findGaps, breakAtGaps, cssVar, describeDetection, TZ, wall, fromWall, fmtDateTime, fmtTime, zoneName, fmtInt, alpha, escapeHtml, fmtValue, timeAgo, fmtDuration, toLocalInput, toIso,
                   presetRange, bindPresets, store, sparkline, poller };
 })();

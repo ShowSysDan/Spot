@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import os
+import statistics
 from datetime import datetime
 from xml.sax.saxutils import escape as _xml_escape
 
@@ -122,11 +123,14 @@ def render_chart_png(monitor_name: str, unit: str,
     _style_dark_axes(ax)
     if points:
         xs = [naive_local(p["ts"]) for p in points]
-        ys = [p["value"] for p in points]
+        gaps = _gaps(xs)
+        _shade_gaps(ax, gaps)
         if "min" in points[0]:
-            ax.fill_between(xs, [p["min"] for p in points], [p["max"] for p in points],
-                            color=color, alpha=0.18, linewidth=0)
-        ax.plot(xs, ys, linewidth=1.2, color=color, **_sparse_markers(xs))
+            bx, lo, hi = _split_at_gaps(xs, [p["min"] for p in points],
+                                        [p["max"] for p in points], gaps=gaps)
+            ax.fill_between(bx, lo, hi, color=color, alpha=0.18, linewidth=0)
+        px, ys = _split_at_gaps(xs, [p["value"] for p in points], gaps=gaps)
+        ax.plot(px, ys, linewidth=1.2, color=color, **_sparse_markers(xs))
     for ts, label in events:
         local_ts = naive_local(ts)
         ax.axvline(local_ts, color=_DANGER_HEX, linestyle="--", linewidth=0.8, alpha=0.8)
@@ -142,6 +146,41 @@ def render_chart_png(monitor_name: str, unit: str,
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=120, facecolor=fig.get_facecolor())
     return buf.getvalue()
+
+
+def _gaps(xs: list[datetime]) -> list[tuple[datetime, datetime]]:
+    """Stretches with no readings: pauses over 5× the median spacing (and
+    at least 30 s). Same rule as the web charts (spot.js findGaps)."""
+    if len(xs) < 3:
+        return []
+    deltas = [(b - a).total_seconds() for a, b in zip(xs, xs[1:])]
+    limit = max(5 * statistics.median(deltas), 30.0)
+    return [(xs[i], xs[i + 1]) for i, d in enumerate(deltas) if d > limit]
+
+
+def _split_at_gaps(xs: list, *series: list, gaps) -> tuple[list, ...]:
+    """Insert NaN after each gap start so matplotlib breaks the line there."""
+    if not gaps:
+        return (xs, *series)
+    starts = {a for a, _ in gaps}
+    out_x, outs = [], [[] for _ in series]
+    for i, x in enumerate(xs):
+        out_x.append(x)
+        for o, ys in zip(outs, series):
+            o.append(ys[i])
+        if x in starts:
+            out_x.append(x)
+            for o in outs:
+                o.append(float("nan"))
+    return (out_x, *outs)
+
+
+def _shade_gaps(ax, gaps) -> None:
+    for a, b in gaps:
+        ax.axvspan(a, b, facecolor=_MUTED_HEX, alpha=0.10, hatch="///",
+                   edgecolor=_BORDER_HEX, linewidth=0)
+        ax.annotate("no data", xy=(a + (b - a) / 2, 0.02), xycoords=("data", "axes fraction"),
+                    ha="center", va="bottom", fontsize=7, color=_MUTED_HEX)
 
 
 def _sparse_markers(xs: list) -> dict:
@@ -188,7 +227,7 @@ def render_overlay_chart_png(start: datetime, end: datetime,
         _style_dark_axes(ax)
         for m in groups[unit]:
             xs = [naive_local(p["ts"]) for p in m["points"]]
-            ys = [p["value"] for p in m["points"]]
+            xs, ys = _split_at_gaps(xs, [p["value"] for p in m["points"]], gaps=_gaps(xs))
             ax.plot(xs, ys, label=_mpl_text(m["name"]), linewidth=1.2, **_sparse_markers(xs),
                     color=m.get("color") or _OVERLAY_COLORS[color_idx % len(_OVERLAY_COLORS)])
             color_idx += 1

@@ -3,6 +3,22 @@
 All notable changes to Spot. The version number lives in `app/version.py`
 and is bumped with every change.
 
+## 1.7.0 — 2026-10-24
+
+### Added
+- **Data gaps** are shown instead of hidden: lines break and the gap is
+  hatched with "no data" (pauses > 5× the median spacing, ≥ 30 s) on every
+  chart and in PDF charts; dashboard window edges with no data are shaded.
+- **Light theme** with a ☀/☾ toggle in the menu (per-browser); chart colours
+  follow the theme. **Print stylesheet** for clean light printouts.
+- Home tiles: **trend arrow** (last 5 min vs previous 15, ignoring changes
+  under ~10 % of the hour's range) and a brief **flash** when the value
+  changes.
+
+### Changed
+- Chart grid/text colours come from CSS variables instead of hard-coded
+  hex; the Query chart uses the monitor's colour.
+
 ## 1.6.0 — 2026-10-24
 
 ### Added

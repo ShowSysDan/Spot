@@ -4,7 +4,11 @@
   <meta charset="utf-8">
   <title>{% block title %}Spot{% endblock %}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="dark light">
+  <script>
+    // Apply the saved theme before anything paints (no dark→light flash).
+    try { if (localStorage.getItem('spot.theme') === 'light') document.documentElement.dataset.theme = 'light'; } catch (_) {}
+  </script>
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='logo.svg') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=spot_version) }}">
   {# All browser libraries are vendored under static/vendor so Spot works offline. #}
@@ -17,8 +21,10 @@
     // in Spot's display timezone with 24-hour labels whatever the viewer's
     // computer is set to.
     if (window.Chart) {
-      Chart.defaults.color = '#cfd2d6';
-      Chart.defaults.borderColor = '#2c313a';
+      // Colours come from the active theme's CSS variables.
+      const css = getComputedStyle(document.documentElement);
+      Chart.defaults.color = css.getPropertyValue('--chart-text').trim() || '#cfd2d6';
+      Chart.defaults.borderColor = css.getPropertyValue('--border').trim() || '#2c313a';
       Chart.defaults.font.family = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
       const t = Chart.defaults.scales.time;
       t.adapters = { date: { zone: window.SPOT_TZ, locale: 'en-US' } };
@@ -53,6 +59,9 @@
       <a href="{{ url_for('web.setup') }}"
          class="{{ 'active' if ep.startswith('web.setup') or ep.startswith('web.api_key') or ep.startswith('web.schedule') or ep.startswith('web.modbus_') or ep == 'web.storage' }}">Setup</a>
       <a href="{{ url_for('web.monitor_new') }}" class="nav-cta {{ 'active' if ep == 'web.monitor_new' }}">+ New monitor</a>
+      <button type="button" class="theme-toggle" id="theme-toggle" title="Switch light / dark theme" aria-label="Switch light or dark theme">
+        <span class="when-dark">☀</span><span class="when-light">☾</span>
+      </button>
     </nav>
   </header>
   <main>

@@ -42,7 +42,7 @@
       <span class="tile-alert" hidden></span>
       <span class="tile-type">{{ m.listener_type|upper }}</span>
     </div>
-    <div class="tile-value"><span class="v">—</span> <span class="u">{{ m.unit }}</span></div>
+    <div class="tile-value"><span class="v">—</span> <span class="u">{{ m.unit }}</span><span class="trend"></span></div>
     <canvas class="spark" aria-hidden="true"></canvas>
     <div class="tile-foot">
       <span class="ago">{{ 'disabled' if not m.enabled else 'waiting for data…' }}</span>
@@ -106,6 +106,7 @@
   document.querySelectorAll('.tile').forEach(el => tiles.set(Number(el.dataset.id), {
     el,
     v: el.querySelector('.v'),
+    trend: el.querySelector('.trend'),
     ago: el.querySelector('.ago'),
     range: el.querySelector('.range'),
     spark: el.querySelector('.spark'),
@@ -121,7 +122,15 @@
   function paint(t, now) {
     const d = t.data;
     if (!d) return;
-    t.v.textContent = Spot.fmtValue(d.value, t.decimals);
+    const txt = Spot.fmtValue(d.value, t.decimals);
+    if (t.v.textContent !== txt && t.v.textContent !== '—') {
+      // Brief flash in the monitor's colour when the value changes.
+      t.el.classList.remove('tick'); void t.el.offsetWidth; t.el.classList.add('tick');
+    }
+    t.v.textContent = txt;
+    const tr = trend(d.spark, t.decimals);
+    t.trend.textContent = tr ? (tr.delta ? `${tr.arrow} ${Number(Math.abs(tr.delta).toPrecision(2))}` : tr.arrow) : '';
+    t.trend.title = tr ? 'Last 5 min vs the 15 min before' : '';
     const age = d.ts ? now - new Date(d.ts).valueOf() : Infinity;
     let state = 'none';
     if (d.ts) state = age <= t.staleAfter ? 'fresh' : (age <= t.staleAfter * 12 ? 'stale' : 'old');
@@ -141,6 +150,21 @@
     t.alert.textContent = alerts.map(a => a.kind.toUpperCase()).join(' · ');
     t.alert.title = alerts.map(a => a.message).join('\n');
     Spot.sparkline(t.spark, d.spark, Object.assign({ color: t.color, fill: Spot.alpha(t.color, 0.15) }, sparkWindow));
+  }
+
+  // Direction of travel from the 1-minute sparkline averages: the last 5
+  // minutes against the 15 before. Ignored when smaller than ~10 % of the
+  // hour's range, so steady-but-noisy sensors don't flicker arrows.
+  function trend(spark, decimals) {
+    if (!spark || spark.length < 12) return null;
+    const avg = a => a.reduce((s, p) => s + p[1], 0) / a.length;
+    const recent = spark.slice(-5), before = spark.slice(-20, -5);
+    const delta = avg(recent) - avg(before);
+    let lo = Infinity, hi = -Infinity;
+    for (const p of spark) { lo = Math.min(lo, p[1]); hi = Math.max(hi, p[1]); }
+    const step = decimals !== '' && decimals != null ? Math.pow(10, -Number(decimals)) : 0;
+    if (Math.abs(delta) < Math.max((hi - lo) * 0.1, step, 1e-9)) return { arrow: '→', delta: 0 };
+    return { arrow: delta > 0 ? '↑' : '↓', delta };
   }
 
   async function refresh() {

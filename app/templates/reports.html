@@ -152,7 +152,7 @@
 
     // One Y axis per unit, alternating left/right.
     const axisFor = {};
-    const scales = { x: { type: 'time', grid: { color: '#2c313a' },
+    const scales = { x: { type: 'time', grid: {},
                           min: new Date(j.start).valueOf(), max: new Date(j.end).valueOf() } };
     j.monitors.forEach(m => {
       if (m.unit in axisFor) return;
@@ -160,11 +160,18 @@
       const id = i === 0 ? 'y' : `y${i}`;
       axisFor[m.unit] = id;
       scales[id] = { type: 'linear', position: i % 2 === 0 ? 'left' : 'right',
-                     title: { display: true, text: m.unit }, grid: { drawOnChartArea: i === 0, color: '#2c313a' } };
+                     title: { display: true, text: m.unit }, grid: { drawOnChartArea: i === 0 } };
+    });
+    // Break each line where its own data stops; shade gaps only for a single
+    // monitor (with several, one monitor's gap isn't everyone's).
+    const series = j.monitors.map(m => {
+      const pts = m.points.map(pt => ({ x: new Date(pt.ts).valueOf(), y: pt.value }));
+      const gaps = Spot.findGaps(pts, { bucketMs: (m.bucket_seconds || 0) * 1000 });
+      return { pts: Spot.breakAtGaps(pts, gaps), gaps };
     });
     const datasets = j.monitors.map((m, i) => ({
       label: `${m.name} (${m.unit})`,
-      data: m.points.map(pt => ({ x: new Date(pt.ts).valueOf(), y: pt.value })),
+      data: series[i].pts,
       borderColor: m.color || COLORS[i % COLORS.length], borderWidth: 1.3, pointRadius: 0, pointHitRadius: 6,
       tension: 0, yAxisID: axisFor[m.unit],
     }));
@@ -177,6 +184,7 @@
       options: { animation: false, parsing: false, normalized: true, scales,
                  interaction: { mode: 'nearest', axis: 'x', intersect: false },
                  plugins: { legend: { position: 'bottom' },
+                   spotGaps: { gaps: series.length === 1 ? series[0].gaps : [] },
                    spotRange: det ? { start: ms(j.range_start), end: ms(j.range_end),
                                       scheduledStart: ms(det.scheduled_start), scheduledEnd: ms(det.scheduled_end),
                                       startLabel: det.start_detected ? 'detected start' : 'start',
