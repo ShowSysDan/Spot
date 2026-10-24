@@ -16,7 +16,7 @@ This is the contract for systems that talk to Spot — primarily
 10. [Security & operations](#10-security--operations)
 11. [Versioning policy](#11-versioning-policy)
 
-Describes API v1 as of Spot **1.7.1**. `GET /` reports the running version.
+Describes API v1 as of Spot **1.8.0**. `GET /` reports the running version.
 
 ---
 
@@ -44,7 +44,7 @@ There are two ways to get numbers out of Spot:
 * **Shows** — 321Theater registers a performance with Spot
   (`POST /api/v1/shows`, keyed by your own `external_id`). Spot then lists it
   in its UI, and **after the show ends it can push the report back to you**
-  (a callback URL) and/or e-mail it. Best when you want the PDF delivered
+  (a callback URL). Best when you want the PDF delivered
   automatically.
 
 You can use either or both.
@@ -202,7 +202,7 @@ short ranges or `/series` with `max_points`.
 | [`PATCH /shows/{id}`](#patch-showsid-and-patch-showsrefexternal_id) · [`PATCH /shows/ref/{external_id}`](#patch-showsid-and-patch-showsrefexternal_id) | Change some fields |
 | [`DELETE /shows/{id}`](#delete-showsid-and-delete-showsrefexternal_id) · [`DELETE /shows/ref/{external_id}`](#delete-showsid-and-delete-showsrefexternal_id) | Delete a show (readings are untouched) |
 | [`GET /shows/{id}/report.pdf`](#get-showsidreportpdf-and-get-showsrefexternal_idreportpdf) · [`GET /shows/ref/{external_id}/report.pdf`](#get-showsidreportpdf-and-get-showsrefexternal_idreportpdf) | The show's PDF report |
-| [`POST /shows/{id}/deliver`](#post-showsiddeliver-and-post-showsrefexternal_iddeliver) · [`POST /shows/ref/{external_id}/deliver`](#post-showsiddeliver-and-post-showsrefexternal_iddeliver) | Send the report to its callback / e-mail now |
+| [`POST /shows/{id}/deliver`](#post-showsiddeliver-and-post-showsrefexternal_iddeliver) · [`POST /shows/ref/{external_id}/deliver`](#post-showsiddeliver-and-post-showsrefexternal_iddeliver) | Send the report to its callback now |
 
 `{external_id}` is your own identifier, URL-encoded. It may contain `/`.
 
@@ -367,7 +367,6 @@ through the API are tagged `API` in Spot's UI and are visible to Spot users.
   "notes": null,
   "monitor_ids": [1, 2],
   "monitors": [ … see below … ],
-  "email_to": "audio@example.org",
   "callback_url": "https://321theater.example.org/hooks/spot",
   "auto_detect": true,
   "detect": {"window_minutes": 15, "min_step": 6.0, "monitor": null},
@@ -390,7 +389,6 @@ through the API are tagged `API` in Spot's UI and are visible to Spot users.
 | `status` | `upcoming` (before `starts_at`), `live`, or `finished` (after `ends_at`), computed at request time. |
 | `starts_local` / `ends_local` | Human-friendly display strings; don't parse them. |
 | `monitors` | In `GET` of a single show that has started: one entry per monitor with `stats` exactly as in [`/stats`](#get-stats). In list/create/update responses: `{id, name, unit, location, color}` only. |
-| `email_to` | Comma-separated recipients of the post-show report, or `null`. |
 | `callback_url` | Where Spot POSTs the report after the show, or `null`. See [6.1](#61-show-report-callback). |
 | `auto_detect` | When `true`, the show's statistics and report cover the **actual** start/end found in the levels ([5.1](#51-finding-the-actual-start-and-end-detect)), not `starts_at`/`ends_at`. |
 | `detect` | Detection settings: `window_minutes`, `min_step`, `monitor` (reference monitor id or `null` = first dB monitor). |
@@ -416,7 +414,7 @@ Shows that **overlap** a window, ordered by start time (max 500).
 
 Create a show — or, if a show with the same `external_id` already exists,
 **replace** it (upsert). Optional fields you leave out are cleared or reset
-to their defaults (no notes, no e-mail, no callback, detection off), so
+to their defaults (no notes, no callback, detection off), so
 always send the full show. Safe to call repeatedly — even concurrently —
 e.g. every time 321Theater saves the performance. To change only some
 fields, use `PATCH`.
@@ -431,7 +429,6 @@ Request body (JSON):
 | `monitors` | yes | Non-empty array of monitor ids (integers). All must exist. |
 | `external_id` | recommended | Your id; enables upsert. |
 | `notes` | no | Free text. |
-| `email_to` | no | Array of address strings (or a single string). Each must look like `name@host` with no spaces or commas. Needs e-mail configured in Spot. |
 | `callback_url` | no | `http://` or `https://` URL for the post-show report. Must resolve; link-local / reserved addresses (e.g. `169.254.x.x`) are refused, and if Spot's `SPOT_CALLBACK_ALLOW` is set the host must be on it. |
 | `auto_detect` | no | `true` to report on the actual start/end found in the levels. Default `false`. |
 | `detect` | no | `{"window_minutes": 15, "min_step": 6, "monitor": 3}` — all optional; defaults shown (`monitor` defaults to the first dB monitor). Sending `detect` sets all three; omitted keys go back to their defaults. |
@@ -446,8 +443,7 @@ Content-Type: application/json
   "start": "2026-10-24T19:30:00-04:00",
   "end": "2026-10-24T22:15:00-04:00",
   "monitors": [1, 2],
-  "callback_url": "https://321theater.example.org/hooks/spot",
-  "email_to": ["audio@example.org"]
+  "callback_url": "https://321theater.example.org/hooks/spot"
 }
 ```
 
@@ -478,7 +474,7 @@ to `ends_at`, i.e. everything so far).
 #### `PATCH /shows/{id}` and `PATCH /shows/ref/{external_id}`
 
 Change only the fields you send (same names and rules as `POST`; `null` or
-`""` clears `notes`, `email_to`, `callback_url`). `external_id` itself can't
+`""` clears `notes` and `callback_url`). `external_id` itself can't
 be changed. Returns `200` with the show. Re-arms delivery like `POST`.
 
 ```json
@@ -499,10 +495,10 @@ simply ends at "now").
 
 #### `POST /shows/{id}/deliver` and `POST /shows/ref/{external_id}/deliver`
 
-Build and send the report immediately to the show's `callback_url` and/or
-`email_to`. Returns `{"ok": true}`, or `502` with
+Build and send the report immediately to the show's `callback_url`.
+Returns `{"ok": true}`, or `502` with
 `{"ok": false, "error": "callback: HTTP 500"}` if the destination failed.
-`400` if the show has neither destination.
+`400` if the show has no `callback_url`.
 
 * **Before the report is due** (before or during the show): this is a
   **preview**. It's sent with `"final": false` in the callback metadata and
@@ -680,8 +676,6 @@ is retried with exponential backoff — 1, 2, 4, 8, 16 minutes later — up to
 ended, or a 2xx that got lost in transit). Make your handler **idempotent**:
 upsert on `show.external_id` (or `show.id`) rather than inserting blindly.
 
-If the show also has `email_to`, the same PDF is e-mailed; a failure of
-either counts as a failed attempt and both are retried.
 
 ### 6.2 Alert webhook (optional)
 
@@ -767,7 +761,7 @@ GET /report.pdf?monitors=1,2&start=…&end=…&title=<performance name>
 
 1. When a performance is scheduled or changed in 321Theater:
    `POST /shows` with `external_id` = your performance id, times, the
-   venue's monitor ids, and `callback_url` (and/or `email_to`). Re-sending
+   venue's monitor ids, and `callback_url`. Re-sending
    on every change is fine — it upserts.
 2. If it's cancelled: `DELETE /shows/ref/{external_id}`.
 3. ~5 minutes after it ends, Spot POSTs the PDF + stats to your callback
@@ -921,8 +915,8 @@ def spot_report():
   operator's browser (e.g. to create an API key). `/api/v1` uses keys, not
   cookies, so it isn't affected.
 * **`SPOT_PUBLIC_URL`** (e.g. `http://spot.internal:6100`) makes the
-  `report_pdf_url` / `spot_url` links absolute and correct in callbacks and
-  e-mails. Without it, they're built from the incoming request (or relative,
+  `report_pdf_url` / `spot_url` links absolute and correct in callbacks.
+  Without it, they're built from the incoming request (or relative,
   in callbacks).
 * **Clock:** Spot uses the server clock (keep NTP running). Timestamps sent
   with an explicit offset are stored exactly as given.

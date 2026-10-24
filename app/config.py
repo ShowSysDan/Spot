@@ -30,18 +30,10 @@ class Config:
     janitor_interval_seconds: int
     default_retention_days: int | None
 
-    # Base URL used in links inside e-mails, webhooks and API responses
+    # Base URL used in links inside webhooks, callbacks and API responses
     # (e.g. http://spot.internal:6100). Blank = derived from each request.
     public_url: str = ""
-    # Outgoing mail (alerts + scheduled reports). Blank host = e-mail off.
-    smtp_host: str = ""
-    smtp_port: int = 587
-    smtp_user: str = ""
-    smtp_password: str = ""
-    smtp_from: str = "spot@localhost"
-    smtp_security: str = "starttls"  # starttls | ssl | none
     # Alert delivery.
-    alert_email_to: tuple[str, ...] = ()
     alert_webhook_url: str = ""
     alert_interval_seconds: int = 15
     # Optional lock-down for show-report callback URLs: hostnames and/or
@@ -76,13 +68,6 @@ class Config:
             janitor_interval_seconds=int(os.getenv("SPOT_JANITOR_INTERVAL_SECONDS", "3600")),
             default_retention_days=default_ret,
             public_url=os.getenv("SPOT_PUBLIC_URL", "").strip().rstrip("/"),
-            smtp_host=os.getenv("SPOT_SMTP_HOST", "").strip(),
-            smtp_port=int(os.getenv("SPOT_SMTP_PORT", "587")),
-            smtp_user=os.getenv("SPOT_SMTP_USER", ""),
-            smtp_password=os.getenv("SPOT_SMTP_PASSWORD", ""),
-            smtp_from=os.getenv("SPOT_SMTP_FROM", "spot@localhost").strip(),
-            smtp_security=os.getenv("SPOT_SMTP_SECURITY", "starttls").strip().lower(),
-            alert_email_to=_csv(os.getenv("SPOT_ALERT_EMAIL_TO", "")),
             alert_webhook_url=os.getenv("SPOT_ALERT_WEBHOOK_URL", "").strip(),
             alert_interval_seconds=max(5, int(os.getenv("SPOT_ALERT_INTERVAL_SECONDS", "15"))),
             callback_allow=_csv(os.getenv("SPOT_CALLBACK_ALLOW", "")),

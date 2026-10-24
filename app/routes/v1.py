@@ -13,7 +13,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
-import re
 from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, Response, abort, current_app, g, jsonify, request
@@ -25,7 +24,7 @@ from ..db import session_scope
 from ..detect import DEFAULT_MIN_STEP, DEFAULT_WINDOW_MINUTES, MAX_WINDOW_MINUTES, pdf_meta, resolve_range
 from ..exports import render_overlay_pdf
 from ..models import ApiKey, Monitor, Reading, Show
-from ..notify import EMAIL_RE, callback_url_problem, one_line
+from ..notify import callback_url_problem, one_line
 from ..queries import PDF_MAX_POINTS, collect_overlay, compute_summary
 from ..shows import (
     MAX_SHOW_SECONDS,
@@ -277,14 +276,6 @@ def _apply_show_fields(s, show: Show, data: dict, partial: bool) -> None:
         show.monitors = list(_known_monitors(s, raw))
     if given("notes"):
         show.notes = _str_field(data, "notes", 10_000)
-    if given("email_to"):
-        emails = data.get("email_to") or []
-        if isinstance(emails, str):
-            emails = [emails]
-        if (not isinstance(emails, list)
-                or not all(isinstance(e, str) and re.fullmatch(EMAIL_RE, e.strip()) for e in emails)):
-            abort(400, description="email_to must be a list of e-mail addresses")
-        show.email_to = ", ".join(e.strip() for e in emails) or None
     if given("callback_url"):
         url = data.get("callback_url") or ""
         if not isinstance(url, str):
@@ -349,7 +340,7 @@ def shows_create():
     """Create a show, or update it when `external_id` already exists (upsert).
 
     Body: {"name", "start", "end", "monitors": [ids], "external_id"?,
-           "notes"?, "email_to"?: [addresses], "callback_url"?}
+           "notes"?, "callback_url"?, "auto_detect"?, "detect"?}
     """
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -431,8 +422,8 @@ def show_pdf_by_ref(ref: str):
 def _deliver(show_id: int | None = None, ref: str | None = None):
     with session_scope() as s:
         show = _show_or_404(s, show_id, ref)
-        if not (show.email_to or show.callback_url):
-            abort(400, description="show has no email_to or callback_url")
+        if not show.callback_url:
+            abort(400, description="show has no callback_url")
         sid = show.id
     err = deliver_show(current_app.config["SPOT"], sid, manual=True)
     if err:

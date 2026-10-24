@@ -3,6 +3,36 @@
 All notable changes to Spot. The version number lives in `app/version.py`
 and is bumped with every change.
 
+## 1.8.0 — 2026-10-24
+
+### Removed
+- **All e-mail sending.** SMTP settings (`SPOT_SMTP_*`), alert e-mails
+  (`SPOT_ALERT_EMAIL_TO`), show report e-mail (`email_to` in the UI and
+  API) and the *Send test e-mail* button are gone. **Scheduled reports**
+  (Setup → Scheduled reports), which only ever sent e-mail, are removed too.
+  Alerts still go to the log/syslog and the alert webhook; show reports
+  still go to their callback URL and can be downloaded at any time.
+  Existing databases keep the now-unused `report_schedules` /
+  `schedule_monitors` tables and `shows.email_to` column untouched (nothing
+  reads them); drop them by hand if you like:
+  `DROP TABLE spot.schedule_monitors, spot.report_schedules;
+  ALTER TABLE spot.shows DROP COLUMN email_to;`
+  Old `SPOT_SMTP_*` lines left in `.env` are simply ignored.
+
+### Added
+- **Loading feedback** for slow requests: a spinner overlay with a
+  description and elapsed time on Reports, Query, show pages and dashboard
+  window changes (buttons disabled meanwhile), and a *Preparing…* notice
+  for PDF/CSV downloads that clears when the file starts arriving.
+
+### Changed
+- **Faster long ranges.** Statistics are computed in one pass instead of
+  six queries (percentiles share one sort; extremes found by an index walk),
+  the raw-vs-downsampled check stops counting at `max_points`, and bucketing
+  avoids slow NUMERIC arithmetic. For 30 days of 1 Hz data: Reports preview
+  4.4 s → 2.3 s, chart data 2.3 s → 0.95 s, PDF 4.2 s → 2.5 s. Results
+  unchanged (`min_at` / `max_at` are now always the *first* occurrence).
+
 ## 1.7.1 — 2026-10-24
 
 Fixes from a full bug / memory review of 1.2–1.7.

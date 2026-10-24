@@ -11,7 +11,7 @@
 <p class="muted">
   A show is a named time range — a performance, rehearsal or event — and the monitors that matter for it.
   Each one gets min / max / average (plus Leq, L10 and L90 for dB monitors) and a PDF report, which can be
-  e-mailed or sent to another system automatically once the show ends. 321Theater can create shows
+  sent to another system (such as 321Theater) automatically once the show ends. 321Theater can create shows
   through the <a href="{{ url_for('web.api_keys') }}">API</a>.
 </p>
 
@@ -32,7 +32,7 @@
       <td>
         {% if sh.delivered_at %}<span class="ok" title="{{ sh.delivered_at|localtime }}">sent</span>
         {% elif sh.delivery_status %}<span class="badge bad" title="{{ sh.delivery_status }}">failed</span>
-        {% elif sh.email_to or sh.callback_url %}<span class="muted">after show</span>
+        {% elif sh.callback_url %}<span class="muted">after show</span>
         {% else %}<span class="muted">—</span>{% endif %}
       </td>
       <td class="actions"><a href="{{ url_for('web.show_report', sid=sh.id) }}">PDF</a></td>

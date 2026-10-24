@@ -5,7 +5,6 @@ from werkzeug.exceptions import HTTPException
 
 from .alerts import AlertEngine, open_alert_count
 from .config import Config
-from .schedules import ReportScheduler
 from .shows import ShowReporter
 from .db import dispose_engine, init_engine, init_schema
 from .janitor import JanitorThread
@@ -36,7 +35,6 @@ def create_app(config: Config | None = None) -> Flask:
     app.config["SPOT_JANITOR"] = janitor
     alerts = AlertEngine(cfg)
     show_reporter = ShowReporter(cfg)
-    scheduler = ReportScheduler(cfg)
 
     from .routes.web import bp as web_bp
     from .routes.api import bp as api_bp
@@ -55,6 +53,16 @@ def create_app(config: Config | None = None) -> Flask:
         if request.path.startswith("/api/v1"):
             return jsonify({"error": e.description, "status": e.code}), e.code
         return e
+
+    @app.after_request
+    def _download_started(resp):
+        """Tell the page a requested download has begun (see Spot.download):
+        echo its `dl` token in a short-lived cookie on file responses."""
+        token = request.args.get("dl", "")
+        if (token and len(token) <= 32 and token.isalnum() and resp.status_code < 400
+                and "attachment" in resp.headers.get("Content-Disposition", "")):
+            resp.set_cookie("spot_dl", token, max_age=120, path="/", samesite="Lax")
+        return resp
 
     @app.template_filter("localtime")
     def _localtime(value, fmt: str = "%Y-%m-%d %H:%M:%S %Z"):
@@ -78,7 +86,6 @@ def create_app(config: Config | None = None) -> Flask:
     janitor.start()
     alerts.start()
     show_reporter.start()
-    scheduler.start()
 
     import atexit
 
@@ -86,12 +93,11 @@ def create_app(config: Config | None = None) -> Flask:
         janitor.stop()
         alerts.stop()
         show_reporter.stop()
-        scheduler.stop()
         modbus.shutdown()
         manager.shutdown()
-        # Let an in-progress pass (an e-mail, a report) finish before the
+        # Let an in-progress pass (an alert, a report callback) finish before the
         # database engine goes away.
-        for t in (janitor, alerts, show_reporter, scheduler):
+        for t in (janitor, alerts, show_reporter):
             if t.is_alive():
                 t.join(timeout=5.0)
         dispose_engine()

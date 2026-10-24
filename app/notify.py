@@ -1,86 +1,30 @@
-"""Outgoing notifications: e-mail (SMTP) and JSON webhooks.
+"""Outgoing HTTP notifications: JSON webhooks (alerts) and multipart
+callbacks (show reports).
 
-Used by the alert engine and by scheduled / show reports. Every send has a
-short timeout and reports failure as a string instead of raising, so a dead
-mail server or webhook can never stall the thread that called it.
+Every send has a short timeout and reports failure as a string instead of
+raising, so a dead endpoint can never stall the thread that called it.
 """
 from __future__ import annotations
 
 import ipaddress
 import json
 import logging
-import smtplib
 import socket
-import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
-from email.message import EmailMessage
 
 from .config import Config
 from .version import __version__
 
 log = logging.getLogger("spot.notify")
 
-SMTP_TIMEOUT = 15
 HTTP_TIMEOUT = 15
 
 
 def one_line(text: str) -> str:
     """Collapse CR/LF (and other line breaks) to spaces."""
     return " ".join(str(text).split()) if text else ""
-
-
-# A single address: no whitespace, commas or angle brackets, exactly one "@".
-EMAIL_RE = r"[^@\s,<>]+@[^@\s,<>]+"
-
-
-def email_enabled(cfg: Config) -> bool:
-    return bool(cfg.smtp_host)
-
-
-def send_email(cfg: Config, to: list[str] | tuple[str, ...], subject: str, body: str,
-               attachments: list[tuple[str, bytes, str]] | None = None) -> str | None:
-    """Send a plain-text e-mail. `attachments` are (filename, bytes, mime type).
-
-    Returns None on success, or an error message.
-    """
-    recipients = [r for r in to if r]
-    if not email_enabled(cfg):
-        return "e-mail is not configured (set SPOT_SMTP_HOST)"
-    if not recipients:
-        return "no recipients"
-    try:
-        msg = EmailMessage()
-        msg["From"] = cfg.smtp_from
-        msg["To"] = ", ".join(recipients)
-        # Header values may not contain line breaks; names come from users.
-        msg["Subject"] = one_line(subject)
-        msg["X-Mailer"] = f"Spot {__version__}"
-        msg.set_content(body)
-        for filename, data, mime in attachments or []:
-            maintype, _, subtype = mime.partition("/")
-            msg.add_attachment(data, maintype=maintype, subtype=subtype, filename=filename)
-    except (ValueError, TypeError) as e:
-        log.error("e-mail not built subject=%r to=%s err=%s", subject, recipients, e)
-        return f"could not build message: {e}"
-    try:
-        if cfg.smtp_security == "ssl":
-            server = smtplib.SMTP_SSL(cfg.smtp_host, cfg.smtp_port, timeout=SMTP_TIMEOUT,
-                                      context=ssl.create_default_context())
-        else:
-            server = smtplib.SMTP(cfg.smtp_host, cfg.smtp_port, timeout=SMTP_TIMEOUT)
-        with server:
-            if cfg.smtp_security == "starttls":
-                server.starttls(context=ssl.create_default_context())
-            if cfg.smtp_user:
-                server.login(cfg.smtp_user, cfg.smtp_password)
-            server.send_message(msg)
-    except (OSError, smtplib.SMTPException) as e:
-        log.error("e-mail failed subject=%r to=%s err=%s", subject, recipients, e)
-        return str(e) or e.__class__.__name__
-    log.info("e-mail sent subject=%r to=%s", subject, recipients)
-    return None
 
 
 def callback_url_problem(url: str, cfg: Config) -> str | None:

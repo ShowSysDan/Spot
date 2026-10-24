@@ -322,6 +322,97 @@
     return v || fallback;
   }
 
+  // ---- "Working…" feedback for slow requests (long ranges can take seconds).
+
+  // "30 days", "6 h" … for a range in ms — used in loading messages.
+  function rangeWords(ms) {
+    const h = ms / 3600e3;
+    if (h < 1.5) return `${Math.max(1, Math.round(ms / 60e3))} min`;
+    if (h < 48) return `${Math.round(h)} h`;
+    return `${Math.round(h / 24)} days`;
+  }
+
+  // Run `work` (a function returning a promise) with a spinner overlay on
+  // `target` and `buttons` disabled. The overlay appears only if the work
+  // takes longer than `delay` ms, so quick loads don't flicker, and shows
+  // the elapsed time once it passes a few seconds.
+  async function busy(target, work, opts) {
+    const o = Object.assign({ label: 'Loading…', buttons: [], delay: 300 }, opts);
+    const btns = o.buttons.filter(Boolean);
+    btns.forEach(b => { b.disabled = true; b.classList.add('is-busy'); });
+    let overlay = null, tick = null;
+    const t0 = Date.now();
+    const show = setTimeout(() => {
+      if (!target) return;
+      overlay = document.createElement('div');
+      overlay.className = 'busy-overlay';
+      overlay.setAttribute('role', 'status');
+      overlay.innerHTML = '<span class="spinner" aria-hidden="true"></span><span class="busy-text"></span><span class="busy-time"></span>';
+      overlay.querySelector('.busy-text').textContent = o.label;
+      target.classList.add('is-busy-host');
+      target.appendChild(overlay);
+      tick = setInterval(() => {
+        const sec = Math.round((Date.now() - t0) / 1000);
+        if (sec >= 2) overlay.querySelector('.busy-time').textContent = `${sec} s`;
+      }, 500);
+    }, o.delay);
+    try {
+      return await work();
+    } finally {
+      clearTimeout(show);
+      if (tick) clearInterval(tick);
+      if (overlay) overlay.remove();
+      if (target) target.classList.remove('is-busy-host');
+      btns.forEach(b => { b.disabled = false; b.classList.remove('is-busy'); });
+    }
+  }
+
+  // Start a file download (PDF / CSV) and show "Preparing…" until the
+  // browser actually receives it. The server echoes the `dl` token back in a
+  // short-lived `spot_dl` cookie on the response, which is how the page
+  // knows the download has started.
+  let toastEl = null;
+  function toast(text, kind) {
+    if (!toastEl) {
+      toastEl = document.createElement('div');
+      toastEl.className = 'toast';
+      toastEl.setAttribute('role', 'status');
+      document.body.appendChild(toastEl);
+    }
+    toastEl.className = `toast ${kind || ''}`;
+    toastEl.innerHTML = (kind === 'working' ? '<span class="spinner" aria-hidden="true"></span>' : '') + '<span></span>';
+    toastEl.lastChild.textContent = text;
+    toastEl.hidden = false;
+    return toastEl;
+  }
+  function download(url, button, label) {
+    const token = Math.random().toString(36).slice(2, 12);
+    const u = new URL(url, location.href);
+    u.searchParams.set('dl', token);
+    const what = label || 'download';
+    toast(`Preparing ${what}…`, 'working');
+    if (button) { button.disabled = true; button.classList.add('is-busy'); }
+    const t0 = Date.now();
+    const done = msg => {
+      clearInterval(poll);
+      if (button) { button.disabled = false; button.classList.remove('is-busy'); }
+      toast(msg, 'done');
+      setTimeout(() => { if (toastEl) toastEl.hidden = true; }, 2500);
+    };
+    const poll = setInterval(() => {
+      if (document.cookie.split('; ').includes(`spot_dl=${token}`)) {
+        document.cookie = 'spot_dl=; Max-Age=0; path=/';
+        done(`${what[0].toUpperCase()}${what.slice(1)} ready`);
+      } else if (Date.now() - t0 > 180e3) {
+        done('Still working — check your downloads');
+      } else {
+        const sec = Math.round((Date.now() - t0) / 1000);
+        if (sec >= 2) toastEl.lastChild.textContent = `Preparing ${what}… ${sec} s`;
+      }
+    }, 300);
+    window.location.href = u.toString();
+  }
+
   // One line describing a detection result, for pages.
   function describeDetection(d) {
     if (!d) return '';
@@ -404,6 +495,15 @@
     if (f instanceof HTMLFormElement && f.dataset.confirm && !window.confirm(f.dataset.confirm)) {
       e.preventDefault();
     }
+  });
+
+  // Download links: <a href="…" data-download="PDF"> get the same
+  // "Preparing…" feedback as scripted downloads.
+  document.addEventListener('click', e => {
+    const a = e.target.closest('a[data-download]');
+    if (!a || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    e.preventDefault();
+    download(a.href, a, a.dataset.download);
   });
 
   // Copy-to-clipboard buttons: <button data-copy="text">.
@@ -502,6 +602,6 @@
     });
   });
 
-  window.Spot = { findGaps, breakAtGaps, cssVar, describeDetection, TZ, wall, fromWall, fmtDateTime, fmtTime, zoneName, fmtInt, alpha, escapeHtml, fmtValue, timeAgo, fmtDuration, toLocalInput, toIso,
+  window.Spot = { busy, download, toast, rangeWords, findGaps, breakAtGaps, cssVar, describeDetection, TZ, wall, fromWall, fmtDateTime, fmtTime, zoneName, fmtInt, alpha, escapeHtml, fmtValue, timeAgo, fmtDuration, toLocalInput, toIso,
                   presetRange, bindPresets, store, sparkline, poller };
 })();

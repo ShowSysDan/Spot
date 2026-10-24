@@ -30,7 +30,7 @@ def parse_iso_ts(s: str) -> datetime:
     return dt
 
 
-# Every time a person sees — pages, PDFs, CSVs, e-mails — is shown in this
+# Every time a person sees — pages, PDFs, CSVs, API responses — is shown in this
 # zone, 24-hour. Storage and the wire format stay UTC. Set from
 # SPOT_TIMEZONE by create_app(); America/New_York switches EST/EDT itself.
 DEFAULT_TIMEZONE = "America/New_York"

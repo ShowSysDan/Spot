@@ -22,16 +22,8 @@ from ..modbus import (
     poll_now,
 )
 from ..alerts import active_alerts_by_monitor
-from ..models import Alert, ApiKey, ModbusDevice, Monitor, ReportSchedule, Show
-from ..notify import EMAIL_RE, callback_url_problem, email_enabled, one_line, post_json, send_email
-from ..schedules import (
-    CADENCES,
-    WEEKDAYS,
-    describe as describe_schedule,
-    next_run,
-    run_schedule,
-    schedule_view,
-)
+from ..models import Alert, ApiKey, ModbusDevice, Monitor, Show
+from ..notify import callback_url_problem, one_line, post_json
 from ..shows import (
     MAX_SHOW_SECONDS,
     deliver_show,
@@ -259,7 +251,6 @@ def alerts():
     cfg = current_app.config["SPOT"]
     return render_template("alerts.html", active=active, history=history,
                            configured=configured,
-                           email_on=email_enabled(cfg) and bool(cfg.alert_email_to),
                            webhook_on=bool(cfg.alert_webhook_url),
                            interval=cfg.alert_interval_seconds)
 
@@ -327,7 +318,7 @@ def _show_form(sid: int | None, prefill: dict | None):
     for m in monitors:
         m["location_key"] = m["location"] or ""
     return render_template("show_form.html", show=show, is_new=sid is None,
-                           monitors=monitors, email_on=email_enabled(current_app.config["SPOT"]))
+                           monitors=monitors)
 
 
 def _get_show_or_404(s, sid: int) -> Show:
@@ -362,9 +353,6 @@ def _save_show(sid: int | None):
                "A show can be at most 7 days long.")
         ids = [int(x) for x in request.form.getlist("ids") if x.isdigit()]
         _check(bool(ids), "Pick at least one monitor.")
-        emails = [e.strip() for e in _form_str("email_to").split(",") if e.strip()]
-        _check(all(re.fullmatch(EMAIL_RE, e) for e in emails),
-               "E-mail recipients must be addresses, comma-separated.")
         callback = _form_str("callback_url") or None
         window = _form_int("detect_window_minutes", "15", "Search window must be a whole number of minutes.")
         _check(1 <= window <= 60, "Search window must be 1–60 minutes.")
@@ -378,7 +366,6 @@ def _save_show(sid: int | None):
             show.name = name[:200]
             show.starts_at, show.ends_at = starts_at, ends_at
             show.notes = _form_str("notes") or None
-            show.email_to = ", ".join(emails) or None
             show.callback_url = callback
             show.auto_detect = bool(request.form.get("auto_detect"))
             show.detect_window_minutes = window
@@ -446,105 +433,6 @@ def show_delete(sid: int):
 
 
 # ---------------------------------------------------------------------------
-# Scheduled reports
-# ---------------------------------------------------------------------------
-
-@bp.route("/setup/schedules")
-def schedules():
-    with session_scope() as s:
-        rows = [schedule_view(x) for x in s.scalars(select(ReportSchedule).order_by(ReportSchedule.name))]
-    return render_template("schedules.html", schedules=rows,
-                           email_on=email_enabled(current_app.config["SPOT"]))
-
-
-@bp.route("/setup/schedules/new", methods=["GET", "POST"])
-def schedule_new():
-    if request.method == "POST":
-        return _save_schedule(None)
-    return _schedule_form(None)
-
-
-@bp.route("/setup/schedules/<int:sid>/edit", methods=["GET", "POST"])
-def schedule_edit(sid: int):
-    if request.method == "POST":
-        return _save_schedule(sid)
-    return _schedule_form(sid)
-
-
-def _schedule_form(sid: int | None):
-    with session_scope() as s:
-        data = None
-        if sid is not None:
-            sched = s.get(ReportSchedule, sid)
-            if sched is None:
-                abort(404)
-            data = schedule_view(sched)
-        monitors = [monitor_view(m) for m in s.scalars(select(Monitor).order_by(Monitor.name))]
-    for m in monitors:
-        m["location_key"] = m["location"] or ""
-    return render_template("schedule_form.html", sched=data, monitors=monitors,
-                           cadences=CADENCES, weekdays=WEEKDAYS,
-                           email_on=email_enabled(current_app.config["SPOT"]))
-
-
-def _save_schedule(sid: int | None):
-    try:
-        name = one_line(_form_str("name"))[:200]
-        _check(bool(name), "Name is required.")
-        cadence = _form_str("cadence", "daily")
-        _check(cadence in CADENCES, "Unknown frequency.")
-        m = re.fullmatch(r"(\d{1,2}):(\d{2})", _form_str("send_time", "07:00"))
-        _check(m is not None and int(m[1]) < 24 and int(m[2]) < 60,
-               "Send time must be 24-hour HH:MM, e.g. 07:00.")
-        weekday = _form_int("weekday", "0", "Invalid weekday.")
-        _check(0 <= weekday <= 6, "Invalid weekday.")
-        emails = [e.strip() for e in _form_str("email_to").split(",") if e.strip()]
-        _check(bool(emails) and all(re.fullmatch(EMAIL_RE, e) for e in emails),
-               "Add at least one e-mail recipient (comma-separated).")
-        ids = [int(x) for x in request.form.getlist("ids") if x.isdigit()]
-        _check(bool(ids), "Pick at least one monitor.")
-        with session_scope() as s:
-            sched = ReportSchedule() if sid is None else s.get(ReportSchedule, sid)
-            if sched is None:
-                abort(404)
-            sched.name, sched.cadence = name, cadence
-            sched.send_hour, sched.send_minute = int(m[1]), int(m[2])
-            sched.weekday = weekday
-            sched.email_to = ", ".join(emails)
-            sched.enabled = bool(request.form.get("enabled"))
-            sched.monitors = list(s.scalars(select(Monitor).where(Monitor.id.in_(ids))))
-            sched.next_run_at = next_run(sched, datetime.now(timezone.utc))
-            s.add(sched)
-            s.flush()
-            log.info("report schedule %s: %s id=%d %s",
-                     "created" if sid is None else "updated", sched.name, sched.id, describe_schedule(sched))
-    except _FormError as e:
-        flash(str(e), "error")
-        return redirect(request.url)
-    flash("Schedule saved.", "success")
-    return redirect(url_for("web.schedules"))
-
-
-@bp.route("/setup/schedules/<int:sid>/send", methods=["POST"])
-def schedule_send(sid: int):
-    # Sends the most recently completed period without moving the schedule on.
-    err = run_schedule(current_app.config["SPOT"], sid, advance=False)
-    flash(f"Sending failed: {err}" if err else "Report sent.", "error" if err else "success")
-    return redirect(url_for("web.schedules"))
-
-
-@bp.route("/setup/schedules/<int:sid>/delete", methods=["POST"])
-def schedule_delete(sid: int):
-    with session_scope() as s:
-        sched = s.get(ReportSchedule, sid)
-        if sched:
-            log.info("report schedule deleted: %s id=%d", sched.name, sid)
-            s.delete(sched)
-    flash("Schedule deleted.", "success")
-    return redirect(url_for("web.schedules"))
-
-
-# ---------------------------------------------------------------------------
 # API keys
 # ---------------------------------------------------------------------------
 
@@ -604,7 +492,6 @@ def setup():
             "modbus": s.query(ModbusDevice).count(),
             "monitors": s.query(Monitor).count(),
             "api_keys": s.query(ApiKey).filter(ApiKey.enabled.is_(True)).count(),
-            "schedules": s.query(ReportSchedule).filter(ReportSchedule.enabled.is_(True)).count(),
         }
     server_now = datetime.now().astimezone()
     display_now = now_local()
@@ -615,19 +502,7 @@ def setup():
         "server_now": server_now.strftime("%Y-%m-%d %H:%M:%S %Z (UTC%z)"),
         "differs": server_now.utcoffset() != display_now.utcoffset(),
     }
-    return render_template("setup.html", cfg=cfg, counts=counts, clock=clock,
-                           email_on=email_enabled(cfg))
-
-
-@bp.route("/setup/test-email", methods=["POST"])
-def setup_test_email():
-    cfg = current_app.config["SPOT"]
-    to = [x.strip() for x in _form_str("to").split(",") if x.strip()] or list(cfg.alert_email_to)
-    err = send_email(cfg, to, "[Spot] Test e-mail",
-                     "This is a test message from Spot. E-mail delivery works.")
-    flash(f"Test e-mail failed: {err}" if err else f"Test e-mail sent to {', '.join(to)}.",
-          "error" if err else "success")
-    return redirect(url_for("web.setup"))
+    return render_template("setup.html", cfg=cfg, counts=counts, clock=clock)
 
 
 @bp.route("/setup/test-webhook", methods=["POST"])
