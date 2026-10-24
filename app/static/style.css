@@ -325,3 +325,9 @@ body.wall.idle .wall-pick, body.wall.idle .wall-fs { opacity: 0; }
 .wall-foot-bar a { color: var(--muted); }
 .wall-empty { padding: 2rem; text-align: center; }
 @media (prefers-reduced-motion: reduce) { .wall-tile.is-alerting, .wall-tile.tick .wall-value .v { animation: none; } }
+
+/* ---- 1.6: show start/end detection ----------------------------------- */
+.detect-toggle { display: inline-flex; align-items: center; gap: 0.4rem; color: var(--fg); }
+.detect-toggle select { padding: 0.3rem 0.4rem; }
+.detect-info { background: rgba(86, 211, 100, 0.08); border: 1px solid rgba(86, 211, 100, 0.35); border-radius: 6px;
+  padding: 0.5rem 0.75rem; color: #b6f0bd; font-size: 0.9rem; }

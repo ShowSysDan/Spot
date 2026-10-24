@@ -56,7 +56,15 @@
       </select>
       {% endif %}
       <button type="button" id="btn-save-show" class="button">Save as show…</button>
+      <label class="detect-toggle" title="Look near the start and end for the real curtain-up / curtain-down in the sound levels, and report on that instead">
+        <input type="checkbox" id="detect"> Find actual start/end within
+        <select id="detect-window" aria-label="Search window">
+          <option value="5">±5 min</option><option value="10">±10 min</option>
+          <option value="15" selected>±15 min</option><option value="20">±20 min</option><option value="30">±30 min</option>
+        </select>
+      </label>
     </div>
+    <p class="detect-info" id="detect-info" hidden></p>
     <div class="chips" id="presets" role="group" aria-label="Quick ranges">
       <button type="button" data-preset="1h">Last hour</button>
       <button type="button" data-preset="6h">6 h</button>
@@ -105,10 +113,17 @@
   }
   Spot.bindPresets(document.getElementById('presets'), form, () => selectedIds().length && run());
 
+  const detectBox = document.getElementById('detect');
+  const detectWin = document.getElementById('detect-window');
+  if (qp.get('detect') === '1') detectBox.checked = true;
+  if (qp.get('window_minutes')) detectWin.value = qp.get('window_minutes');
   function rangeParams() {
-    return new URLSearchParams({ ids: selectedIds().join(','),
+    const p = new URLSearchParams({ ids: selectedIds().join(','),
       start: Spot.toIso(form.start.value), end: Spot.toIso(form.end.value) });
+    if (detectBox.checked) { p.set('detect', '1'); p.set('window_minutes', detectWin.value); }
+    return p;
   }
+  [detectBox, detectWin].forEach(el => el.addEventListener('change', () => selectedIds().length && run()));
   function syncCount() {
     const n = selectedIds().length;
     document.getElementById('sel-count').textContent = n ? `· ${n} selected` : '';
@@ -155,12 +170,21 @@
     }));
     // Destroy the old chart before building a new one so canvases/listeners don't leak.
     if (chart) chart.destroy();
+    const det = j.detection;
+    const ms = iso => new Date(iso).valueOf();
     chart = new Chart(document.getElementById('chart'), {
       type: 'line', data: { datasets },
       options: { animation: false, parsing: false, normalized: true, scales,
                  interaction: { mode: 'nearest', axis: 'x', intersect: false },
-                 plugins: { legend: { position: 'bottom' } } },
+                 plugins: { legend: { position: 'bottom' },
+                   spotRange: det ? { start: ms(j.range_start), end: ms(j.range_end),
+                                      scheduledStart: ms(det.scheduled_start), scheduledEnd: ms(det.scheduled_end),
+                                      startLabel: det.start_detected ? 'detected start' : 'start',
+                                      endLabel: det.end_detected ? 'detected end' : 'end' } : {} } },
     });
+    const info = document.getElementById('detect-info');
+    info.hidden = !det;
+    info.textContent = det ? Spot.describeDetection(det) + '. Statistics, PDF and CSV cover the actual range.' : '';
 
     const tbody = document.querySelector('#summary tbody');
     tbody.innerHTML = j.monitors.map((m, i) => {

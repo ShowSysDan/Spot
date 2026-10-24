@@ -36,6 +36,36 @@
     </div>
   </div>
 
+  <fieldset class="group">
+    <legend>Actual start and end</legend>
+    {% set det = show.detect if show and show.detect else {} %}
+    <label class="checkbox">
+      <input type="checkbox" name="auto_detect" {% if show and show.auto_detect %}checked{% endif %}>
+      Find the real curtain-up and curtain-down in the sound levels and report on those
+    </label>
+    <div class="form-row">
+      <label>Search window (± minutes)
+        <input type="number" name="detect_window_minutes" min="1" max="60" value="{{ det.window_minutes or 15 }}">
+      </label>
+      <label>Minimum level change (dB)
+        <input type="number" name="detect_min_step" min="0.5" max="60" step="0.5" value="{{ det.min_step or 6 }}">
+      </label>
+      <label>Listen to
+        <select name="detect_monitor_id">
+          <option value="">First dB monitor in the show</option>
+          {% for m in monitors if m.unit.lower().startswith('db') %}
+          <option value="{{ m.id }}" {% if det.monitor == m.id %}selected{% endif %}>{{ m.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+    <small class="muted">
+      Spot looks within the window around the scheduled start for the biggest sustained jump in level
+      (2-minute medians, so single claps don't count) and around the scheduled end for the biggest drop.
+      If neither is at least the minimum change, the scheduled time is used. The show page shows what was found.
+    </small>
+  </fieldset>
+
   <label>Notes <textarea name="notes" rows="2">{{ show.notes if show and show.notes else '' }}</textarea></label>
 
   <fieldset class="group">

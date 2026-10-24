@@ -181,6 +181,13 @@ class Show(Base):
     source: Mapped[str] = mapped_column(String(16), nullable=False, default="ui")  # ui | api
     email_to: Mapped[str | None] = mapped_column(Text, nullable=True)  # comma-separated
     callback_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Report on the actual start/end found in the sound levels (see detect.py)
+    # instead of the scheduled times.
+    auto_detect: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    detect_monitor_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("monitors.id", ondelete="SET NULL"), nullable=True)
+    detect_window_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=15)
+    detect_min_step: Mapped[float] = mapped_column(Float, nullable=False, default=6.0)
     # Report delivery bookkeeping (e-mail and/or callback after the show ends).
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     delivery_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

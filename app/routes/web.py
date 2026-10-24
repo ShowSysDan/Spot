@@ -35,6 +35,7 @@ from ..shows import (
     MAX_SHOW_SECONDS,
     deliver_show,
     report_filename,
+    show_range,
     show_report_pdf,
     show_stats,
     show_view,
@@ -338,6 +339,11 @@ def _save_show(sid: int | None):
         emails = [e.strip() for e in _form_str("email_to").split(",") if e.strip()]
         _check(all("@" in e for e in emails), "E-mail recipients must be addresses, comma-separated.")
         callback = _form_str("callback_url") or None
+        window = _form_int("detect_window_minutes", "15", "Search window must be a whole number of minutes.")
+        _check(1 <= window <= 60, "Search window must be 1–60 minutes.")
+        min_step = _form_float("detect_min_step", "Minimum step must be a number.") or 6.0
+        _check(0.5 <= min_step <= 60, "Minimum step must be 0.5–60 dB.")
+        ref = _form_int("detect_monitor_id", None, "Invalid reference monitor.")
         _check(callback is None or re.match(r"^https?://", callback) is not None,
                "Callback URL must start with http:// or https://.")
         with session_scope() as s:
@@ -347,6 +353,10 @@ def _save_show(sid: int | None):
             show.notes = _form_str("notes") or None
             show.email_to = ", ".join(emails) or None
             show.callback_url = callback
+            show.auto_detect = bool(request.form.get("auto_detect"))
+            show.detect_window_minutes = window
+            show.detect_min_step = min_step
+            show.detect_monitor_id = ref if ref in ids else None
             show.monitors = list(s.scalars(select(Monitor).where(Monitor.id.in_(ids))))
             # Any edit re-arms report delivery for after the show ends.
             show.delivered_at = None
@@ -371,8 +381,12 @@ def show_detail(sid: int):
     with session_scope() as s:
         show = _get_show_or_404(s, sid)
         view = show_view(show)
-        stats = show_stats(s, show) if view["status"] != "upcoming" else []
-    return render_template("show_detail.html", show=view, stats=stats)
+        rng = show_range(s, show) if view["status"] != "upcoming" else None
+        stats = show_stats(s, show, rng) if rng else []
+    detection = rng[2] if rng else None
+    report = {"start": rng[0].isoformat(), "end": rng[1].isoformat()} if rng else None
+    return render_template("show_detail.html", show=view, stats=stats,
+                           detection=detection, report=report)
 
 
 @bp.route("/shows/<int:sid>/report.pdf")

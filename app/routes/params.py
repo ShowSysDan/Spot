@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 from flask import abort, request
 
+from ..detect import DEFAULT_MIN_STEP, DEFAULT_WINDOW_MINUTES, MAX_WINDOW_MINUTES, DetectOptions
 from ..queries import MAX_POINTS_CAP, MAX_RANGE_SECONDS
 from ..util import parse_iso_ts
 
@@ -65,3 +66,25 @@ def parse_ids(name: str = "ids") -> list[int]:
         abort(400, description=f"{name} must be comma-separated integers")
     # De-duplicate while keeping order; cap to keep one request bounded.
     return list(dict.fromkeys(ids))[:MAX_IDS]
+
+
+def detect_arg() -> DetectOptions | None:
+    """`detect=1` turns on actual start/end detection, tuned by
+    `window_minutes` (1–60, default 15), `min_step` (dB, default 6) and
+    `detect_monitor` (reference monitor id; default the first dB monitor)."""
+    if request.args.get("detect", "").lower() not in ("1", "true", "yes", "on"):
+        return None
+    try:
+        min_step = float(request.args.get("min_step") or DEFAULT_MIN_STEP)
+    except ValueError:
+        abort(400, description="min_step must be a number")
+    if not 0.5 <= min_step <= 60:
+        abort(400, description="min_step must be between 0.5 and 60")
+    ref = request.args.get("detect_monitor")
+    if ref and not ref.isdigit():
+        abort(400, description="detect_monitor must be a monitor id")
+    return DetectOptions(
+        window_minutes=int_arg("window_minutes", DEFAULT_WINDOW_MINUTES, 1, MAX_WINDOW_MINUTES),
+        min_step=min_step,
+        monitor_id=int(ref) if ref else None,
+    )

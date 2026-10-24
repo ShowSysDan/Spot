@@ -158,8 +158,15 @@ def iso_points(points: list[dict]) -> list[dict]:
 
 def collect_overlay(s, ids: list[int], start: datetime, end: datetime,
                     max_points: int | None, with_summary: bool,
-                    extended: bool = False) -> list[dict]:
-    """Points (+ optional summary) for several monitors, ordered by name."""
+                    extended: bool = False,
+                    summary_range: tuple[datetime, datetime] | None = None) -> list[dict]:
+    """Points (+ optional summary) for several monitors, ordered by name.
+
+    `summary_range` computes the summary over a different (narrower) range
+    than the points — used to chart context around a detected show while
+    reporting statistics for the show itself.
+    """
+    s_start, s_end = summary_range or (start, end)
     monitors = s.query(Monitor).filter(Monitor.id.in_(ids)).order_by(Monitor.name).all()
     out = []
     for m in monitors:
@@ -173,7 +180,7 @@ def collect_overlay(s, ids: list[int], start: datetime, end: datetime,
             "points": points,
         }
         if with_summary:
-            item["summary"] = compute_summary(s, m.id, start, end,
+            item["summary"] = compute_summary(s, m.id, s_start, s_end,
                                               extended=extended, unit=m.unit)
         out.append(item)
     return out

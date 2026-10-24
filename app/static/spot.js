@@ -205,7 +205,63 @@
       ctx.restore();
     },
   };
-  if (window.Chart) window.Chart.register(eventLinesPlugin, thresholdLinesPlugin);
+  // Chart.js plugin: show a detected range against the schedule. Everything
+  // outside [start, end] is dimmed, the detected edges are solid green lines
+  // and the scheduled times dotted grey ones.
+  // options.plugins.spotRange = { start, end, scheduledStart, scheduledEnd } (epoch ms)
+  const rangePlugin = {
+    id: 'spotRange',
+    beforeDatasetsDraw(chart, _args, o) {
+      const x = chart.scales.x;
+      if (!o || o.start == null || !x) return;
+      const { left, right, top, bottom } = chart.chartArea;
+      const ctx = chart.ctx;
+      const px = v => Math.min(right, Math.max(left, x.getPixelForValue(v)));
+      ctx.save();
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+      ctx.fillRect(left, top, px(o.start) - left, bottom - top);
+      ctx.fillRect(px(o.end), top, right - px(o.end), bottom - top);
+      ctx.restore();
+    },
+    afterDatasetsDraw(chart, _args, o) {
+      const x = chart.scales.x;
+      if (!o || o.start == null || !x) return;
+      const { left, right, top, bottom } = chart.chartArea;
+      const ctx = chart.ctx;
+      const line = (v, color, dash, label, align, atBottom) => {
+        const p = x.getPixelForValue(v);
+        if (p < left || p > right) return;
+        ctx.strokeStyle = ctx.fillStyle = color;
+        ctx.setLineDash(dash);
+        ctx.beginPath(); ctx.moveTo(p, top); ctx.lineTo(p, bottom); ctx.stroke();
+        ctx.textAlign = align;
+        ctx.fillText(label, p + (align === 'left' ? 4 : -4), atBottom ? bottom - 5 : top + 12);
+      };
+      ctx.save();
+      ctx.lineWidth = 1.5;
+      ctx.font = '11px system-ui, sans-serif';
+      // Scheduled labels sit at the bottom so they never collide with the detected ones.
+      if (o.scheduledStart != null) line(o.scheduledStart, '#8a929d', [2, 3], 'scheduled', 'right', true);
+      if (o.scheduledEnd != null) line(o.scheduledEnd, '#8a929d', [2, 3], 'scheduled', 'left', true);
+      line(o.start, '#56d364', [], o.startLabel || 'start', 'left');
+      line(o.end, '#56d364', [], o.endLabel || 'end', 'right');
+      ctx.restore();
+    },
+  };
+  if (window.Chart) window.Chart.register(eventLinesPlugin, thresholdLinesPlugin, rangePlugin);
+
+  // One line describing a detection result, for pages.
+  function describeDetection(d) {
+    if (!d) return '';
+    const hm = iso => iso ? iso.slice(11, 16) : '—';
+    const edge = k => {
+      if (!d[`${k}_detected`]) return `${k} as scheduled (${d[`${k}_reason`]})`;
+      const m = Math.round(d[`${k}_offset_seconds`] / 60);
+      return `${k} ${m >= 0 ? '+' : '−'}${Math.abs(m)} min (${d[`${k}_reason`]})`;
+    };
+    return `Scheduled ${hm(d.scheduled_start)}–${hm(d.scheduled_end)} · actual ${hm(d.start)}–${hm(d.end)}: ` +
+           `${edge('start')}; ${edge('end')}` + (d.monitor_name ? ` · from ${d.monitor_name}` : '');
+  }
 
   // Tiny dependency-free sparkline; points are [[epochMs, value], ...].
   function sparkline(canvas, points, opts) {
@@ -362,6 +418,6 @@
     });
   });
 
-  window.Spot = { TZ, wall, fromWall, fmtDateTime, fmtTime, zoneName, fmtInt, alpha, escapeHtml, fmtValue, timeAgo, fmtDuration, toLocalInput, toIso,
+  window.Spot = { describeDetection, TZ, wall, fromWall, fmtDateTime, fmtTime, zoneName, fmtInt, alpha, escapeHtml, fmtValue, timeAgo, fmtDuration, toLocalInput, toIso,
                   presetRange, bindPresets, store, sparkline, poller };
 })();

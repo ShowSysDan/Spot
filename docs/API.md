@@ -8,6 +8,7 @@ This is the contract for systems that talk to Spot — primarily
 3. [Conventions](#3-conventions) — base URL, time, errors, limits
 4. [Endpoint reference](#4-endpoint-reference)
 5. [Statistics: what each number means](#5-statistics-what-each-number-means)
+   — and [finding the actual show start/end](#51-finding-the-actual-start-and-end-detect)
 6. [What Spot sends to you](#6-what-spot-sends-to-you) — show-report callback, alert webhook
 7. [Pushing data into Spot](#7-pushing-data-into-spot) — ingest endpoints
 8. [Recipes for 321Theater](#8-recipes-for-321theater)
@@ -15,7 +16,7 @@ This is the contract for systems that talk to Spot — primarily
 10. [Security & operations](#10-security--operations)
 11. [Versioning policy](#11-versioning-policy)
 
-Spot version this document describes: **1.4.0**.
+Spot version this document describes: **1.6.0**.
 
 ---
 
@@ -124,6 +125,19 @@ Endpoints that take a time range accept:
 | `minutes` | Only when `start` is omitted: the range is the last *N* minutes before `end` (default 60). |
 
 `start` must be before `end`; a range can be at most **366 days**.
+
+### Detection parameters
+
+`/stats`, `/series` and `/report.pdf` can report on the **actual** show
+start and end found in the sound levels instead of the times you sent —
+see [5.1](#51-finding-the-actual-start-and-end-detect) for how it works.
+
+| Parameter | Default | Meaning |
+|-----------|---------|---------|
+| `detect` | off | `1` / `true` turns detection on. |
+| `window_minutes` | `15` | How far either side of `start` and of `end` to look (1–60). |
+| `min_step` | `6` | Smallest sustained level change, in dB, that counts (0.5–60). |
+| `detect_monitor` | first dB monitor in `monitors` | Which monitor's levels decide the times. The detected range is then applied to every monitor in the request. |
 
 ### Monitor ids
 
@@ -268,6 +282,9 @@ GET /stats?monitors=1,2&start=2026-10-24T19:30:00-04:00&end=2026-10-24T22:15:00-
 }
 ```
 
+* With `detect=1`, `start` / `end` in the response are the **actual**
+  range the statistics cover, and a `detection` object explains how they
+  were found ([5.1](#51-finding-the-actual-start-and-end-detect)).
 * Monitors come back sorted by name (match on `id`, not position).
 * `leq`, `l10`, `l50`, `l90` appear **only for units starting with `dB`**.
 * With no readings in the range: `count` is `0` and every value is `null`.
@@ -286,6 +303,7 @@ GET /series?monitors=1&start=…&end=…&max_points=500
 | Parameter | Default | Meaning |
 |-----------|---------|---------|
 | `max_points` | `500` | If the range holds more readings than this, they are averaged into equal time buckets. 10 – 10,000. |
+| `detect`, … | off | Optional — see [detection parameters](#detection-parameters). The series then covers the actual range and the response includes `detection`. |
 
 ```json
 {
@@ -321,6 +339,7 @@ GET /report.pdf?monitors=1,2&start=…&end=…&title=Hamilton%20—%20Sat%20Eve
 | Parameter | Meaning |
 |-----------|---------|
 | `title` | Optional heading (max 200 chars). Default: the monitor names. |
+| `detect`, … | Optional — see [detection parameters](#detection-parameters). The PDF then covers the actual range, and its header lists the *Scheduled* and *Detected* times. |
 
 Response: `200 application/pdf` with
 `Content-Disposition: attachment; filename="spot_report_20261024T1930.pdf"`.
@@ -350,6 +369,11 @@ through the API are tagged `API` in Spot's UI and are visible to Spot users.
   "monitors": [ … see below … ],
   "email_to": "audio@example.org",
   "callback_url": "https://321theater.example.org/hooks/spot",
+  "auto_detect": true,
+  "detect": {"window_minutes": 15, "min_step": 6.0, "monitor": null},
+  "report_start": "2026-10-24T19:34:20-04:00",
+  "report_end": "2026-10-24T22:26:59-04:00",
+  "detection": { …see 5.1… },
   "delivered_at": "2026-10-24T22:20:41-04:00",
   "delivery_status": "delivered",
   "delivery_attempts": 1,
@@ -368,6 +392,9 @@ through the API are tagged `API` in Spot's UI and are visible to Spot users.
 | `monitors` | In `GET` of a single show that has started: one entry per monitor with `stats` exactly as in [`/stats`](#get-stats). In list/create/update responses: `{id, name, unit, location, color}` only. |
 | `email_to` | Comma-separated recipients of the post-show report, or `null`. |
 | `callback_url` | Where Spot POSTs the report after the show, or `null`. See [6.1](#61-show-report-callback). |
+| `auto_detect` | When `true`, the show's statistics and report cover the **actual** start/end found in the levels ([5.1](#51-finding-the-actual-start-and-end-detect)), not `starts_at`/`ends_at`. |
+| `detect` | Detection settings: `window_minutes`, `min_step`, `monitor` (reference monitor id or `null` = first dB monitor). |
+| `report_start`, `report_end`, `detection` | Only in single-show `GET` once it has started: the range the statistics cover, and (with `auto_detect`) the detection result; `detection` is `null` when `auto_detect` is off. |
 | `delivered_at` / `delivery_status` / `delivery_attempts` | Report delivery state. `delivery_status` is `null` (not attempted), `"delivered"`, or the last error message. |
 | `report_pdf_url` | Fetch the PDF any time (needs your API key). Absolute when Spot's `SPOT_PUBLIC_URL` is set; otherwise built from your request. |
 | `spot_url` | Link to the show in Spot's UI (for humans). |
@@ -403,6 +430,8 @@ Request body (JSON):
 | `notes` | no | Free text. |
 | `email_to` | no | Array of addresses (or a single string). Needs e-mail configured in Spot. |
 | `callback_url` | no | `http://` or `https://` URL for the post-show report. |
+| `auto_detect` | no | `true` to report on the actual start/end found in the levels. Default `false`. |
+| `detect` | no | `{"window_minutes": 15, "min_step": 6, "monitor": 3}` — all optional; defaults shown (`monitor` defaults to the first dB monitor). Sending `detect` sets all three; omitted keys go back to their defaults. |
 
 ```http
 POST /api/v1/shows
@@ -428,6 +457,10 @@ existing `external_id` was updated. Validation errors return `400`:
 {"error": "callback_url must be an http(s) URL", "status": 400}
 {"error": "unknown monitor id(s): 99", "status": 404}
 ```
+
+With `auto_detect`, the report waits a little longer: until 5 minutes
+after `end` **plus** the search window (default 15 min) plus 2 minutes,
+so a late curtain-down is seen before the report is built.
 
 Creating **or updating** a show re-arms report delivery: if it has already
 ended, the report goes out again after the grace period. (That's what you
@@ -497,6 +530,80 @@ Notes:
 * Values are as stored (after each monitor's optional rounding in Spot).
 * For `count: 0`, everything else is `null`.
 
+### 5.1 Finding the actual start and end (`detect`)
+
+Scheduled times are approximate — a 21:00 curtain might go up at 20:54 or
+21:04. With detection on, Spot finds the real edges in the sound levels of
+one **reference monitor** (a dB monitor) and reports on those.
+
+**How it works**
+
+1. Readings from `start − window` to `end + window` (plus 2 minutes) are
+   averaged into 10-second buckets.
+2. **Start:** for every moment within ±`window_minutes` of `start`, Spot
+   compares the **median** level of the 2 minutes before with the median of
+   the 2 minutes after. The moment with the biggest *rise* wins.
+3. **End:** the same around `end`, looking for the biggest *drop*.
+4. A step smaller than `min_step` (default 6 dB) isn't trusted: that edge
+   **keeps the time you sent**, and the response says why.
+5. The winning edge is then snapped to the exact reading: the first reading
+   at show level (start) and the last one (end) — 1-second precision on a
+   1 Hz meter.
+
+Medians over two minutes mean a single clap, shout or door slam can't
+trigger it; it takes a sustained change. The two searches never overlap,
+even on short events. Detection on a typical show takes ~20 ms.
+
+**The `detection` object** (returned whenever `detect=1`, and on shows with
+`auto_detect`):
+
+```json
+{
+  "monitor_id": 7,
+  "monitor_name": "Walt Disney Theater FOH dB",
+  "window_minutes": 15,
+  "min_step": 6.0,
+  "scheduled_start": "2026-10-23T21:00:00-04:00",
+  "scheduled_end":   "2026-10-23T23:30:00-04:00",
+  "start": "2026-10-23T21:04:20-04:00",
+  "end":   "2026-10-23T23:40:59-04:00",
+  "start_detected": true,
+  "end_detected": true,
+  "start_step": 22.1,
+  "end_step": 28.4,
+  "start_offset_seconds": 260,
+  "end_offset_seconds": 659,
+  "start_reason": "rise of 22.1 dB",
+  "end_reason": "drop of 28.4 dB"
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `start`, `end` | The range actually reported on (detected, or the scheduled time where detection fell back). |
+| `start_detected`, `end_detected` | `false` → that edge is the scheduled time. |
+| `start_step`, `end_step` | Size of the best step found (dB), even if too small to use; `null` if there wasn't enough data. |
+| `start_offset_seconds`, `end_offset_seconds` | Detected minus scheduled (negative = early). |
+| `start_reason`, `end_reason` | Human-readable explanation, e.g. `"largest rise was 0.6 dB (needs 6); using the scheduled time"` or `"not enough readings near the scheduled time"`. |
+| `monitor_id`, `monitor_name` | The reference monitor (`null` with reason `"no sound (dB) monitor to detect from"` if the request had none). |
+
+**When it can't find an edge** (and falls back, with a reason):
+
+* The show opens **quietly** after loud pre-show music — there's no rise.
+  Use a smaller `min_step`, a different `detect_monitor` (e.g. a stage mic
+  rather than the house), or rely on the scheduled time.
+* The house music after the show is as loud as the show — no drop.
+* The real edge is further away than `window_minutes`.
+* The meter wasn't reporting around that time.
+
+Intermissions are not searched — only the two edges — so a mid-show dip
+never cuts a report short. Detection only changes the **range**; it never
+alters readings.
+
+**Tip for 321Theater:** if you know the real curtain times (e.g. from the
+stage manager's report), send them and leave detection off — exact beats
+inferred. Detection is for when you only have the published schedule.
+
 ---
 
 ## 6. What Spot sends to you
@@ -534,9 +641,16 @@ Two parts:
   "monitors": [
     {"id": 1, "name": "Stage Left dB", "unit": "dB", "location": "Walt Disney Theater",
      "stats": { …exactly as in /stats… }}
-  ]
+  ],
+  "report_start": "2026-10-24T19:34:20-04:00",
+  "report_end": "2026-10-24T22:26:59-04:00",
+  "detection": null
 }
 ```
+
+`report_start` / `report_end` are the range the statistics and PDF cover —
+the scheduled times, or the detected ones when the show has `auto_detect`
+(then `detection` explains them, see 5.1).
 
 Match it to your performance with `show.external_id`.
 
@@ -647,13 +761,21 @@ GET /report.pdf?monitors=1,2&start=…&end=…&title=<performance name>
 4. Optional safety net: a nightly job calling `GET /shows?from=…` and
    fetching `report.pdf` for any finished show you didn't receive.
 
-### 8.4 Actual vs scheduled times
+### 8.4 Let Spot find the real curtain times
+
+If 321Theater only knows the published times, create the show with
+`"auto_detect": true` (or add `detect=1` to `/stats` and `/report.pdf`).
+The report then covers the performance as it actually ran, and
+`detection` tells you what was found — e.g. curtain up 4 minutes late,
+down 11 minutes late — which you may want to store as well.
+
+### 8.5 Actual vs scheduled times
 
 If 321Theater learns the real curtain-down time, `PATCH` the show's `end`
 before (or after) it ends. After it ends, the report is re-sent with the
 corrected range — make your callback handler replace, not append.
 
-### 8.5 A live readout in 321Theater
+### 8.6 A live readout in 321Theater
 
 Poll `GET /monitors` (latest values) every 5–15 s, or
 `GET /series?monitors=…&minutes=15&max_points=300` for a small chart.

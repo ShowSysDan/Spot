@@ -7,6 +7,7 @@ from sqlalchemy import func, select, true
 
 from ..alerts import active_alerts_by_monitor
 from ..db import session_scope
+from ..detect import pdf_meta, resolve_range
 from ..queries import (
     MAX_RANGE_SECONDS,
     PDF_MAX_POINTS,
@@ -21,7 +22,7 @@ from ..queries import (
 from ..exports import iter_csv, render_overlay_pdf, render_pdf
 from ..models import Monitor, Reading
 from ..util import get_monitor_or_404, monitor_color, safe_filename, to_local
-from .params import int_arg, max_points_arg, parse_ids, parse_range
+from .params import detect_arg, int_arg, max_points_arg, parse_ids, parse_range
 
 bp = Blueprint("data", __name__)
 log = logging.getLogger("spot.data")
@@ -227,12 +228,21 @@ def overlay():
     if not ids:
         return jsonify({"monitors": [], "start": None, "end": None})
     start, end = parse_range()
+    opts = detect_arg()
     with session_scope() as s:
-        out = collect_overlay(s, ids, start, end, max_points_arg(),
-                              with_summary=bool(request.args.get("summary")), extended=True)
+        r_start, r_end, detection = resolve_range(s, ids, start, end, opts)
+        # With detection, chart the whole search area so the detected edges
+        # can be checked by eye; statistics cover the detected range only.
+        pad = timedelta(minutes=opts.window_minutes) if opts else timedelta(0)
+        c_start, c_end = start - pad, end + pad
+        out = collect_overlay(s, ids, c_start, c_end, max_points_arg(),
+                              with_summary=bool(request.args.get("summary")), extended=True,
+                              summary_range=(r_start, r_end))
     for m in out:
         m["points"] = [{"ts": p["ts"].isoformat(), "value": p["value"]} for p in m["points"]]
-    return jsonify({"start": start.isoformat(), "end": end.isoformat(), "monitors": out})
+    return jsonify({"start": c_start.isoformat(), "end": c_end.isoformat(),
+                    "range_start": r_start.isoformat(), "range_end": r_end.isoformat(),
+                    "detection": detection, "monitors": out})
 
 
 @bp.route("/overlay/export.pdf")
@@ -242,9 +252,10 @@ def overlay_export_pdf():
         abort(400, description="ids required")
     start, end = parse_range()
     with session_scope() as s:
+        start, end, detection = resolve_range(s, ids, start, end, detect_arg())
         monitors = collect_overlay(s, ids, start, end, PDF_MAX_POINTS,
                                    with_summary=True, extended=True)
-    body = render_overlay_pdf(start, end, monitors)
+    body = render_overlay_pdf(start, end, monitors, extra_meta=pdf_meta(detection))
     fname = _filename("report", start, end, "pdf")
     return Response(body, mimetype="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="{fname}"'})
@@ -257,6 +268,10 @@ def overlay_export_csv():
     if not ids:
         abort(400, description="ids required")
     start, end = parse_range()
+    opts = detect_arg()
+    if opts:
+        with session_scope() as s:
+            start, end, _ = resolve_range(s, ids, start, end, opts)
     stmt = (select(Reading.ts, Monitor.name, Monitor.unit, Reading.value, Reading.label)
             .join(Monitor, Monitor.id == Reading.monitor_id)
             .where(Reading.monitor_id.in_(ids))

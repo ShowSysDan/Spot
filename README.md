@@ -2,7 +2,7 @@
 
 **Data acquisition, down to the last spot.**
 
-Current version: **1.5.0** — see [CHANGELOG.md](CHANGELOG.md). The running
+Current version: **1.6.0** — see [CHANGELOG.md](CHANGELOG.md). The running
 version is shown in the web UI footer, logged at startup, and stamped on every
 PDF report.
 
@@ -48,6 +48,10 @@ and lets you browse, query, graph, and export the data.
   their monitors. Each gets min / max / average plus **Leq, L10 and L90** for
   dB monitors, and a PDF report that Spot can e-mail and/or POST to another
   system automatically after the show ends.
+- **Actual show start/end detection** — give Spot the scheduled times and it
+  finds the real curtain-up / curtain-down in the sound levels (±15 min by
+  default), reports on those, and shows what it found. Falls back to the
+  schedule, with a reason, when there's no clear change.
 - **Scheduled reports** — daily, weekly or monthly PDF reports e-mailed
   automatically, each covering the previous complete Eastern-time period.
 - **Wall display** (`/wall`) — a full-screen kiosk view with huge numbers,
@@ -450,6 +454,30 @@ the Walt Disney Theater's sound meters.
   immediately. Editing a show re-arms delivery.
 - Reports has a **Load a show…** menu that fills in a show's monitors and
   range.
+
+### Detecting the actual start and end
+
+Published times are approximate — a 21:00 curtain might go up at 20:54 or
+21:04. Tick **Find actual start/end** on the Reports page (or *Actual start
+and end* on a show, or send `detect=1` / `"auto_detect": true` through the
+API) and Spot looks at a dB monitor's levels within ±15 minutes (adjustable)
+of each scheduled edge:
+
+- **start** = the biggest sustained **rise** near the scheduled start,
+- **end** = the biggest sustained **drop** near the scheduled end,
+
+comparing 2-minute medians either side so a single clap or shout can't
+trigger it, then snapping to the exact reading. A change smaller than 6 dB
+(adjustable) isn't trusted and that edge keeps the scheduled time.
+
+Statistics, the PDF and CSV then cover the actual range; the chart dims
+everything outside it and marks the scheduled times; and a line explains the
+result, e.g. *Scheduled 21:00–23:30 · actual 21:04–23:40: start +4 min
+(rise of 22.1 dB); end +11 min (drop of 28.4 dB)*. One reference monitor
+(the first dB monitor, or the one you pick) decides the times for all
+monitors in the report. Shows with detection on wait an extra 17 minutes
+before e-mailing / sending their report so a late finish is caught. Full
+details: [docs/API.md §5.1](docs/API.md#51-finding-the-actual-start-and-end-detect).
 
 ### Scheduled reports
 

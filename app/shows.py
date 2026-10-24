@@ -20,6 +20,7 @@ from .db import session_scope
 from .exports import render_overlay_pdf
 from .models import Show
 from .notify import post_multipart, send_email
+from .detect import HOLD as DETECT_HOLD, DetectOptions, describe as describe_detection, pdf_meta, resolve_range
 from .queries import PDF_MAX_POINTS, collect_overlay, compute_summary
 from .util import format_local, iso_local, monitor_color, safe_filename, to_local
 
@@ -67,32 +68,55 @@ def show_view(show: Show, base_url: str = "") -> dict:
         "monitors": [{"id": m.id, "name": m.name, "unit": m.unit, "location": m.location,
                       "color": monitor_color(m.id, m.color)} for m in show.monitors],
         "monitor_ids": [m.id for m in show.monitors],
+        "auto_detect": show.auto_detect,
+        "detect": {"window_minutes": show.detect_window_minutes,
+                   "min_step": show.detect_min_step,
+                   "monitor": show.detect_monitor_id},
         "report_pdf_url": f"{base_url}/api/v1/shows/{show.id}/report.pdf",
         "spot_url": f"{base_url}/shows/{show.id}",
     }
 
 
-def show_stats(s: Session, show: Show) -> list[dict]:
-    """Per-monitor extended statistics for the show's time range."""
+def show_detect_options(show: Show) -> DetectOptions | None:
+    if not show.auto_detect:
+        return None
+    return DetectOptions(window_minutes=show.detect_window_minutes,
+                         min_step=show.detect_min_step,
+                         monitor_id=show.detect_monitor_id)
+
+
+Range = tuple[datetime, datetime, "dict | None"]
+
+
+def show_range(s: Session, show: Show) -> Range:
+    """The range a show's statistics and report cover: the detected actual
+    start/end when `auto_detect` is on, else the scheduled times. Third
+    value: the detection result (None when off)."""
+    return resolve_range(s, [m.id for m in show.monitors], show.starts_at, show.ends_at,
+                         show_detect_options(show))
+
+
+def show_stats(s: Session, show: Show, rng: Range | None = None) -> list[dict]:
+    """Per-monitor extended statistics for the show's (possibly detected) range."""
+    start, end, _ = rng or show_range(s, show)
     return [{
         "id": m.id, "name": m.name, "unit": m.unit, "location": m.location,
-        "stats": compute_summary(s, m.id, show.starts_at, show.ends_at,
-                                 extended=True, unit=m.unit),
+        "stats": compute_summary(s, m.id, start, end, extended=True, unit=m.unit),
     } for m in show.monitors]
 
 
-def show_report_pdf(s: Session, show: Show) -> bytes:
-    monitors = collect_overlay(s, [m.id for m in show.monitors], show.starts_at,
-                               show.ends_at, PDF_MAX_POINTS, with_summary=True,
-                               extended=True)
+def show_report_pdf(s: Session, show: Show, rng: Range | None = None) -> bytes:
+    start, end, detection = rng or show_range(s, show)
+    monitors = collect_overlay(s, [m.id for m in show.monitors], start, end,
+                               PDF_MAX_POINTS, with_summary=True, extended=True)
     extra = [("Show", show.name)]
     if show.external_id:
         extra.append(("Ref", show.external_id))
     locations = sorted({m.location for m in show.monitors if m.location})
     if locations:
         extra.append(("Location", ", ".join(locations)))
-    return render_overlay_pdf(show.starts_at, show.ends_at, monitors,
-                              title=show.name, extra_meta=extra)
+    extra += pdf_meta(detection)
+    return render_overlay_pdf(start, end, monitors, title=show.name, extra_meta=extra)
 
 
 def report_filename(show: Show) -> str:
@@ -103,16 +127,25 @@ def report_filename(show: Show) -> str:
 # Delivery
 # ---------------------------------------------------------------------------
 
+def report_due_at(show: Show) -> datetime:
+    """When the report may go out: the grace period after the scheduled end,
+    plus — when detecting — long enough for the end search to see the real
+    end, which can be up to `detect_window_minutes` late."""
+    extra = timedelta(minutes=show.detect_window_minutes, seconds=DETECT_HOLD) if show.auto_detect else timedelta(0)
+    return show.ends_at + timedelta(seconds=SHOW_REPORT_DELAY_SECONDS) + extra
+
+
 def _due_shows(s: Session, now: datetime) -> list[Show]:
-    return s.scalars(
+    rows = s.scalars(
         select(Show).where(
             Show.delivered_at.is_(None),
             or_(Show.email_to.is_not(None), Show.callback_url.is_not(None)),
             Show.ends_at <= now - timedelta(seconds=SHOW_REPORT_DELAY_SECONDS),
             Show.delivery_attempts < MAX_DELIVERY_ATTEMPTS,
             or_(Show.next_attempt_at.is_(None), Show.next_attempt_at <= now),
-        ).order_by(Show.ends_at).limit(20)
+        ).order_by(Show.ends_at).limit(50)
     ).all()
+    return [sh for sh in rows if report_due_at(sh) <= now][:20]
 
 
 def deliver_due(cfg: Config, now: datetime | None = None) -> int:
@@ -134,8 +167,10 @@ def deliver_show(cfg: Config, show_id: int, now: datetime | None = None) -> str 
             return "show not found"
         base = cfg.public_url
         view = show_view(show, base)
-        stats = show_stats(s, show)
-        pdf = show_report_pdf(s, show)
+        rng = show_range(s, show)
+        stats = show_stats(s, show, rng)
+        pdf = show_report_pdf(s, show, rng)
+        detection = rng[2]
         fname = report_filename(show)
         email_to = [x.strip() for x in (show.email_to or "").split(",") if x.strip()]
         callback = show.callback_url
@@ -143,11 +178,13 @@ def deliver_show(cfg: Config, show_id: int, now: datetime | None = None) -> str 
     errors: list[str] = []
     if email_to:
         err = send_email(cfg, email_to, f"[Spot] Show report: {view['name']}",
-                         _email_body(view, stats), [(fname, pdf, "application/pdf")])
+                         _email_body(view, stats, detection), [(fname, pdf, "application/pdf")])
         if err:
             errors.append(f"e-mail: {err}")
     if callback:
-        metadata = {"event": "show.report", "show": view, "monitors": stats}
+        metadata = {"event": "show.report", "show": view, "monitors": stats,
+                    "report_start": iso_local(rng[0]), "report_end": iso_local(rng[1]),
+                    "detection": detection}
         err = post_multipart(callback, {"metadata": json.dumps(metadata, default=str)},
                              [("report", fname, pdf, "application/pdf")])
         if err:
@@ -175,8 +212,11 @@ def deliver_show(cfg: Config, show_id: int, now: datetime | None = None) -> str 
     return "; ".join(errors) or None
 
 
-def _email_body(view: dict, stats: list[dict]) -> str:
-    lines = [f"{view['name']}", f"{view['starts_local']} – {view['ends_local']}", ""]
+def _email_body(view: dict, stats: list[dict], detection: dict | None = None) -> str:
+    lines = [f"{view['name']}", f"Scheduled {view['starts_local']} – {view['ends_local']}"]
+    if detection:
+        lines.append(describe_detection(detection))
+    lines.append("")
     for m in stats:
         st = m["stats"]
         line = (f"{m['name']}: min {_n(st['min'])}  max {_n(st['max'])}  "

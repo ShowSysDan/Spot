@@ -3,6 +3,27 @@
 All notable changes to Spot. The version number lives in `app/version.py`
 and is bumped with every change.
 
+## 1.6.0 — 2026-10-24
+
+### Added
+- **Actual show start/end detection** (`app/detect.py`). Within ±N minutes
+  (default 15) of a scheduled start/end, finds the biggest sustained rise /
+  drop in a dB monitor's levels (2-minute medians over 10-second buckets,
+  then snapped to the exact reading); edges with a change below `min_step`
+  (default 6 dB) keep the scheduled time. Every result explains itself.
+- Available on the Reports page (*Find actual start/end within ±N min*),
+  per show (*Actual start and end* settings; stats, PDF, CSV and callback use
+  the actual range), and in the API: `detect`, `window_minutes`,
+  `min_step`, `detect_monitor` on `/stats`, `/series`, `/report.pdf`;
+  `auto_detect` + `detect` on shows; `detection`, `report_start`,
+  `report_end` in responses and in the show-report callback.
+- Charts dim everything outside the detected range and mark the scheduled
+  times; report PDFs list *Scheduled* and *Detected* times.
+- Shows with detection wait for the end-search window before sending their
+  report.
+- New `shows` columns: `auto_detect`, `detect_monitor_id`,
+  `detect_window_minutes`, `detect_min_step` (added automatically).
+
 ## 1.5.0 — 2026-10-24
 
 ### Added

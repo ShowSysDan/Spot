@@ -21,6 +21,7 @@ from sqlalchemy import select
 from werkzeug.exceptions import HTTPException
 
 from ..db import session_scope
+from ..detect import DEFAULT_MIN_STEP, DEFAULT_WINDOW_MINUTES, MAX_WINDOW_MINUTES, pdf_meta, resolve_range
 from ..exports import render_overlay_pdf
 from ..models import ApiKey, Monitor, Reading, Show
 from ..queries import PDF_MAX_POINTS, collect_overlay, compute_summary
@@ -28,13 +29,14 @@ from ..shows import (
     MAX_SHOW_SECONDS,
     deliver_show,
     report_filename,
+    show_range,
     show_report_pdf,
     show_stats,
     show_view,
 )
 from ..util import iso_local, parse_iso_ts, to_local
 from ..version import __version__
-from .params import max_points_arg, parse_ids, parse_range
+from .params import detect_arg, max_points_arg, parse_ids, parse_range
 
 bp = Blueprint("v1", __name__)
 log = logging.getLogger("spot.api.v1")
@@ -141,11 +143,16 @@ def stats():
     ids = _monitor_ids_arg()
     start, end = parse_range()
     with session_scope() as s:
+        monitors = _known_monitors(s, ids)
+        start, end, detection = resolve_range(s, ids, start, end, detect_arg())
         out = [{
             "id": m.id, "name": m.name, "unit": m.unit, "location": m.location,
             "stats": compute_summary(s, m.id, start, end, extended=True, unit=m.unit),
-        } for m in _known_monitors(s, ids)]
-    return jsonify({"start": iso_local(start), "end": iso_local(end), "monitors": out})
+        } for m in monitors]
+    body = {"start": iso_local(start), "end": iso_local(end), "monitors": out}
+    if detection is not None:
+        body["detection"] = detection
+    return jsonify(body)
 
 
 @bp.route("/series")
@@ -156,12 +163,16 @@ def series():
     max_points = max_points_arg() or 500
     with session_scope() as s:
         _known_monitors(s, ids)
+        start, end, detection = resolve_range(s, ids, start, end, detect_arg())
         data = collect_overlay(s, ids, start, end, max_points, with_summary=False)
     for m in data:
         m["points"] = [{"ts": iso_local(p["ts"]), "value": p["value"],
                         **({"min": p["min"], "max": p["max"]} if "min" in p else {})}
                        for p in m["points"]]
-    return jsonify({"start": iso_local(start), "end": iso_local(end), "monitors": data})
+    body = {"start": iso_local(start), "end": iso_local(end), "monitors": data}
+    if detection is not None:
+        body["detection"] = detection
+    return jsonify(body)
 
 
 @bp.route("/report.pdf")
@@ -172,9 +183,10 @@ def report_pdf():
     title = (request.args.get("title") or "").strip()[:200] or None
     with session_scope() as s:
         _known_monitors(s, ids)
+        start, end, detection = resolve_range(s, ids, start, end, detect_arg())
         data = collect_overlay(s, ids, start, end, PDF_MAX_POINTS,
                                with_summary=True, extended=True)
-    body = render_overlay_pdf(start, end, data, title=title)
+    body = render_overlay_pdf(start, end, data, title=title, extra_meta=pdf_meta(detection))
     return Response(body, mimetype="application/pdf", headers={
         "Content-Disposition": f'attachment; filename="spot_report_{to_local(start):%Y%m%dT%H%M}.pdf"'})
 
@@ -194,7 +206,10 @@ def _show_or_404(s, show_id: int | None = None, ref: str | None = None) -> Show:
 def _show_payload(s, show: Show, with_stats: bool = True) -> dict:
     body = show_view(show, _base_url())
     if with_stats and show.starts_at <= datetime.now(timezone.utc):
-        body["monitors"] = show_stats(s, show)
+        rng = show_range(s, show)
+        body["monitors"] = show_stats(s, show, rng)
+        body["report_start"], body["report_end"] = iso_local(rng[0]), iso_local(rng[1])
+        body["detection"] = rng[2]
     return body
 
 
@@ -240,6 +255,30 @@ def _apply_show_fields(s, show: Show, data: dict, partial: bool) -> None:
         if url and not re.match(r"^https?://", url):
             abort(400, description="callback_url must be an http(s) URL")
         show.callback_url = url or None
+    if "auto_detect" in data:
+        if not isinstance(data["auto_detect"], bool):
+            abort(400, description="auto_detect must be true or false")
+        show.auto_detect = data["auto_detect"]
+    if not partial or "detect" in data:
+        _apply_detect_settings(s, show, data.get("detect") or {})
+
+
+def _apply_detect_settings(s, show: Show, d: dict) -> None:
+    """`detect`: {"window_minutes", "min_step", "monitor"} — all optional."""
+    if not isinstance(d, dict):
+        abort(400, description="detect must be an object")
+    win = d.get("window_minutes", DEFAULT_WINDOW_MINUTES)
+    if not isinstance(win, int) or isinstance(win, bool) or not 1 <= win <= MAX_WINDOW_MINUTES:
+        abort(400, description=f"detect.window_minutes must be 1–{MAX_WINDOW_MINUTES}")
+    step = d.get("min_step", DEFAULT_MIN_STEP)
+    if not isinstance(step, (int, float)) or isinstance(step, bool) or not 0.5 <= step <= 60:
+        abort(400, description="detect.min_step must be 0.5–60")
+    ref = d.get("monitor")
+    if ref is not None:
+        if not isinstance(ref, int) or isinstance(ref, bool):
+            abort(400, description="detect.monitor must be a monitor id")
+        _known_monitors(s, [ref])
+    show.detect_window_minutes, show.detect_min_step, show.detect_monitor_id = win, float(step), ref
 
 
 def _reset_delivery(show: Show) -> None:
