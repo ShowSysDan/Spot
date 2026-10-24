@@ -1,0 +1,13 @@
+{# Active alerts for one monitor. Expects `alerts` (list of dicts) and `monitor`. #}
+{% for a in alerts %}
+<div class="alert-banner {{ 'is-acked' if a.acknowledged }}">
+  <strong>{{ a.kind|upper }}</strong> {{ a.message }}
+  <span class="muted">since {{ a.started_at|localtime }}</span>
+  {% if not a.acknowledged %}
+  <form method="post" action="{{ url_for('web.alert_ack', aid=a.id) }}" class="inline">
+    <input type="hidden" name="next" value="{{ request.path }}">
+    <button type="submit" class="link">Acknowledge</button>
+  </form>
+  {% endif %}
+</div>
+{% endfor %}

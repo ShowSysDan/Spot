@@ -1,80 +1,248 @@
 {% extends "base.html" %}
 {% block title %}{{ monitor.name }} — Live — Spot{% endblock %}
 {% block content %}
-<h1>{{ monitor.name }} <span class="muted">live</span></h1>
-<div class="row">
-  <label>Window
-    <select id="window-sec">
-      <option value="30">30 s</option>
-      <option value="60">1 min</option>
-      <option value="300">5 min</option>
-      <option value="900" selected>15 min</option>
-      <option value="1800">30 min</option>
-      <option value="3600">1 hr</option>
-    </select>
-  </label>
-  <label>Refresh
+<div class="page-head">
+  <h1>{{ monitor.name }} <span class="muted">live</span></h1>
+  <div class="page-tools">
+    <a class="button" href="{{ url_for('web.monitor_detail', mid=monitor.id) }}">Details</a>
+    <a class="button" id="btn-report" href="{{ url_for('web.reports', ids=monitor.id) }}">Report this window</a>
+  </div>
+</div>
+
+<div class="toolbar">
+  <div class="chips" id="windows" role="group" aria-label="Time window">
+    <button type="button" data-sec="60">1m</button>
+    <button type="button" data-sec="300">5m</button>
+    <button type="button" data-sec="900">15m</button>
+    <button type="button" data-sec="3600">1h</button>
+    <button type="button" data-sec="10800">3h</button>
+    <button type="button" data-sec="21600">6h</button>
+    <button type="button" data-sec="43200">12h</button>
+    <button type="button" data-sec="86400">24h</button>
+    <button type="button" data-sec="172800">48h</button>
+    <button type="button" data-sec="604800">7d</button>
+  </div>
+  <label class="compact">Refresh
     <select id="refresh-ms">
-      <option value="1000" selected>1 s</option>
+      <option value="auto" selected>Auto</option>
+      <option value="1000">1 s</option>
       <option value="2000">2 s</option>
       <option value="5000">5 s</option>
+      <option value="15000">15 s</option>
+      <option value="60000">1 min</option>
     </select>
   </label>
-  <span id="latest" class="latest">—</span>
+  <label class="compact checkbox"><input type="checkbox" id="zero"> Start Y at 0</label>
+  <button type="button" id="btn-pause" class="button">Pause</button>
 </div>
+
+<div id="alert-banners"></div>
+<div class="summary stat-row">
+  <div class="card primary">
+    <h3>Current</h3>
+    <p class="big"><span id="cur">—</span> <small>{{ monitor.unit }}</small></p>
+    <small id="cur-at">waiting for data…</small>
+  </div>
+  <div class="card"><h3>Min <span class="muted" data-win></span></h3><p><span id="s-min">—</span> <small>{{ monitor.unit }}</small></p><small id="s-min-at"></small></div>
+  <div class="card"><h3>Max <span class="muted" data-win></span></h3><p><span id="s-max">—</span> <small>{{ monitor.unit }}</small></p><small id="s-max-at"></small></div>
+  <div class="card"><h3>Average <span class="muted" data-win></span></h3><p><span id="s-avg">—</span> <small>{{ monitor.unit }}</small></p></div>
+  <div class="card"><h3>Samples</h3><p id="s-count">—</p><small id="s-bucket"></small></div>
+</div>
+
 <div class="chart-wrap"><canvas id="chart"></canvas></div>
 
 <h2>Recent events</h2>
-<ul id="events" class="events"><li class="muted">none</li></ul>
+<ul id="events" class="events"><li class="muted">none in this window</li></ul>
 
 <script>
-const monitorId = {{ monitor.id }};
-const unit = {{ monitor.unit | tojson }};
-const ctx = document.getElementById('chart');
-const chart = new Chart(ctx, {
-  type: 'line',
-  data: { datasets: [{ label: unit, data: [], borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.12)', borderWidth: 1.2, pointRadius: 0, tension: 0, fill: true }] },
-  options: {
-    animation: false,
-    parsing: false,
-    scales: {
-      x: { type: 'time', time: { tooltipFormat: 'PPpp' }, grid: { color: '#2c313a' } },
-      y: { title: { display: true, text: unit }, grid: { color: '#2c313a' } }
+(function () {
+  const monitorId = {{ monitor.id }};
+  const unit = {{ monitor.unit | tojson }};
+  const decimals = {{ monitor.decimal_places | tojson }};
+  const color = {{ monitor.display_color | tojson }};
+  const alertHigh = {{ monitor.alert_high | tojson }};
+  const alertLow = {{ monitor.alert_low | tojson }};
+  const MAX_POINTS = 1500;
+  const fmt = v => Spot.fmtValue(v, decimals);
+  const storeKey = `spot.dash.${monitorId}`;
+
+  // Window: ?window=<seconds> in the URL wins, then the last choice for this monitor.
+  const urlWin = Number(new URLSearchParams(location.search).get('window'));
+  let windowSec = urlWin > 0 ? urlWin : Number(Spot.store.get(`${storeKey}.window`, 900));
+  const winBtns = document.querySelectorAll('#windows [data-sec]');
+  if (![...winBtns].some(b => Number(b.dataset.sec) === windowSec)) windowSec = 900;
+
+  const refreshSel = document.getElementById('refresh-ms');
+  refreshSel.value = Spot.store.get(`${storeKey}.refresh`, 'auto');
+  if (!refreshSel.value) refreshSel.value = 'auto';
+  const zero = document.getElementById('zero');
+  zero.checked = Spot.store.get(`${storeKey}.zero`, '0') === '1';
+
+  // Auto refresh scales with the window: no point re-fetching a 7-day chart every second.
+  function refreshMs() {
+    if (refreshSel.value !== 'auto') return Number(refreshSel.value);
+    if (windowSec <= 300) return 1000;
+    if (windowSec <= 3600) return 2000;
+    if (windowSec <= 21600) return 10000;
+    if (windowSec <= 86400) return 30000;
+    return 60000;
+  }
+
+  const chart = new Chart(document.getElementById('chart'), {
+    type: 'line',
+    data: { datasets: [
+      // 0: bucket minimum (invisible edge of the band)
+      { label: 'min', data: [], borderWidth: 0, pointRadius: 0, fill: false, hidden: true },
+      // 1: bucket maximum, filled down to dataset 0 → shaded min/max band
+      { label: 'max', data: [], borderWidth: 0, pointRadius: 0, fill: '-1',
+        backgroundColor: Spot.alpha(color, 0.16), hidden: true },
+      // 2: the line itself (raw values, or bucket averages)
+      { label: unit, data: [], borderColor: color, backgroundColor: Spot.alpha(color, 0.10),
+        borderWidth: 1.4, pointRadius: 0, pointHitRadius: 6, tension: 0, fill: 'origin' },
+    ] },
+    options: {
+      animation: false,
+      parsing: false,
+      normalized: true,
+      interaction: { mode: 'nearest', axis: 'x', intersect: false },
+      scales: {
+        x: { type: 'time', grid: {} },
+        y: { title: { display: true, text: unit }, grid: {}, beginAtZero: zero.checked },
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          filter: item => item.datasetIndex === 2,
+          callbacks: { label: item => `${fmt(item.parsed.y)} ${unit}` },
+        },
+        spotEvents: { events: [] },
+        spotThresholds: { lines: [
+          ...(alertHigh !== null ? [{ y: alertHigh, label: `alert above ${fmt(alertHigh)} ${unit}`, color: '#f85149' }] : []),
+          ...(alertLow !== null ? [{ y: alertLow, label: `alert below ${fmt(alertLow)} ${unit}`, color: '#e3b341' }] : []),
+        ] },
+      },
     },
-    plugins: { legend: { display: false } }
-  }
-});
+  });
 
-let timer = null;
-async function tick() {
-  const sec = parseInt(document.getElementById('window-sec').value, 10);
-  const r = await fetch(`/data/monitor/${monitorId}/recent?seconds=${sec}`);
-  if (!r.ok) return;
-  const j = await r.json();
-  chart.data.datasets[0].data = j.points.map(p => ({ x: new Date(p.ts).valueOf(), y: p.value }));
-  chart.update('none');
-  const last = j.points.length ? j.points[j.points.length - 1] : null;
-  document.getElementById('latest').textContent = last
-    ? `latest: ${last.value} ${unit} @ ${new Date(last.ts).toLocaleTimeString()}`
-    : 'no data in window';
-  const ev = document.getElementById('events');
-  if (j.events.length) {
-    ev.innerHTML = j.events.slice(-10).reverse().map(e =>
-      `<li><time>${new Date(e.ts).toLocaleTimeString()}</time> — ${escapeHtml(e.label)}</li>`
-    ).join('');
-  } else {
-    ev.innerHTML = '<li class="muted">none</li>';
+  // Keep alert thresholds inside the y range so their lines stay visible.
+  function fitThresholds() {
+    const ys = chart.data.datasets[2].data.map(p => p.y).filter(v => v !== null);
+    const marks = [alertHigh, alertLow].filter(v => v !== null);
+    if (!marks.length || !ys.length) {
+      chart.options.scales.y.suggestedMin = chart.options.scales.y.suggestedMax = undefined;
+      return;
+    }
+    chart.options.scales.y.suggestedMin = Math.min(...marks, ...ys);
+    chart.options.scales.y.suggestedMax = Math.max(...marks, ...ys);
   }
-}
-function escapeHtml(s) { return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
-function reset() {
-  if (timer) clearInterval(timer);
-  const ms = parseInt(document.getElementById('refresh-ms').value, 10);
-  timer = setInterval(tick, ms);
-}
-document.getElementById('window-sec').addEventListener('change', tick);
-document.getElementById('refresh-ms').addEventListener('change', reset);
-tick(); reset();
+  function renderAlerts(alerts) {
+    document.getElementById('alert-banners').innerHTML = (alerts || []).map(a =>
+      `<div class="alert-banner ${a.acknowledged ? 'is-acked' : ''}"><strong>${Spot.escapeHtml(a.kind.toUpperCase())}</strong>
+       ${Spot.escapeHtml(a.message)} <span class="muted">since ${Spot.fmtDateTime(a.started_at)}</span></div>`).join('');
+  }
+
+  let ctrl = null;
+  async function tick() {
+    // Abort a request that's still running if the window changed under it.
+    if (ctrl) ctrl.abort();
+    ctrl = new AbortController();
+    const sec = windowSec;
+    const r = await fetch(`/data/monitor/${monitorId}/recent?seconds=${sec}&max_points=${MAX_POINTS}&stats=1`,
+                          { signal: ctrl.signal });
+    if (!r.ok || sec !== windowSec) return;
+    const j = await r.json();
+    const end = new Date(j.now).valueOf();
+    const raw = j.points.map(p => ({ x: new Date(p.ts).valueOf(), y: p.value }));
+    const bucketed = !!j.bucket_seconds;
+    const gaps = Spot.findGaps(raw, { bucketMs: (j.bucket_seconds || 0) * 1000, start: end - sec * 1000, end });
+    const line = Spot.breakAtGaps(raw, gaps);
+    const band = key => Spot.breakAtGaps(j.points.map(p => ({ x: new Date(p.ts).valueOf(), y: p[key] })), gaps);
+    chart.data.datasets[0].data = bucketed ? band('min') : [];
+    chart.data.datasets[1].data = bucketed ? band('max') : [];
+    chart.options.plugins.spotGaps = { gaps };
+    chart.data.datasets[0].hidden = chart.data.datasets[1].hidden = !bucketed;
+    chart.data.datasets[2].data = line;
+    chart.data.datasets[2].fill = bucketed ? false : 'origin';
+    chart.options.scales.x.min = end - sec * 1000;
+    chart.options.scales.x.max = end;
+    chart.options.scales.y.beginAtZero = zero.checked;
+    chart.options.plugins.spotEvents.events = j.events.map(e => ({ x: new Date(e.ts).valueOf(), label: e.label }));
+    fitThresholds();
+    chart.update('none');
+    renderAlerts(j.alerts);
+
+    const st = j.stats || {};
+    const last = j.points.length && !bucketed ? j.points[j.points.length - 1] : null;
+    if (last) {
+      document.getElementById('cur').textContent = fmt(last.value);
+      document.getElementById('cur-at').textContent = Spot.fmtTime(last.ts);
+    } else {
+      // Bucketed or empty window: ask for the true latest reading instead.
+      const lr = await fetch(`/data/monitor/${monitorId}/latest`);
+      if (lr.ok) {
+        const l = await lr.json();
+        document.getElementById('cur').textContent = fmt(l.value);
+        document.getElementById('cur-at').textContent = l.ts
+          ? `${Spot.fmtDateTime(l.ts)} (${Spot.timeAgo(l.ts)})` : 'no data yet';
+      }
+    }
+    const at = ts => ts ? Spot.fmtDateTime(ts) : '';
+    document.getElementById('s-min').textContent = fmt(st.min);
+    document.getElementById('s-max').textContent = fmt(st.max);
+    document.getElementById('s-avg').textContent = fmt(st.avg);
+    document.getElementById('s-min-at').textContent = at(st.min_at);
+    document.getElementById('s-max-at').textContent = at(st.max_at);
+    document.getElementById('s-count').textContent = Spot.fmtInt(st.count);
+    document.getElementById('s-bucket').textContent = bucketed
+      ? `chart shows ${Spot.fmtDuration(j.bucket_seconds)} averages` : '';
+
+    const ev = document.getElementById('events');
+    ev.innerHTML = j.events.length
+      ? j.events.slice(-15).reverse().map(e =>
+          `<li><time>${Spot.fmtDateTime(e.ts)}</time> ${Spot.escapeHtml(e.label)}</li>`).join('')
+      : '<li class="muted">none in this window</li>';
+  }
+
+  const poll = Spot.poller(() => tick().catch(e => { if (e.name !== 'AbortError') throw e; }), refreshMs());
+
+  function setWindow(sec) {
+    windowSec = sec;
+    Spot.store.set(`${storeKey}.window`, String(sec));
+    winBtns.forEach(b => b.classList.toggle('active', Number(b.dataset.sec) === sec));
+    document.querySelectorAll('[data-win]').forEach(el => (el.textContent = `· ${Spot.fmtDuration(sec)}`));
+    const url = new URL(location.href);
+    url.searchParams.set('window', sec);
+    history.replaceState(null, '', url);
+    poll.setInterval(refreshMs());
+    poll.now();
+  }
+  document.getElementById('windows').addEventListener('click', e => {
+    const b = e.target.closest('[data-sec]');
+    if (b) setWindow(Number(b.dataset.sec));
+  });
+  refreshSel.addEventListener('change', () => {
+    Spot.store.set(`${storeKey}.refresh`, refreshSel.value);
+    poll.setInterval(refreshMs());
+  });
+  zero.addEventListener('change', () => {
+    Spot.store.set(`${storeKey}.zero`, zero.checked ? '1' : '0');
+    chart.options.scales.y.beginAtZero = zero.checked;
+    chart.update('none');
+  });
+  const pauseBtn = document.getElementById('btn-pause');
+  pauseBtn.addEventListener('click', () => {
+    if (poll.paused) { poll.resume(); pauseBtn.textContent = 'Pause'; pauseBtn.classList.remove('active'); }
+    else { poll.pause(); pauseBtn.textContent = 'Resume'; pauseBtn.classList.add('active'); }
+  });
+  // "Report this window" opens Reports with this monitor and the visible range filled in.
+  document.getElementById('btn-report').addEventListener('click', e => {
+    e.preventDefault();
+    const end = new Date(), start = new Date(end - windowSec * 1000);
+    const p = new URLSearchParams({ ids: monitorId, start: start.toISOString(), end: end.toISOString() });
+    location.href = `{{ url_for('web.reports') }}?${p}`;
+  });
+  setWindow(windowSec);
+})();
 </script>
 {% endblock %}

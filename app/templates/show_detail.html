@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}{{ show.name }} — Shows — Spot{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>{{ show.name }} <span class="status-pill {{ show.status }}">{{ show.status }}</span></h1>
+  <div class="page-tools">
+    <a class="button primary" href="{{ url_for('web.show_report', sid=show.id) }}">Download PDF</a>
+    {% set rs = report.start if report else show.starts_at %}{% set re = report.end if report else show.ends_at %}
+    <a class="button" href="/data/overlay/export.csv?ids={{ show.monitor_ids|join(',') }}&start={{ rs|urlencode }}&end={{ re|urlencode }}">CSV</a>
+    <a class="button" href="{{ url_for('web.reports', ids=show.monitor_ids|join(','), start=show.starts_at, end=show.ends_at, detect='1' if show.auto_detect else None, window_minutes=show.detect.window_minutes if show.auto_detect else None) }}">Open in Reports</a>
+    <a class="button" href="{{ url_for('web.show_edit', sid=show.id) }}">Edit</a>
+  </div>
+</div>
+
+<dl class="meta">
+  <dt>When</dt><dd>{{ show.starts_local }} – {{ show.ends_local }}
+    <span class="muted">({{ show.duration_minutes // 60 }}h {{ '%02d'|format(show.duration_minutes % 60) }}m)</span></dd>
+  {% if show.external_id %}<dt>External ref</dt><dd><code>{{ show.external_id }}</code> <span class="muted">via API</span></dd>{% endif %}
+  {% if show.notes %}<dt>Notes</dt><dd>{{ show.notes }}</dd>{% endif %}
+  {% if detection %}
+  <dt>Actual times</dt>
+  <dd>
+    {{ detection.start[11:16] }} – {{ detection.end[11:16] }}
+    {% for k in ['start', 'end'] %}
+      <div class="{{ 'ok' if detection[k ~ '_detected'] else 'muted' }}">
+        {{ k|capitalize }}:
+        {% if detection[k ~ '_detected'] %}
+          {% set mins = (detection[k ~ '_offset_seconds'] / 60)|round|int %}{{ '+' if mins >= 0 else '−' }}{{ mins|abs }} min vs scheduled — {{ detection[k ~ '_reason'] }}
+        {% else %}as scheduled — {{ detection[k ~ '_reason'] }}{% endif %}
+      </div>
+    {% endfor %}
+    <div class="muted">Detected from {{ detection.monitor_name or '—' }} within ±{{ detection.window_minutes }} min.
+      Levels, chart range and the PDF use the actual times.</div>
+  </dd>
+  {% elif show.auto_detect and show.status == 'upcoming' %}
+  <dt>Actual times</dt><dd class="muted">Will be detected from the sound levels once the show has run.</dd>
+  {% endif %}
+  <dt>Report delivery</dt>
+  <dd>
+    {% if not (show.email_to or show.callback_url) %}
+      <span class="muted">none — download the PDF any time</span>
+    {% else %}
+      {% if show.email_to %}e-mail {{ show.email_to }}{% endif %}
+      {% if show.email_to and show.callback_url %} · {% endif %}
+      {% if show.callback_url %}callback <code>{{ show.callback_url }}</code>{% endif %}
+      <br>
+      {% if show.delivered_at %}<span class="ok">sent {{ show.delivered_at|localtime }}</span>
+      {% elif show.delivery_status %}<span class="off">attempt {{ show.delivery_attempts }} failed: {{ show.delivery_status }}</span>
+      {% else %}<span class="muted">will be sent about 5 minutes after the show ends</span>{% endif %}
+      <form method="post" action="{{ url_for('web.show_deliver', sid=show.id) }}" class="inline">
+        <button type="submit" class="link">{{ 'Send again' if show.delivered_at else 'Send now' }}</button>
+      </form>
+    {% endif %}
+  </dd>
+</dl>
+
+{% if show.status == 'upcoming' %}
+  <p class="muted">This show hasn't started yet — statistics appear once it does.</p>
+{% else %}
+<h2>Levels {% if detection %}<span class="muted">{{ detection.start[11:16] }}–{{ detection.end[11:16] }} actual</span>{% endif %} {% if show.status == 'live' %}<span class="muted">so far · updates on reload</span>{% endif %}</h2>
+{% set acoustic = stats|selectattr('stats.leq', 'defined')|list %}
+<table class="grid">
+  <thead><tr><th>Monitor</th><th>Unit</th><th class="num">Samples</th><th class="num">Min</th><th class="num">Max</th>
+    <th class="num">Average</th>{% if acoustic %}<th class="num" title="Energy-equivalent level">Leq</th>
+    <th class="num" title="Level exceeded 10% of the time">L10</th><th class="num" title="Level exceeded 90% of the time (background)">L90</th>{% endif %}</tr></thead>
+  <tbody>
+  {% for m in stats %}
+    {% set st = m.stats %}
+    <tr>
+      <td><a href="{{ url_for('web.monitor_dashboard', mid=m.id) }}">{{ m.name }}</a></td>
+      <td>{{ m.unit }}</td>
+      <td class="num">{{ '{:,}'.format(st.count) }}</td>
+      {% for k in ['min', 'max', 'avg'] + (['leq', 'l10', 'l90'] if acoustic else []) %}
+      <td class="num">{{ '%.1f'|format(st[k]) if st[k] is not none else '—' }}</td>
+      {% endfor %}
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<div class="chart-wrap"><canvas id="chart"></canvas></div>
+{% endif %}
+
+<form method="post" action="{{ url_for('web.show_delete', sid=show.id) }}" class="danger-zone"
+      data-confirm="Delete show &quot;{{ show.name }}&quot;? Readings are not affected.">
+  <button type="submit" class="link danger">Delete show</button>
+</form>
+
+{% if show.status != 'upcoming' %}
+<script>
+(async function () {
+  const p = new URLSearchParams({ ids: {{ show.monitor_ids|join(',')|tojson }},
+    start: {{ show.starts_at|tojson }}, end: {{ show.ends_at|tojson }}, max_points: '1500' });
+  {% if show.auto_detect %}
+  p.set('detect', '1'); p.set('window_minutes', {{ show.detect.window_minutes|tojson }});
+  p.set('min_step', {{ show.detect.min_step|tojson }});
+  {% if show.detect.monitor %}p.set('detect_monitor', {{ show.detect.monitor|tojson }});{% endif %}
+  {% endif %}
+  const r = await fetch(`/data/overlay?${p}`);
+  if (!r.ok) return;
+  const j = await r.json();
+  const axisFor = {};
+  const scales = { x: { type: 'time', grid: {},
+                        min: new Date(j.start).valueOf(), max: new Date(j.end).valueOf() } };
+  j.monitors.forEach(m => {
+    if (m.unit in axisFor) return;
+    const i = Object.keys(axisFor).length, id = i ? `y${i}` : 'y';
+    axisFor[m.unit] = id;
+    scales[id] = { position: i % 2 ? 'right' : 'left', title: { display: true, text: m.unit },
+                   grid: { drawOnChartArea: i === 0 } };
+  });
+  new Chart(document.getElementById('chart'), {
+    type: 'line',
+    data: { datasets: j.monitors.map(m => ({ label: `${m.name} (${m.unit})`, borderColor: m.color, borderWidth: 1.3,
+      pointRadius: 0, pointHitRadius: 6, yAxisID: axisFor[m.unit],
+      data: (pts => Spot.breakAtGaps(pts, Spot.findGaps(pts, { bucketMs: (m.bucket_seconds || 0) * 1000 })))(
+        m.points.map(pt => ({ x: new Date(pt.ts).valueOf(), y: pt.value }))) })) },
+    options: { animation: false, parsing: false, normalized: true, scales,
+               interaction: { mode: 'nearest', axis: 'x', intersect: false },
+               plugins: { legend: { position: 'bottom' },
+                 spotRange: j.detection ? {
+                   start: new Date(j.range_start).valueOf(), end: new Date(j.range_end).valueOf(),
+                   scheduledStart: new Date(j.detection.scheduled_start).valueOf(),
+                   scheduledEnd: new Date(j.detection.scheduled_end).valueOf(),
+                   startLabel: j.detection.start_detected ? 'detected start' : 'start',
+                   endLabel: j.detection.end_detected ? 'detected end' : 'end' } : {} } },
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

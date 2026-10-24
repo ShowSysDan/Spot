@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}{{ 'New show' if is_new else 'Edit show' }} — Spot{% endblock %}
+{% block content %}
+<h1>{{ 'New show' if is_new else 'Edit show' }}</h1>
+{% if not is_new and show.source == 'api' %}
+<p class="flash flash-error">This show was created through the API{% if show.external_id %} (ref <code>{{ show.external_id }}</code>){% endif %}.
+  Changes made here may be overwritten the next time that system updates it.</p>
+{% endif %}
+<form method="post" class="form" id="show-form">
+  <label>Name
+    <input type="text" name="name" required maxlength="200" value="{{ show.name if show else '' }}"
+           placeholder="e.g. Hamilton — Fri 7:30 PM">
+  </label>
+  <div class="form-row">
+    <label>Start <input type="datetime-local" name="start" step="1" required></label>
+    <label>End <input type="datetime-local" name="end" step="1" required></label>
+  </div>
+  <input type="hidden" name="start_iso"><input type="hidden" name="end_iso">
+  <small class="muted tz-note">Times are US Eastern, 24-hour.</small>
+
+  <div class="field">
+    <span>Monitors</span>
+    <div class="picker-inline">
+      {% for loc, group in monitors|groupby('location_key') %}
+      <div class="pick-group">
+        <div class="pick-unit">{{ loc or 'No location' }}</div>
+        {% for m in group %}
+        <label class="pick">
+          <input type="checkbox" name="ids" value="{{ m.id }}" {% if show and m.id in (show.monitor_ids or []) %}checked{% endif %}>
+          <span class="swatch" style="background: {{ m.display_color }}"></span><span>{{ m.name }}</span>
+          <span class="muted">{{ m.unit }}</span>
+        </label>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <fieldset class="group">
+    <legend>Actual start and end</legend>
+    {% set det = show.detect if show and show.detect else {} %}
+    <label class="checkbox">
+      <input type="checkbox" name="auto_detect" {% if show and show.auto_detect %}checked{% endif %}>
+      Find the real curtain-up and curtain-down in the sound levels and report on those
+    </label>
+    <div class="form-row">
+      <label>Search window (± minutes)
+        <input type="number" name="detect_window_minutes" min="1" max="60" value="{{ det.window_minutes or 15 }}">
+      </label>
+      <label>Minimum level change (dB)
+        <input type="number" name="detect_min_step" min="0.5" max="60" step="0.5" value="{{ det.min_step or 6 }}">
+      </label>
+      <label>Listen to
+        <select name="detect_monitor_id">
+          <option value="">First dB monitor in the show</option>
+          {% for m in monitors if m.unit.lower().startswith('db') %}
+          <option value="{{ m.id }}" {% if det.monitor == m.id %}selected{% endif %}>{{ m.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+    <small class="muted">
+      Spot looks within the window around the scheduled start for the biggest sustained jump in level
+      (2-minute medians, so single claps don't count) and around the scheduled end for the biggest drop.
+      If neither is at least the minimum change, the scheduled time is used. The show page shows what was found.
+    </small>
+  </fieldset>
+
+  <label>Notes <textarea name="notes" rows="2">{{ show.notes if show and show.notes else '' }}</textarea></label>
+
+  <fieldset class="group">
+    <legend>Send the report after the show <span class="muted">(optional)</span></legend>
+    <label>E-mail to
+      <input type="text" name="email_to" value="{{ show.email_to if show and show.email_to else '' }}"
+             placeholder="stage.manager@example.org, audio@example.org">
+      {% if not email_on %}<small class="muted">E-mail isn't set up yet (SPOT_SMTP_HOST) — see <a href="{{ url_for('web.setup') }}">Setup</a>.</small>{% endif %}
+    </label>
+    <label>Callback URL
+      <input type="text" name="callback_url" value="{{ show.callback_url if show and show.callback_url else '' }}"
+             placeholder="https://321theater.example.org/hooks/spot">
+      <small class="muted">Spot POSTs the PDF and statistics here (multipart/form-data — see docs/API.md).</small>
+    </label>
+    <small class="muted">Sent about 5 minutes after the show ends, so late readings are included. Retries with backoff if delivery fails.</small>
+  </fieldset>
+
+  <div class="row">
+    <button type="submit" class="primary">Save show</button>
+    <a href="{{ url_for('web.show_detail', sid=show.id) if not is_new else url_for('web.shows') }}" class="button">Cancel</a>
+  </div>
+</form>
+<script>
+(function () {
+  const f = document.getElementById('show-form');
+  const init = { start: {{ (show.starts_at if show else none) | tojson }}, end: {{ (show.ends_at if show else none) | tojson }} };
+  const now = new Date();
+  f.start.value = Spot.toLocalInput(init.start ? new Date(init.start) : new Date(Math.ceil(now / 36e5) * 36e5));
+  f.end.value = Spot.toLocalInput(init.end ? new Date(init.end) : new Date(new Date(Spot.toIso(f.start.value)).valueOf() + 3 * 36e5));
+  f.addEventListener('submit', () => {
+    f.start_iso.value = Spot.toIso(f.start.value);
+    f.end_iso.value = Spot.toIso(f.end.value);
+  });
+})();
+</script>
+{% endblock %}

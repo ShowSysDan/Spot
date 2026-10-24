@@ -1,11 +1,27 @@
 {% extends "base.html" %}
 {% block title %}{{ monitor.name }} — Spot{% endblock %}
 {% block content %}
-<h1>{{ monitor.name }}</h1>
+<h1><span class="swatch big" style="background: {{ monitor.display_color }}"></span>{{ monitor.name }}</h1>
 {% if monitor.description %}<p class="muted">{{ monitor.description }}</p>{% endif %}
+{% include "_alert_banner.html" %}
 
 <dl class="meta">
   <dt>Unit</dt><dd>{{ monitor.unit }}</dd>
+  {% if monitor.location %}<dt>Location</dt><dd>{{ monitor.location }}</dd>{% endif %}
+  <dt>Alerts</dt>
+  <dd>
+    {% if monitor.alerting %}
+      {% if monitor.alert_high is not none %}above <strong>{{ monitor.alert_high }} {{ monitor.unit }}</strong>{% endif %}
+      {% if monitor.alert_high is not none and monitor.alert_low is not none %} · {% endif %}
+      {% if monitor.alert_low is not none %}below <strong>{{ monitor.alert_low }} {{ monitor.unit }}</strong>{% endif %}
+      {% if (monitor.alert_high is not none or monitor.alert_low is not none) %}
+        <span class="muted">({{ (monitor.alert_window_seconds ~ ' s average') if monitor.alert_window_seconds else 'latest reading' }})</span>
+      {% endif %}
+      {% if monitor.alert_stale_seconds %}{% if monitor.alert_high is not none or monitor.alert_low is not none %} · {% endif %}no data for {{ monitor.alert_stale_seconds }} s{% endif %}
+    {% else %}
+      <span class="muted">off</span>
+    {% endif %}
+  </dd>
   <dt>Listener</dt>
   <dd>
     {{ monitor.listener_type|upper }}{% if monitor.port %} on port <strong>{{ monitor.port }}</strong>{% endif %}
@@ -39,7 +55,7 @@
     {% endif %}
     {% if monitor.effective_retention_days %}
       <form method="post" action="{{ url_for('web.monitor_purge', mid=monitor.id) }}" class="inline"
-            onsubmit="return confirm('Purge readings older than {{ monitor.effective_retention_days }} days now?');">
+            data-confirm="Purge readings older than {{ monitor.effective_retention_days }} days now?">
         <button type="submit" class="link">Purge now</button>
       </form>
     {% endif %}
@@ -57,7 +73,8 @@
       <span class="muted">full precision</span>
     {% endif %}
   </dd>
-  <dt>Auth token</dt><dd><code>{{ monitor.auth_token }}</code></dd>
+  <dt>Auth token</dt><dd><code>{{ monitor.auth_token }}</code>
+    <button type="button" class="link" data-copy="{{ monitor.auth_token }}">Copy</button></dd>
 </dl>
 
 {% if monitor.listener_type != 'modbus' %}
@@ -66,23 +83,23 @@
 # Numeric reading
 curl -X POST -H "Content-Type: application/json" \
   -d '{"value": 92.3}' \
-  http://HOST:WEB_PORT/api/ingest/{{ monitor.auth_token }}
+  {{ request.host_url }}api/ingest/{{ monitor.auth_token }}
 
 # Reading with label
 curl -X POST -H "Content-Type: application/json" \
   -d '{"value": 92.3, "label": "Show Start"}' \
-  http://HOST:WEB_PORT/api/ingest/{{ monitor.auth_token }}
+  {{ request.host_url }}api/ingest/{{ monitor.auth_token }}
 
 # Event marker only
 curl -X POST -H "Content-Type: text/plain" \
   --data 'Fire Alarm' \
-  http://HOST:WEB_PORT/api/event/{{ monitor.auth_token }}
+  {{ request.host_url }}api/event/{{ monitor.auth_token }}
 {%- elif monitor.listener_type == 'tcp' -%}
 # Newline-terminated lines: "value", "value,label", or just "label"
-printf '92.3\n92.5,Show Start\nFire Alarm\n' | nc HOST {{ monitor.port }}
+printf '92.3\n92.5,Show Start\nFire Alarm\n' | nc {{ request.host.split(':')[0] }} {{ monitor.port }}
 {%- else -%}
 # UDP datagrams: "value", "value,label", or just "label"
-printf '92.3' | nc -u -w1 HOST {{ monitor.port }}
+printf '92.3' | nc -u -w1 {{ request.host.split(':')[0] }} {{ monitor.port }}
 {%- endif %}</pre>
 {% else %}
 <p class="muted">
@@ -95,9 +112,14 @@ printf '92.3' | nc -u -w1 HOST {{ monitor.port }}
 <div class="row">
   <a class="button" href="{{ url_for('web.monitor_dashboard', mid=monitor.id) }}">Live dashboard</a>
   <a class="button" href="{{ url_for('web.monitor_query', mid=monitor.id) }}">Query &amp; export</a>
+  <a class="button" href="{{ url_for('web.reports', ids=monitor.id) }}">Report</a>
   <a class="button" href="{{ url_for('web.monitor_edit', mid=monitor.id) }}">Edit</a>
+  <form method="post" action="{{ url_for('web.monitor_toggle', mid=monitor.id) }}" class="inline">
+    <input type="hidden" name="next" value="{{ url_for('web.monitor_detail', mid=monitor.id) }}">
+    <button type="submit" class="button">{{ 'Disable' if monitor.enabled else 'Enable' }}</button>
+  </form>
   <form method="post" action="{{ url_for('web.monitor_clear_data', mid=monitor.id) }}" class="inline"
-        onsubmit="return confirm('Delete ALL readings for {{ monitor.name }}? This cannot be undone. The monitor itself will be kept.');">
+        data-confirm="Delete ALL readings for &quot;{{ monitor.name }}&quot;? This cannot be undone. The monitor itself will be kept.">
     <button type="submit" class="button danger-btn">Delete all data</button>
   </form>
 </div>

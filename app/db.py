@@ -66,6 +66,39 @@ def session_scope() -> Iterator[Session]:
         s.close()
 
 
+# Columns added after the first release. create_all() only creates missing
+# tables, so existing installs get these via idempotent ALTERs. Append new
+# entries here; never edit or reorder old ones. Each is
+# (table, column, SQL type + constraints).
+_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("monitors", "retention_days", "INTEGER"),
+    ("monitors", "value_regex", "TEXT"),
+    ("monitors", "modbus_device_id",
+     'INTEGER REFERENCES "{schema}".modbus_devices(id) ON DELETE CASCADE'),
+    ("monitors", "modbus_register_address", "INTEGER"),
+    ("monitors", "modbus_data_type", "VARCHAR(16)"),
+    ("monitors", "decimal_places", "INTEGER"),
+    ("monitors", "location", "VARCHAR(120)"),
+    ("monitors", "color", "VARCHAR(16)"),
+    ("monitors", "alert_high", "DOUBLE PRECISION"),
+    ("monitors", "alert_low", "DOUBLE PRECISION"),
+    ("monitors", "alert_window_seconds", "INTEGER"),
+    ("monitors", "alert_stale_seconds", "INTEGER"),
+    ("shows", "auto_detect", "BOOLEAN NOT NULL DEFAULT FALSE"),
+    ("shows", "detect_monitor_id",
+     'INTEGER REFERENCES "{schema}".monitors(id) ON DELETE SET NULL'),
+    ("shows", "detect_window_minutes", "INTEGER NOT NULL DEFAULT 15"),
+    ("shows", "detect_min_step", "DOUBLE PRECISION NOT NULL DEFAULT 6"),
+)
+
+
+# Other in-place type changes, applied every start (all idempotent).
+_ALTERED_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    # Widened from VARCHAR(8) to fit "modbus".
+    ("monitors", "listener_type", "VARCHAR(16)"),
+)
+
+
 def init_schema(cfg: Config) -> None:
     """Ensure the schema, tables, and idempotent column migrations are applied."""
     from .models import Base
@@ -79,36 +112,15 @@ def init_schema(cfg: Config) -> None:
         tbl.schema = sch
     Base.metadata.create_all(eng)
 
-    # Idempotent column migrations for existing installs.
     with eng.begin() as conn:
-        conn.exec_driver_sql(
-            f'ALTER TABLE IF EXISTS "{sch}".monitors '
-            f'ADD COLUMN IF NOT EXISTS retention_days INTEGER'
-        )
-        conn.exec_driver_sql(
-            f'ALTER TABLE IF EXISTS "{sch}".monitors '
-            f'ADD COLUMN IF NOT EXISTS value_regex TEXT'
-        )
-        conn.exec_driver_sql(
-            f'ALTER TABLE IF EXISTS "{sch}".monitors '
-            f'ADD COLUMN IF NOT EXISTS modbus_device_id INTEGER '
-            f'REFERENCES "{sch}".modbus_devices(id) ON DELETE CASCADE'
-        )
-        conn.exec_driver_sql(
-            f'ALTER TABLE IF EXISTS "{sch}".monitors '
-            f'ADD COLUMN IF NOT EXISTS modbus_register_address INTEGER'
-        )
-        conn.exec_driver_sql(
-            f'ALTER TABLE IF EXISTS "{sch}".monitors '
-            f'ADD COLUMN IF NOT EXISTS modbus_data_type VARCHAR(16)'
-        )
-        conn.exec_driver_sql(
-            f'ALTER TABLE IF EXISTS "{sch}".monitors '
-            f'ADD COLUMN IF NOT EXISTS decimal_places INTEGER'
-        )
-        # listener_type widened from VARCHAR(8) to VARCHAR(16) to fit "modbus".
-        conn.exec_driver_sql(
-            f'ALTER TABLE IF EXISTS "{sch}".monitors '
-            f'ALTER COLUMN listener_type TYPE VARCHAR(16)'
-        )
+        for table, column, ddl in _ADDED_COLUMNS:
+            conn.exec_driver_sql(
+                f'ALTER TABLE IF EXISTS "{sch}".{table} '
+                f'ADD COLUMN IF NOT EXISTS {column} {ddl.format(schema=sch)}'
+            )
+        for table, column, sql_type in _ALTERED_COLUMNS:
+            conn.exec_driver_sql(
+                f'ALTER TABLE IF EXISTS "{sch}".{table} '
+                f'ALTER COLUMN {column} TYPE {sql_type}'
+            )
     log.info("Schema '%s' ready", sch)

@@ -3,12 +3,11 @@ from __future__ import annotations
 import logging
 import socket
 import threading
-from typing import Dict
-
 from .config import Config
 from .db import session_scope
 from .ingest import MalformedData, ingest_raw
 from .models import Monitor
+from .workers import WorkerRegistry
 
 log = logging.getLogger("spot.listeners")
 
@@ -18,6 +17,10 @@ MAX_LINE_BYTES = 8192
 RECV_CHUNK = 4096
 MAX_DATAGRAM = 8192
 TCP_IDLE_TIMEOUT = 60.0
+# Cap on simultaneous TCP connections per listener. Each connection gets its
+# own handler thread; without a cap a misbehaving client (or a port scanner)
+# could open connections until the process runs out of threads/memory.
+MAX_TCP_CONNECTIONS = 32
 
 
 class _BaseListener(threading.Thread):
@@ -30,11 +33,13 @@ class _BaseListener(threading.Thread):
         self.monitor_name = monitor_name
         self.port = port
         self.value_regex = value_regex
-        self._stop = threading.Event()
+        # Named _stop_event (not _stop) so it can't shadow the private
+        # Thread._stop() method that Python <= 3.12 calls from join()/is_alive().
+        self._stop_event = threading.Event()
         self._sock: socket.socket | None = None
 
     def stop(self) -> None:
-        self._stop.set()
+        self._stop_event.set()
         try:
             if self._sock:
                 self._sock.close()
@@ -63,6 +68,28 @@ class _BaseListener(threading.Thread):
 class TCPListener(_BaseListener):
     proto = "tcp"
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._slots = threading.BoundedSemaphore(MAX_TCP_CONNECTIONS)
+        self._conns: set[socket.socket] = set()
+        self._conns_lock = threading.Lock()
+
+    def stop(self) -> None:
+        super().stop()
+        # Close live client sockets so their handler threads exit now rather
+        # than lingering until TCP_IDLE_TIMEOUT.
+        with self._conns_lock:
+            conns = list(self._conns)
+        for c in conns:
+            try:
+                c.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            try:
+                c.close()
+            except OSError:
+                pass
+
     def run(self) -> None:
         try:
             srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -78,13 +105,23 @@ class TCPListener(_BaseListener):
             return
 
         try:
-            while not self._stop.is_set():
+            while not self._stop_event.is_set():
                 try:
                     conn, addr = srv.accept()
                 except socket.timeout:
                     continue
                 except OSError:
                     break
+                if not self._slots.acquire(blocking=False):
+                    log.warning("TCP connection limit (%d) reached; rejecting monitor=%s src=%s:%s",
+                                MAX_TCP_CONNECTIONS, self.monitor_name, addr[0], addr[1])
+                    try:
+                        conn.close()
+                    except OSError:
+                        pass
+                    continue
+                with self._conns_lock:
+                    self._conns.add(conn)
                 threading.Thread(
                     target=self._handle_conn, args=(conn, addr), daemon=True,
                     name=f"tcp-conn-{self.monitor_name}",
@@ -101,7 +138,7 @@ class TCPListener(_BaseListener):
         try:
             conn.settimeout(TCP_IDLE_TIMEOUT)
             buf = bytearray()
-            while not self._stop.is_set():
+            while not self._stop_event.is_set():
                 try:
                     chunk = conn.recv(RECV_CHUNK)
                 except socket.timeout:
@@ -123,9 +160,12 @@ class TCPListener(_BaseListener):
                     log.warning("TCP line cap exceeded; resetting buffer monitor=%s src=%s",
                                 self.monitor_name, src)
                     buf.clear()
-            if buf:
+            if buf and not self._stop_event.is_set():
                 self._ingest_line(bytes(buf), src)
         finally:
+            with self._conns_lock:
+                self._conns.discard(conn)
+            self._slots.release()
             try:
                 conn.close()
             except Exception:
@@ -149,7 +189,7 @@ class UDPListener(_BaseListener):
             return
 
         try:
-            while not self._stop.is_set():
+            while not self._stop_event.is_set():
                 try:
                     data, addr = srv.recvfrom(MAX_DATAGRAM)
                 except socket.timeout:
@@ -168,50 +208,29 @@ class UDPListener(_BaseListener):
 
 
 class ListenerManager:
+    """One TCPListener/UDPListener thread per enabled TCP/UDP monitor."""
+
     def __init__(self, cfg: Config):
         self.cfg = cfg
-        self._lock = threading.Lock()
-        self._threads: Dict[int, _BaseListener] = {}
+        self._workers: WorkerRegistry[_BaseListener] = WorkerRegistry()
 
     def start_enabled(self) -> None:
         with session_scope() as s:
             for m in s.query(Monitor).filter(Monitor.enabled.is_(True)).all():
-                if m.listener_type in ("tcp", "udp") and m.port:
-                    self._spawn(m.id, m.name, m.listener_type, m.port, m.value_regex)
+                self.start_monitor(m.id, m.name, m.listener_type, m.port, m.value_regex)
 
     def start_monitor(self, monitor_id: int, name: str, listener_type: str,
                       port: int | None, value_regex: str | None = None) -> None:
         if listener_type not in ("tcp", "udp") or not port:
             return
-        self._spawn(monitor_id, name, listener_type, port, value_regex)
+        cls = TCPListener if listener_type == "tcp" else UDPListener
+        self._workers.spawn(monitor_id, lambda: cls(monitor_id, name, port, value_regex))
 
     def stop_monitor(self, monitor_id: int) -> None:
-        with self._lock:
-            t = self._threads.pop(monitor_id, None)
-        if t:
-            t.stop()
-            t.join(timeout=3.0)
+        self._workers.stop(monitor_id)
 
     def shutdown(self) -> None:
-        with self._lock:
-            threads = list(self._threads.values())
-            self._threads.clear()
-        for t in threads:
-            t.stop()
-        for t in threads:
-            t.join(timeout=3.0)
-
-    def _spawn(self, monitor_id: int, name: str, listener_type: str, port: int,
-               value_regex: str | None = None) -> None:
-        with self._lock:
-            existing = self._threads.get(monitor_id)
-            if existing and existing.is_alive():
-                return
-            cls = TCPListener if listener_type == "tcp" else UDPListener
-            t = cls(monitor_id, name, port, value_regex)
-            self._threads[monitor_id] = t
-        t.start()
+        self._workers.shutdown()
 
     def status(self) -> dict[int, bool]:
-        with self._lock:
-            return {mid: t.is_alive() for mid, t in self._threads.items()}
+        return self._workers.status()

@@ -1,12 +1,22 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, tzinfo
+from zoneinfo import ZoneInfo
 from typing import Any
 
 from flask import abort
 from sqlalchemy.orm import Session
 
 from .models import ModbusDevice, Monitor
+
+# Series colours, tuned for the dark theme. A monitor without its own colour
+# gets PALETTE[id % len(PALETTE)], so it looks the same on every page and PDF.
+PALETTE: tuple[str, ...] = ("#58a6ff", "#f85149", "#56d364", "#bc8cff",
+                            "#e3b341", "#39c5cf", "#ff7b72", "#ec6cb9")
+
+
+def monitor_color(monitor_id: int, color: str | None) -> str:
+    return color or PALETTE[monitor_id % len(PALETTE)]
 
 
 def parse_iso_ts(s: str) -> datetime:
@@ -20,13 +30,45 @@ def parse_iso_ts(s: str) -> datetime:
     return dt
 
 
+# Every time a person sees — pages, PDFs, CSVs, e-mails — is shown in this
+# zone, 24-hour. Storage and the wire format stay UTC. Set from
+# SPOT_TIMEZONE by create_app(); America/New_York switches EST/EDT itself.
+DEFAULT_TIMEZONE = "America/New_York"
+_display_tz: tzinfo = ZoneInfo(DEFAULT_TIMEZONE)
+
+
+def set_display_timezone(name: str) -> None:
+    global _display_tz
+    _display_tz = ZoneInfo(name)
+
+
+def display_tz() -> tzinfo:
+    return _display_tz
+
+
+def now_local() -> datetime:
+    return datetime.now(_display_tz)
+
+
 def to_local(dt: datetime | None) -> datetime | None:
-    """Convert a UTC-stored datetime to the server's local timezone."""
+    """Convert a UTC-stored datetime to the display timezone."""
     if dt is None:
         return None
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone()  # uses system local TZ (TZ env or /etc/localtime)
+    return dt.astimezone(_display_tz)
+
+
+def iso_local(dt: datetime | None) -> str | None:
+    """ISO-8601 in the display zone with its offset, e.g. 2026-10-24T17:39:24-04:00.
+    Unambiguous for machines, readable for people; used by the external API."""
+    local = to_local(dt)
+    return local.isoformat() if local else None
+
+
+def local_naive_to_utc(dt: datetime) -> datetime:
+    """Interpret a naive wall-clock time as display-timezone time; return UTC."""
+    return dt.replace(tzinfo=_display_tz).astimezone(timezone.utc)
 
 
 def format_local(dt: datetime | None, fmt: str = "%Y-%m-%d %H:%M:%S %Z") -> str:
@@ -97,7 +139,17 @@ def monitor_view(m: Monitor) -> dict[str, Any]:
         "modbus_data_type": m.modbus_data_type,
         "modbus_device_name": m.modbus_device.name if m.modbus_device else None,
         "decimal_places": m.decimal_places,
+        "location": m.location,
+        "color": m.color,
+        "display_color": monitor_color(m.id, m.color),
+        "alert_high": m.alert_high,
+        "alert_low": m.alert_low,
+        "alert_window_seconds": m.alert_window_seconds,
+        "alert_stale_seconds": m.alert_stale_seconds,
+        "alerting": (m.alert_high is not None or m.alert_low is not None
+                     or bool(m.alert_stale_seconds)),
     }
+
 
 
 def format_bytes(n: int | float | None) -> str:

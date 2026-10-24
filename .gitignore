@@ -11,3 +11,4 @@ instance/
 .pytest_cache/
 .cache/
 .DS_Store
+wheelhouse/

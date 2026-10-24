@@ -1,94 +1,129 @@
 {% extends "base.html" %}
 {% block title %}{{ monitor.name }} — Query — Spot{% endblock %}
 {% block content %}
-<h1>{{ monitor.name }} <span class="muted">query &amp; export</span></h1>
+<div class="page-head">
+  <h1>{{ monitor.name }} <span class="muted">query &amp; export</span></h1>
+  <div class="page-tools">
+    <a class="button" href="{{ url_for('web.monitor_dashboard', mid=monitor.id) }}">Live dashboard</a>
+  </div>
+</div>
 
 <form id="qform" class="form inline-form">
-  <label>Start (local) <input type="datetime-local" name="start" step="1" required></label>
-  <label>End (local)   <input type="datetime-local" name="end" step="1" required></label>
+  <label>Start <input type="datetime-local" name="start" step="1" required></label>
+  <label>End <input type="datetime-local" name="end" step="1" required></label>
   <button type="submit" class="primary">Query</button>
   <button type="button" id="btn-csv">Export CSV</button>
   <button type="button" id="btn-pdf">Export PDF</button>
 </form>
+<div class="chips" id="presets" role="group" aria-label="Quick ranges">
+  <button type="button" data-preset="1h" class="active">Last hour</button>
+  <button type="button" data-preset="6h">6 h</button>
+  <button type="button" data-preset="24h">24 h</button>
+  <button type="button" data-preset="7d">7 days</button>
+  <button type="button" data-preset="30d">30 days</button>
+  <button type="button" data-preset="today">Today</button>
+  <button type="button" data-preset="yesterday">Yesterday</button>
+  <button type="button" data-preset="week">This week</button>
+</div>
+<p class="muted tz-note">Times are US Eastern, 24-hour.</p>
 
 <div id="summary" class="summary"></div>
 <div class="chart-wrap"><canvas id="chart"></canvas></div>
+<p class="muted" id="bucket-note"></p>
 
 <script>
-const monitorId = {{ monitor.id }};
-const unit = {{ monitor.unit | tojson }};
-const form = document.getElementById('qform');
+(function () {
+  const monitorId = {{ monitor.id }};
+  const unit = {{ monitor.unit | tojson }};
+  const decimals = {{ monitor.decimal_places | tojson }};
+  const color = {{ monitor.display_color | tojson }};
+  const fmt = v => Spot.fmtValue(v, decimals);
+  const form = document.getElementById('qform');
 
-(function setDefaults() {
-  const end = new Date();
-  const start = new Date(end.getTime() - 60 * 60 * 1000);
-  form.start.value = toLocalInput(start);
-  form.end.value = toLocalInput(end);
-})();
+  const r = Spot.presetRange('1h');
+  form.start.value = Spot.toLocalInput(r[0]);
+  form.end.value = Spot.toLocalInput(r[1]);
+  Spot.bindPresets(document.getElementById('presets'), form, runQuery);
 
-function toLocalInput(d) {
-  // datetime-local expects browser-local time (no Z, no offset).
-  const pad = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-}
-function toIso(s) {
-  // Treat the input as browser-local time and convert to ISO-UTC for the server.
-  return s ? new Date(s).toISOString() : '';
-}
-function rangeQs() {
-  const p = new URLSearchParams();
-  p.set('start', toIso(form.start.value));
-  p.set('end',   toIso(form.end.value));
-  return p.toString();
-}
-
-const ctx = document.getElementById('chart');
-const chart = new Chart(ctx, {
-  type: 'line',
-  data: { datasets: [{ label: unit, data: [], borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.12)', borderWidth: 1.2, pointRadius: 0, fill: true }] },
-  options: {
-    animation: false, parsing: false,
-    scales: {
-      x: { type: 'time', grid: { color: '#2c313a' } },
-      y: { title: { display: true, text: unit }, grid: { color: '#2c313a' } }
-    },
-    plugins: { legend: { display: false } }
+  function rangeQs() {
+    return new URLSearchParams({ start: Spot.toIso(form.start.value), end: Spot.toIso(form.end.value) }).toString();
   }
-});
 
-async function runQuery() {
-  const qs = rangeQs();
-  const [series, summary] = await Promise.all([
-    fetch(`/data/monitor/${monitorId}/series?${qs}`).then(r => r.json()),
-    fetch(`/data/monitor/${monitorId}/summary?${qs}`).then(r => r.json()),
-  ]);
-  chart.data.datasets[0].data = series.points.map(p => ({ x: new Date(p.ts).valueOf(), y: p.value }));
-  chart.update();
-  renderSummary(summary, series.events);
-}
+  const chart = new Chart(document.getElementById('chart'), {
+    type: 'line',
+    data: { datasets: [
+      { label: 'min', data: [], borderWidth: 0, pointRadius: 0, fill: false },
+      { label: 'max', data: [], borderWidth: 0, pointRadius: 0, fill: '-1', backgroundColor: Spot.alpha(color, 0.16) },
+      { label: unit, data: [], borderColor: color, backgroundColor: Spot.alpha(color, 0.12),
+        borderWidth: 1.2, pointRadius: 0, pointHitRadius: 6, fill: 'origin' },
+    ] },
+    options: {
+      animation: false, parsing: false, normalized: true,
+      interaction: { mode: 'nearest', axis: 'x', intersect: false },
+      scales: {
+        x: { type: 'time', grid: {} },
+        y: { title: { display: true, text: unit }, grid: {} },
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: { filter: i => i.datasetIndex === 2, callbacks: { label: i => `${fmt(i.parsed.y)} ${unit}` } },
+        spotEvents: { events: [] },
+      },
+    },
+  });
 
-function renderSummary(s, events) {
-  const fmt = v => v === null || v === undefined ? '—' : (typeof v === 'number' ? v.toFixed(4).replace(/\.?0+$/,'') : v);
-  const fmtAt = ts => ts ? new Date(ts).toLocaleString() : '—';
-  const div = document.getElementById('summary');
-  div.innerHTML = `
-    <div class="card"><h3>Samples</h3><p>${s.count}</p></div>
-    <div class="card"><h3>Min</h3><p>${fmt(s.min)} ${unit}<br><small>${fmtAt(s.min_at)}</small></p></div>
-    <div class="card"><h3>Max</h3><p>${fmt(s.max)} ${unit}<br><small>${fmtAt(s.max_at)}</small></p></div>
-    <div class="card"><h3>Average</h3><p>${fmt(s.avg)} ${unit}</p></div>
-    <div class="card"><h3>Events</h3><p>${s.events}${events.length ? '<br><small>' + events.slice(0,3).map(e => escapeHtml(e.label)).join(', ') + (events.length>3?'…':'') + '</small>' : ''}</p></div>
-  `;
-}
-function escapeHtml(s) { return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  async function runQuery() {
+    const qs = rangeQs();
+    const [sr, mr] = await Promise.all([
+      fetch(`/data/monitor/${monitorId}/series?${qs}&max_points=2000`),
+      fetch(`/data/monitor/${monitorId}/summary?${qs}`),
+    ]);
+    if (!sr.ok || !mr.ok) {
+      document.getElementById('summary').innerHTML =
+        `<div class="card"><h3>Error</h3><p>${Spot.escapeHtml((await (sr.ok ? mr : sr).text()).slice(0, 200))}</p></div>`;
+      return;
+    }
+    const series = await sr.json(), summary = await mr.json();
+    const bucketed = !!series.bucket_seconds;
+    const gaps = Spot.findGaps(series.points.map(p => ({ x: new Date(p.ts).valueOf() })),
+      { bucketMs: (series.bucket_seconds || 0) * 1000,
+        start: new Date(series.start).valueOf(), end: new Date(series.end).valueOf() });
+    const xy = key => Spot.breakAtGaps(series.points.map(p => ({ x: new Date(p.ts).valueOf(), y: p[key] })), gaps);
+    chart.options.plugins.spotGaps = { gaps };
+    chart.data.datasets[0].data = bucketed ? xy('min') : [];
+    chart.data.datasets[1].data = bucketed ? xy('max') : [];
+    chart.data.datasets[2].data = xy('value');
+    chart.data.datasets[2].fill = bucketed ? false : 'origin';
+    chart.options.scales.x.min = new Date(series.start).valueOf();
+    chart.options.scales.x.max = new Date(series.end).valueOf();
+    chart.options.plugins.spotEvents.events = series.events.map(e => ({ x: new Date(e.ts).valueOf(), label: e.label }));
+    chart.update();
+    document.getElementById('bucket-note').textContent = bucketed
+      ? `Long range: the chart shows ${Spot.fmtDuration(series.bucket_seconds)} averages with the min/max band shaded. Stats and exports use every reading.`
+      : '';
+    renderSummary(summary, series.events);
+  }
 
-form.addEventListener('submit', e => { e.preventDefault(); runQuery(); });
-document.getElementById('btn-csv').addEventListener('click', () => {
-  window.location = `/data/monitor/${monitorId}/export.csv?${rangeQs()}`;
-});
-document.getElementById('btn-pdf').addEventListener('click', () => {
-  window.location = `/data/monitor/${monitorId}/export.pdf?${rangeQs()}`;
-});
+  function renderSummary(s, events) {
+    const at = ts => Spot.fmtDateTime(ts);
+    const u = Spot.escapeHtml(unit);
+    document.getElementById('summary').innerHTML = `
+      <div class="card"><h3>Samples</h3><p>${Spot.fmtInt(s.count)}</p></div>
+      <div class="card"><h3>Min</h3><p>${fmt(s.min)} ${u}</p><small>${at(s.min_at)}</small></div>
+      <div class="card"><h3>Max</h3><p>${fmt(s.max)} ${u}</p><small>${at(s.max_at)}</small></div>
+      <div class="card"><h3>Average</h3><p>${fmt(s.avg)} ${u}</p></div>
+      <div class="card"><h3>Events</h3><p>${s.events}</p>${events.length ? '<small>' +
+        events.slice(0, 3).map(e => Spot.escapeHtml(e.label)).join(', ') + (events.length > 3 ? '…' : '') + '</small>' : ''}</div>`;
+  }
 
-runQuery();
+  form.addEventListener('submit', e => { e.preventDefault(); runQuery(); });
+  document.getElementById('btn-csv').addEventListener('click', () => {
+    window.location = `/data/monitor/${monitorId}/export.csv?${rangeQs()}`;
+  });
+  document.getElementById('btn-pdf').addEventListener('click', () => {
+    window.location = `/data/monitor/${monitorId}/export.pdf?${rangeQs()}`;
+  });
+  runQuery();
+})();
 </script>
 {% endblock %}

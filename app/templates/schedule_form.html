@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}{{ 'New' if not sched else 'Edit' }} schedule — Spot{% endblock %}
+{% block content %}
+<h1>{{ 'New' if not sched else 'Edit' }} scheduled report</h1>
+<form method="post" class="form">
+  <label>Name
+    <input type="text" name="name" required maxlength="200" value="{{ sched.name if sched else '' }}"
+           placeholder="e.g. Daily sound levels — Walt Disney Theater">
+  </label>
+  <div class="form-row">
+    <label>Frequency
+      <select name="cadence" id="cadence">
+        {% for c in cadences %}
+        <option value="{{ c }}" {% if sched and sched.cadence == c %}selected{% endif %}>
+          {{ {'daily': 'Daily — yesterday', 'weekly': 'Weekly — previous 7 days', 'monthly': 'Monthly — previous month (sent on the 1st)'}[c] }}
+        </option>
+        {% endfor %}
+      </select>
+    </label>
+    <label id="weekday-field">Day
+      <select name="weekday">
+        {% for d in weekdays %}
+        <option value="{{ loop.index0 }}" {% if sched and sched.weekday == loop.index0 %}selected{% endif %}>{{ d }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Send at (24-hour, Eastern)
+      <input type="text" name="send_time" required pattern="([01]?\d|2[0-3]):[0-5]\d" placeholder="07:00"
+             value="{{ sched.send_time if sched else '07:00' }}">
+    </label>
+  </div>
+  <label>E-mail to
+    <input type="text" name="email_to" required value="{{ sched.email_to if sched else '' }}"
+           placeholder="ops@example.org, audio@example.org">
+    {% if not email_on %}<small class="off">E-mail isn't set up yet (SPOT_SMTP_HOST).</small>{% endif %}
+  </label>
+  <div class="field">
+    <span>Monitors</span>
+    <div class="picker-inline">
+      {% for loc, group in monitors|groupby('location_key') %}
+      <div class="pick-group">
+        <div class="pick-unit">{{ loc or 'No location' }}</div>
+        {% for m in group %}
+        <label class="pick">
+          <input type="checkbox" name="ids" value="{{ m.id }}" {% if sched and m.id in sched.monitor_ids %}checked{% endif %}>
+          <span class="swatch" style="background: {{ m.display_color }}"></span><span>{{ m.name }}</span>
+          <span class="muted">{{ m.unit }}</span>
+        </label>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  <label class="checkbox">
+    <input type="checkbox" name="enabled" {% if not sched or sched.enabled %}checked{% endif %}> Enabled
+  </label>
+  <div class="row">
+    <button type="submit" class="primary">Save schedule</button>
+    <a class="button" href="{{ url_for('web.schedules') }}">Cancel</a>
+  </div>
+</form>
+<script>
+(function () {
+  const c = document.getElementById('cadence'), w = document.getElementById('weekday-field');
+  const sync = () => (w.hidden = c.value !== 'weekly');
+  c.addEventListener('change', sync); sync();
+})();
+</script>
+{% endblock %}

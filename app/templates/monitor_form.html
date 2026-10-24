@@ -20,6 +20,37 @@
       <option value="hPa"><option value="m/s"><option value="V"><option value="A">
     </datalist>
   </label>
+  <label>Location (optional)
+    <input list="locations" type="text" name="location" maxlength="120"
+           value="{{ monitor.location if monitor and monitor.location else '' }}"
+           placeholder="e.g. Walt Disney Theater, Stage Left rack">
+    <datalist id="locations">
+      {% for loc in locations %}<option value="{{ loc }}">{% endfor %}
+    </datalist>
+    <small class="muted">Groups tiles on the Monitors page and the wall display.</small>
+  </label>
+  <div class="field">
+    <span>Colour</span>
+    {% set cur = monitor.color if monitor and monitor.color else '' %}
+    <div class="swatches" role="radiogroup" aria-label="Colour">
+      <label class="swatch-pick" title="Automatic">
+        <input type="radio" name="color" value="" {% if not cur %}checked{% endif %}>
+        <span class="auto">auto</span>
+      </label>
+      {% for c in palette %}
+      <label class="swatch-pick" title="{{ c }}">
+        <input type="radio" name="color" value="{{ c }}" {% if cur|lower == c %}checked{% endif %}>
+        <span style="background: {{ c }}"></span>
+      </label>
+      {% endfor %}
+      {% set custom = cur and cur|lower not in palette %}
+      <label class="swatch-pick" title="Custom colour">
+        <input type="radio" name="color" value="{{ cur if custom else '#ffffff' }}" id="color-custom-radio" {% if custom %}checked{% endif %}>
+        <input type="color" id="color-custom" value="{{ cur if custom else '#ffffff' }}" aria-label="Custom colour">
+      </label>
+    </div>
+    <small class="muted">Used for this monitor's tile, chart line and PDF reports.</small>
+  </div>
   <label>Listener type
     <select name="listener_type" id="listener_type">
       {% for t in listener_types %}
@@ -39,8 +70,8 @@
   </label>
   {% endif %}
 
-  <fieldset id="modbus_fields" style="border:1px solid var(--border); border-radius:6px; padding:0.85rem 1rem; display:grid; gap:0.9rem;">
-    <legend style="padding:0 0.4rem; color:var(--muted);">Modbus binding</legend>
+  <fieldset id="modbus_fields" class="group">
+    <legend>Modbus binding</legend>
     <label>Modbus device
       <select name="modbus_device_id">
         <option value="">— select a device —</option>
@@ -99,6 +130,37 @@
       <code>—\s*(?P&lt;value&gt;-?\d+(?:\.\d+)?)</code>
     </small>
   </label>
+  <fieldset class="group">
+    <legend>Alerts <span class="muted">(leave blank to turn off)</span></legend>
+    <div class="form-row">
+      <label>Alert above
+        <input type="number" step="any" name="alert_high"
+               value="{{ monitor.alert_high if monitor and monitor.alert_high is not none else '' }}"
+               placeholder="e.g. 95">
+      </label>
+      <label>Alert below
+        <input type="number" step="any" name="alert_low"
+               value="{{ monitor.alert_low if monitor and monitor.alert_low is not none else '' }}"
+               placeholder="e.g. 60">
+      </label>
+      <label>Averaged over (seconds)
+        <input type="number" min="0" max="86400" name="alert_window_seconds"
+               value="{{ monitor.alert_window_seconds if monitor and monitor.alert_window_seconds else '' }}"
+               placeholder="0 = latest reading">
+      </label>
+    </div>
+    <label>Alert when no data for (seconds)
+      <input type="number" min="10" name="alert_stale_seconds"
+             value="{{ monitor.alert_stale_seconds if monitor and monitor.alert_stale_seconds else '' }}"
+             placeholder="blank = off, e.g. 300">
+    </label>
+    <small class="muted">
+      Above/below compare the average over the window (e.g. 60 s), so one
+      loud clap won't trigger an alert. Alerts show on the tile and dashboard,
+      are listed on the <a href="{{ url_for('web.alerts') }}">Alerts</a> page, go
+      to syslog, and are e-mailed / posted to a webhook when those are set up.
+    </small>
+  </fieldset>
   <label>Retention (days)
     <input type="number" name="retention_days" min="1"
            value="{{ monitor.retention_days if monitor and monitor.retention_days else '' }}"
@@ -136,6 +198,10 @@
   function sync() { fs.style.display = (sel.value === 'modbus') ? '' : 'none'; }
   sel.addEventListener('change', sync);
   sync();
+  // The custom colour picker feeds its radio button.
+  const picker = document.getElementById('color-custom');
+  const radio = document.getElementById('color-custom-radio');
+  picker.addEventListener('input', () => { radio.value = picker.value; radio.checked = true; });
 })();
 </script>
 {% endblock %}

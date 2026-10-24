@@ -1,0 +1,248 @@
+{% extends "base.html" %}
+{% block title %}Reports — Spot{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Reports</h1>
+</div>
+<p class="muted">
+  Pick one or more monitors and a time range, preview them on a shared chart, then download a
+  branded <strong>PDF report</strong> or the raw readings as <strong>CSV</strong>.
+  Monitors with the same unit share a Y axis.
+</p>
+
+{% if not monitors %}
+  <p>No monitors yet. <a href="{{ url_for('web.monitor_new') }}">Add one</a>.</p>
+{% else %}
+<div class="report-layout">
+  <aside class="card picker">
+    <div class="picker-head">
+      <h3>Monitors <span class="muted" id="sel-count"></span></h3>
+      <span>
+        <button type="button" class="link" id="sel-all">All</button> ·
+        <button type="button" class="link" id="sel-none">None</button>
+      </span>
+    </div>
+    <input type="search" id="pick-filter" placeholder="Filter…" aria-label="Filter monitors">
+    <div class="picker-list" id="picker">
+      {% for unit, group in monitors|groupby('unit') %}
+      <div class="pick-group">
+        <div class="pick-unit">{{ unit }}</div>
+        {% for m in group %}
+        <label class="pick" data-filter="{{ (m.name ~ ' ' ~ m.unit)|lower }}">
+          <input type="checkbox" name="ids" value="{{ m.id }}"> <span>{{ m.name }}</span>
+          {% if not m.enabled %}<span class="badge off">off</span>{% endif %}
+        </label>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </div>
+  </aside>
+
+  <section>
+    <form id="qform" class="form inline-form">
+      <label>Start <input type="datetime-local" name="start" step="1" required></label>
+      <label>End <input type="datetime-local" name="end" step="1" required></label>
+      <button type="submit" class="primary">Preview</button>
+      <button type="button" id="btn-pdf">Download PDF</button>
+      <button type="button" id="btn-csv">Download CSV</button>
+    </form>
+    <div class="report-tools">
+      {% if shows %}
+      <select id="load-show" aria-label="Load a show">
+        <option value="">Load a show…</option>
+        {% for sh in shows %}
+        <option value="{{ sh.id }}" data-ids="{{ sh.monitor_ids|join(',') }}" data-start="{{ sh.starts_at }}" data-end="{{ sh.ends_at }}">{{ sh.starts_local }} · {{ sh.name }}</option>
+        {% endfor %}
+      </select>
+      {% endif %}
+      <button type="button" id="btn-save-show" class="button">Save as show…</button>
+      <label class="detect-toggle" title="Look near the start and end for the real curtain-up / curtain-down in the sound levels, and report on that instead">
+        <input type="checkbox" id="detect"> Find actual start/end within
+        <select id="detect-window" aria-label="Search window">
+          <option value="5">±5 min</option><option value="10">±10 min</option>
+          <option value="15" selected>±15 min</option><option value="20">±20 min</option><option value="30">±30 min</option>
+        </select>
+      </label>
+    </div>
+    <p class="detect-info" id="detect-info" hidden></p>
+    <div class="chips" id="presets" role="group" aria-label="Quick ranges">
+      <button type="button" data-preset="1h">Last hour</button>
+      <button type="button" data-preset="6h">6 h</button>
+      <button type="button" data-preset="24h" class="active">24 h</button>
+      <button type="button" data-preset="7d">7 days</button>
+      <button type="button" data-preset="30d">30 days</button>
+      <button type="button" data-preset="today">Today</button>
+      <button type="button" data-preset="yesterday">Yesterday</button>
+      <button type="button" data-preset="week">This week</button>
+    </div>
+    <p class="muted tz-note">Times are US Eastern, 24-hour.</p>
+    <p class="muted" id="hint">Select at least one monitor to preview.</p>
+
+    <div class="chart-wrap"><canvas id="chart"></canvas></div>
+
+    <table class="grid" id="summary" hidden>
+      <thead><tr><th>Monitor</th><th>Unit</th><th class="num">Samples</th>
+        <th class="num">Min</th><th class="num">Max</th><th class="num">Average</th>
+        <th class="num acoustic" title="Energy-equivalent level">Leq</th><th class="num acoustic" title="Level exceeded 10% of the time">L10</th>
+        <th class="num acoustic" title="Level exceeded 90% of the time">L90</th><th class="num">Events</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+</div>
+
+<script>
+(function () {
+  const form = document.getElementById('qform');
+  const boxes = [...document.querySelectorAll('#picker input[name=ids]')];
+  const COLORS = ['#58a6ff', '#f85149', '#56d364', '#bc8cff', '#e3b341', '#39c5cf', '#ff7b72', '#ec6cb9'];
+  const selectedIds = () => boxes.filter(b => b.checked).map(b => b.value);
+  let chart = null;
+
+  // Deep links: /reports?ids=1,2&start=ISO&end=ISO (used by "Report this window").
+  const qp = new URLSearchParams(location.search);
+  const want = new Set((qp.get('ids') || '').split(',').filter(Boolean));
+  boxes.forEach(b => (b.checked = want.has(b.value)));
+  if (qp.get('start') && qp.get('end')) {
+    form.start.value = Spot.toLocalInput(new Date(qp.get('start')));
+    form.end.value = Spot.toLocalInput(new Date(qp.get('end')));
+    document.querySelectorAll('#presets [data-preset]').forEach(b => b.classList.remove('active'));
+  } else {
+    const r = Spot.presetRange('24h');
+    form.start.value = Spot.toLocalInput(r[0]);
+    form.end.value = Spot.toLocalInput(r[1]);
+  }
+  Spot.bindPresets(document.getElementById('presets'), form, () => selectedIds().length && run());
+
+  const detectBox = document.getElementById('detect');
+  const detectWin = document.getElementById('detect-window');
+  if (qp.get('detect') === '1') detectBox.checked = true;
+  if (qp.get('window_minutes')) detectWin.value = qp.get('window_minutes');
+  function rangeParams() {
+    const p = new URLSearchParams({ ids: selectedIds().join(','),
+      start: Spot.toIso(form.start.value), end: Spot.toIso(form.end.value) });
+    if (detectBox.checked) { p.set('detect', '1'); p.set('window_minutes', detectWin.value); }
+    return p;
+  }
+  [detectBox, detectWin].forEach(el => el.addEventListener('change', () => selectedIds().length && run()));
+  function syncCount() {
+    const n = selectedIds().length;
+    document.getElementById('sel-count').textContent = n ? `· ${n} selected` : '';
+    ['btn-pdf', 'btn-csv'].forEach(id => (document.getElementById(id).disabled = !n));
+    document.getElementById('hint').hidden = n > 0;
+  }
+  document.getElementById('picker').addEventListener('change', syncCount);
+  document.getElementById('sel-all').addEventListener('click', () => {
+    boxes.forEach(b => { if (!b.closest('.pick').hidden) b.checked = true; }); syncCount();
+  });
+  document.getElementById('sel-none').addEventListener('click', () => { boxes.forEach(b => (b.checked = false)); syncCount(); });
+  document.getElementById('pick-filter').addEventListener('input', e => {
+    const q = e.target.value.trim().toLowerCase();
+    document.querySelectorAll('#picker .pick').forEach(l => (l.hidden = q !== '' && !l.dataset.filter.includes(q)));
+  });
+
+  let runSeq = 0;
+  async function run() {
+    if (!selectedIds().length) return;
+    const seq = ++runSeq;  // only the newest preview may draw
+    const p = rangeParams();
+    p.set('max_points', '2000');
+    p.set('summary', '1');
+    const r = await fetch(`/data/overlay?${p}`);
+    if (!r.ok) { document.getElementById('hint').hidden = false;
+      document.getElementById('hint').textContent = `Error: ${(await r.text()).slice(0, 200)}`; return; }
+    const j = await r.json();
+    if (seq !== runSeq) return;
+
+    // One Y axis per unit, alternating left/right.
+    const axisFor = {};
+    const scales = { x: { type: 'time', grid: {},
+                          min: new Date(j.start).valueOf(), max: new Date(j.end).valueOf() } };
+    j.monitors.forEach(m => {
+      if (m.unit in axisFor) return;
+      const i = Object.keys(axisFor).length;
+      const id = i === 0 ? 'y' : `y${i}`;
+      axisFor[m.unit] = id;
+      scales[id] = { type: 'linear', position: i % 2 === 0 ? 'left' : 'right',
+                     title: { display: true, text: m.unit }, grid: { drawOnChartArea: i === 0 } };
+    });
+    // Break each line where its own data stops; shade gaps only for a single
+    // monitor (with several, one monitor's gap isn't everyone's).
+    const series = j.monitors.map(m => {
+      const pts = m.points.map(pt => ({ x: new Date(pt.ts).valueOf(), y: pt.value }));
+      const gaps = Spot.findGaps(pts, { bucketMs: (m.bucket_seconds || 0) * 1000 });
+      return { pts: Spot.breakAtGaps(pts, gaps), gaps };
+    });
+    const datasets = j.monitors.map((m, i) => ({
+      label: `${m.name} (${m.unit})`,
+      data: series[i].pts,
+      borderColor: m.color || COLORS[i % COLORS.length], borderWidth: 1.3, pointRadius: 0, pointHitRadius: 6,
+      tension: 0, yAxisID: axisFor[m.unit],
+    }));
+    // Destroy the old chart before building a new one so canvases/listeners don't leak.
+    if (chart) chart.destroy();
+    const det = j.detection;
+    const ms = iso => new Date(iso).valueOf();
+    chart = new Chart(document.getElementById('chart'), {
+      type: 'line', data: { datasets },
+      options: { animation: false, parsing: false, normalized: true, scales,
+                 interaction: { mode: 'nearest', axis: 'x', intersect: false },
+                 plugins: { legend: { position: 'bottom' },
+                   spotGaps: { gaps: series.length === 1 ? series[0].gaps : [] },
+                   spotRange: det ? { start: ms(j.range_start), end: ms(j.range_end),
+                                      scheduledStart: ms(det.scheduled_start), scheduledEnd: ms(det.scheduled_end),
+                                      startLabel: det.start_detected ? 'detected start' : 'start',
+                                      endLabel: det.end_detected ? 'detected end' : 'end' } : {} } },
+    });
+    const info = document.getElementById('detect-info');
+    info.hidden = !det;
+    info.textContent = det ? Spot.describeDetection(det) + '. Statistics, PDF and CSV cover the actual range.' : '';
+
+    const tbody = document.querySelector('#summary tbody');
+    tbody.innerHTML = j.monitors.map((m, i) => {
+      const s = m.summary || {};
+      const f = v => Spot.escapeHtml(Spot.fmtValue(v));
+      return `<tr><td><span class="swatch" style="background:${Spot.escapeHtml(m.color || COLORS[i % COLORS.length])}"></span>
+        <a href="/monitors/${m.id}">${Spot.escapeHtml(m.name)}</a></td><td>${Spot.escapeHtml(m.unit)}</td>
+        <td class="num">${Spot.fmtInt(s.count)}</td><td class="num">${f(s.min)}</td>
+        <td class="num">${f(s.max)}</td><td class="num">${f(s.avg)}</td>
+        <td class="num acoustic">${f(s.leq)}</td><td class="num acoustic">${f(s.l10)}</td><td class="num acoustic">${f(s.l90)}</td>
+        <td class="num">${s.events || 0}</td></tr>`;
+    }).join('');
+    // Leq / L10 / L90 only mean something for dB monitors.
+    const acoustic = j.monitors.some(m => m.summary && 'leq' in m.summary);
+    document.querySelectorAll('#summary .acoustic').forEach(c => (c.hidden = !acoustic));
+    document.getElementById('summary').hidden = false;
+    history.replaceState(null, '', `?${rangeParams()}`);
+  }
+
+  form.addEventListener('submit', e => { e.preventDefault(); run(); });
+  document.getElementById('btn-pdf').addEventListener('click', () => {
+    if (selectedIds().length) window.location = `/data/overlay/export.pdf?${rangeParams()}`;
+  });
+  document.getElementById('btn-csv').addEventListener('click', () => {
+    if (selectedIds().length) window.location = `/data/overlay/export.csv?${rangeParams()}`;
+  });
+  const loadShow = document.getElementById('load-show');
+  if (loadShow) loadShow.addEventListener('change', () => {
+    const o = loadShow.selectedOptions[0];
+    if (!o.value) return;
+    const ids = new Set(o.dataset.ids.split(','));
+    boxes.forEach(b => (b.checked = ids.has(b.value)));
+    form.start.value = Spot.toLocalInput(new Date(o.dataset.start));
+    form.end.value = Spot.toLocalInput(new Date(o.dataset.end));
+    document.querySelectorAll('#presets [data-preset]').forEach(b => b.classList.remove('active'));
+    syncCount();
+    run();
+  });
+  document.getElementById('btn-save-show').addEventListener('click', () => {
+    const p = new URLSearchParams({ ids: selectedIds().join(','),
+      start: Spot.toIso(form.start.value), end: Spot.toIso(form.end.value) });
+    location.href = `{{ url_for('web.show_new') }}?${p}`;
+  });
+
+  syncCount();
+  if (selectedIds().length) run();
+})();
+</script>
+{% endif %}
+{% endblock %}

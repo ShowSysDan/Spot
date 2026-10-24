@@ -5,6 +5,10 @@ from dataclasses import dataclass
 from dotenv import load_dotenv
 
 
+def _csv(raw: str) -> tuple[str, ...]:
+    return tuple(s.strip() for s in raw.split(",") if s.strip())
+
+
 @dataclass(frozen=True)
 class Config:
     db_host: str
@@ -26,11 +30,31 @@ class Config:
     janitor_interval_seconds: int
     default_retention_days: int | None
 
+    # Base URL used in links inside e-mails, webhooks and API responses
+    # (e.g. http://spot.internal:6100). Blank = derived from each request.
+    public_url: str = ""
+    # Outgoing mail (alerts + scheduled reports). Blank host = e-mail off.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = "spot@localhost"
+    smtp_security: str = "starttls"  # starttls | ssl | none
+    # Alert delivery.
+    alert_email_to: tuple[str, ...] = ()
+    alert_webhook_url: str = ""
+    alert_interval_seconds: int = 15
+    # Optional lock-down for show-report callback URLs: hostnames and/or
+    # CIDR ranges. Empty = any host except link-local/reserved addresses.
+    callback_allow: tuple[str, ...] = ()
+    # IANA zone for everything people see (24-hour). Storage stays UTC.
+    timezone: str = "America/New_York"
+
     @classmethod
     def from_env(cls) -> "Config":
         load_dotenv()
         allow_raw = os.getenv("SPOT_INGEST_ALLOW", "").strip()
-        allow = tuple(s.strip() for s in allow_raw.split(",") if s.strip()) if allow_raw else ()
+        allow = _csv(allow_raw)
         default_ret_raw = os.getenv("SPOT_DEFAULT_RETENTION_DAYS", "").strip()
         default_ret = int(default_ret_raw) if default_ret_raw else None
         if default_ret is not None and default_ret < 1:
@@ -51,6 +75,18 @@ class Config:
             ingest_allow=allow,
             janitor_interval_seconds=int(os.getenv("SPOT_JANITOR_INTERVAL_SECONDS", "3600")),
             default_retention_days=default_ret,
+            public_url=os.getenv("SPOT_PUBLIC_URL", "").strip().rstrip("/"),
+            smtp_host=os.getenv("SPOT_SMTP_HOST", "").strip(),
+            smtp_port=int(os.getenv("SPOT_SMTP_PORT", "587")),
+            smtp_user=os.getenv("SPOT_SMTP_USER", ""),
+            smtp_password=os.getenv("SPOT_SMTP_PASSWORD", ""),
+            smtp_from=os.getenv("SPOT_SMTP_FROM", "spot@localhost").strip(),
+            smtp_security=os.getenv("SPOT_SMTP_SECURITY", "starttls").strip().lower(),
+            alert_email_to=_csv(os.getenv("SPOT_ALERT_EMAIL_TO", "")),
+            alert_webhook_url=os.getenv("SPOT_ALERT_WEBHOOK_URL", "").strip(),
+            alert_interval_seconds=max(5, int(os.getenv("SPOT_ALERT_INTERVAL_SECONDS", "15"))),
+            callback_allow=_csv(os.getenv("SPOT_CALLBACK_ALLOW", "")),
+            timezone=os.getenv("SPOT_TIMEZONE", "America/New_York").strip() or "America/New_York",
         )
 
     @property

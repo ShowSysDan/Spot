@@ -3,8 +3,9 @@ from __future__ import annotations
 import csv
 import io
 import os
+import statistics
 from datetime import datetime
-from typing import Iterable
+from xml.sax.saxutils import escape as _xml_escape
 
 # Point matplotlib's cache at the install dir (writable under systemd's
 # ProtectHome=read-only) before importing matplotlib. setdefault() lets the
@@ -19,7 +20,8 @@ matplotlib.use("Agg")
 import matplotlib.dates as mdates
 from matplotlib.figure import Figure
 
-from .util import format_local, naive_local, to_local
+from .util import format_local, naive_local, now_local, to_local
+from .version import __version__
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter, landscape
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -46,41 +48,52 @@ except Exception:  # pragma: no cover - graceful fallback if svglib missing
     svg2rlg = None  # type: ignore
 
 
-# Dark theme palette (mirrors app/static/style.css :root vars).
-_BG = colors.HexColor("#0e1116")
-_CARD = colors.HexColor("#161b22")
-_CARD_2 = colors.HexColor("#1c222b")
-_BORDER = colors.HexColor("#2c313a")
-_FG = colors.HexColor("#e6e8eb")
-_MUTED = colors.HexColor("#8a929d")
-_ACCENT = colors.HexColor("#58a6ff")
-_DANGER = colors.HexColor("#f85149")
-
+# Dark theme palette (mirrors app/static/style.css :root vars). Hex strings
+# feed matplotlib and ReportLab <font> markup; the HexColor twins feed
+# ReportLab table/canvas styling.
 _BG_HEX = "#0e1116"
 _CARD_HEX = "#161b22"
+_CARD_2_HEX = "#1c222b"
 _BORDER_HEX = "#2c313a"
 _FG_HEX = "#e6e8eb"
 _MUTED_HEX = "#8a929d"
 _ACCENT_HEX = "#58a6ff"
 _DANGER_HEX = "#f85149"
 
+_BG, _CARD, _CARD_2, _BORDER, _FG, _MUTED, _ACCENT, _DANGER = (
+    colors.HexColor(h) for h in (_BG_HEX, _CARD_HEX, _CARD_2_HEX, _BORDER_HEX,
+                                 _FG_HEX, _MUTED_HEX, _ACCENT_HEX, _DANGER_HEX)
+)
+
 _LOGO_PATH = os.path.join(_SPOT_ROOT, "app", "static", "logo.svg")
 _TAGLINE = "Data acquisition, down to the last spot."
 
 
-def readings_to_csv(rows: Iterable[tuple[datetime, float | None, str | None]]) -> bytes:
-    """CSV with timestamps in the server's local timezone (ISO-8601 with offset)."""
+def iter_csv(rows, include_monitor: bool = False, chunk_rows: int = 2000):
+    """Yield CSV text in chunks, timestamps in the server's local timezone
+    (ISO-8601 with offset). Rows are (ts, value, label) or, with
+    include_monitor, (ts, monitor_name, unit, value, label).
+
+    Lines are buffered `chunk_rows` at a time so a streamed export never
+    holds more than one chunk in memory.
+    """
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["timestamp", "value", "label"])
-    for ts, value, label in rows:
+    w.writerow(["timestamp", "monitor", "unit", "value", "label"] if include_monitor
+               else ["timestamp", "value", "label"])
+    n = 0
+    for row in rows:
+        ts, *lead, value, label = row
         local = to_local(ts)
-        w.writerow([
-            local.isoformat() if local else "",
-            "" if value is None else value,
-            label or "",
-        ])
-    return buf.getvalue().encode("utf-8")
+        w.writerow([local.isoformat() if local else "", *lead,
+                    "" if value is None else value, label or ""])
+        n += 1
+        if n >= chunk_rows:
+            yield buf.getvalue()
+            buf.seek(0)
+            buf.truncate()
+            n = 0
+    yield buf.getvalue()
 
 
 def _style_dark_axes(ax) -> None:
@@ -95,9 +108,13 @@ def _style_dark_axes(ax) -> None:
 
 
 def render_chart_png(monitor_name: str, unit: str,
-                     points: list[tuple[datetime, float]],
-                     events: list[tuple[datetime, str]]) -> bytes:
+                     points: list[dict],
+                     events: list[tuple[datetime, str]],
+                     color: str = _ACCENT_HEX) -> bytes:
     """Render a chart to PNG using the OO matplotlib API.
+
+    `points` are {ts, value} dicts; downsampled points also carry min/max,
+    which are drawn as a faint band behind the average line.
 
     Avoids pyplot's global state, so this is safe under gunicorn threaded workers.
     """
@@ -105,18 +122,24 @@ def render_chart_png(monitor_name: str, unit: str,
     ax = fig.subplots()
     _style_dark_axes(ax)
     if points:
-        xs = [naive_local(p[0]) for p in points]
-        ys = [p[1] for p in points]
-        ax.plot(xs, ys, linewidth=1.2, color=_ACCENT_HEX)
+        xs = [naive_local(p["ts"]) for p in points]
+        gaps = _gap_after([p["ts"] for p in points])
+        _shade_gaps(ax, xs, gaps)
+        if "min" in points[0]:
+            bx, lo, hi = _split_at_gaps(xs, [p["min"] for p in points],
+                                        [p["max"] for p in points], gaps=gaps)
+            ax.fill_between(bx, lo, hi, color=color, alpha=0.18, linewidth=0)
+        px, ys = _split_at_gaps(xs, [p["value"] for p in points], gaps=gaps)
+        ax.plot(px, ys, linewidth=1.2, color=color, **_sparse_markers(xs))
     for ts, label in events:
         local_ts = naive_local(ts)
         ax.axvline(local_ts, color=_DANGER_HEX, linestyle="--", linewidth=0.8, alpha=0.8)
-        ax.annotate(label, xy=(local_ts, 1.0), xycoords=("data", "axes fraction"),
+        ax.annotate(_mpl_text(label), xy=(local_ts, 1.0), xycoords=("data", "axes fraction"),
                     xytext=(2, -10), textcoords="offset points",
                     fontsize=8, color=_DANGER_HEX, rotation=90,
                     verticalalignment="top")
-    ax.set_ylabel(unit)
-    ax.set_xlabel(f"Time ({_local_tz_name()})")
+    ax.set_ylabel(_mpl_text(unit))
+    ax.set_xlabel(f"Time ({_zone_label(points[0]['ts'] if points else None, points[-1]['ts'] if points else None)})")
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d %H:%M:%S"))
     fig.autofmt_xdate()
     fig.tight_layout()
@@ -125,10 +148,68 @@ def render_chart_png(monitor_name: str, unit: str,
     return buf.getvalue()
 
 
-def _local_tz_name() -> str:
-    """Short timezone name for the server (e.g. 'EDT', 'EST', 'UTC')."""
-    name = datetime.now().astimezone().tzname()
-    return name or "local"
+def _gap_after(ts: list[datetime]) -> list[int]:
+    """Indices i where the pause from ts[i] to ts[i+1] is a gap: over 5× the
+    median spacing and at least 30 s (same rule as spot.js findGaps).
+
+    Uses the real (aware) timestamps, so the hour skipped when clocks spring
+    forward isn't mistaken for missing data.
+    """
+    if len(ts) < 3:
+        return []
+    deltas = [(b - a).total_seconds() for a, b in zip(ts, ts[1:])]
+    limit = max(5 * statistics.median(deltas), 30.0)
+    return [i for i, d in enumerate(deltas) if d > limit]
+
+
+def _split_at_gaps(xs: list, *series: list, gaps: list[int]) -> tuple[list, ...]:
+    """Insert NaN after each gap start so matplotlib breaks the line there."""
+    if not gaps:
+        return (xs, *series)
+    cut = set(gaps)
+    out_x, outs = [], [[] for _ in series]
+    for i, x in enumerate(xs):
+        out_x.append(x)
+        for o, ys in zip(outs, series):
+            o.append(ys[i])
+        if i in cut:
+            out_x.append(x)
+            for o in outs:
+                o.append(float("nan"))
+    return (out_x, *outs)
+
+
+def _shade_gaps(ax, xs: list, gaps: list[int]) -> None:
+    for i in gaps:
+        a, b = xs[i], xs[i + 1]
+        ax.axvspan(a, b, facecolor=_MUTED_HEX, alpha=0.10, hatch="///",
+                   edgecolor=_BORDER_HEX, linewidth=0)
+        ax.annotate("no data", xy=(a + (b - a) / 2, 0.02), xycoords=("data", "axes fraction"),
+                    ha="center", va="bottom", fontsize=7, color=_MUTED_HEX)
+
+
+def _sparse_markers(xs: list) -> dict:
+    """Dot each reading when there are only a few, so a lone sample (which
+    would be a zero-length line) is still visible."""
+    return {"marker": "o", "markersize": 3} if len(xs) < 40 else {}
+
+
+def _mpl_text(s: str) -> str:
+    """Make user text literal for matplotlib: '$' would start mathtext and a
+    leading '_' hides a legend entry."""
+    s = (s or "").replace("$", r"\$")
+    return " " + s if s.startswith("_") else s
+
+
+def _zone_label(start: datetime | None, end: datetime | None) -> str:
+    """Zone abbreviation(s) for the plotted range — 'EDT', or 'EDT/EST' when
+    it spans a daylight-saving change — not the zone at generation time."""
+    names = []
+    for dt in (start, end):
+        n = to_local(dt).tzname() if dt else None
+        if n and n not in names:
+            names.append(n)
+    return "/".join(names) or (now_local().tzname() or "local")
 
 
 # Brighter overlay palette tuned for dark backgrounds.
@@ -156,18 +237,19 @@ def render_overlay_chart_png(start: datetime, end: datetime,
         _style_dark_axes(ax)
         for m in groups[unit]:
             xs = [naive_local(p["ts"]) for p in m["points"]]
-            ys = [p["value"] for p in m["points"]]
-            ax.plot(xs, ys, label=m["name"], linewidth=1.2,
-                    color=_OVERLAY_COLORS[color_idx % len(_OVERLAY_COLORS)])
+            xs, ys = _split_at_gaps(xs, [p["value"] for p in m["points"]],
+                                    gaps=_gap_after([p["ts"] for p in m["points"]]))
+            ax.plot(xs, ys, label=_mpl_text(m["name"]), linewidth=1.2, **_sparse_markers(xs),
+                    color=m.get("color") or _OVERLAY_COLORS[color_idx % len(_OVERLAY_COLORS)])
             color_idx += 1
-        ax.set_ylabel(unit)
+        ax.set_ylabel(_mpl_text(unit))
         legend = ax.legend(loc="upper right", fontsize=14,
                            facecolor=_CARD_HEX, edgecolor=_BORDER_HEX,
                            labelcolor=_FG_HEX)
         if legend is not None:
             for text in legend.get_texts():
                 text.set_color(_FG_HEX)
-    axes[-1].set_xlabel(f"Time ({_local_tz_name()})")
+    axes[-1].set_xlabel(f"Time ({_zone_label(start, end)})")
     axes[-1].xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d %H:%M:%S"))
     fig.autofmt_xdate()
     fig.tight_layout()
@@ -352,11 +434,11 @@ def _draw_dark_page(canvas, doc) -> None:
                       f"Spot  ·  {_TAGLINE}")
 
     # Footer right: generated stamp + page number
-    stamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %Z")
+    stamp = now_local().strftime("%Y-%m-%d %H:%M %Z")
     canvas.setFillColor(_MUTED)
     canvas.setFont("Helvetica", 8.5)
     canvas.drawRightString(w - 0.5 * inch, 0.32 * inch,
-                           f"Generated {stamp}   ·   Page {doc.page}")
+                           f"Generated {stamp}   ·   Spot v{__version__}   ·   Page {doc.page}")
     canvas.restoreState()
 
 
@@ -432,89 +514,91 @@ def _join_monitor_names(monitors: list[dict], char_cap: int = 60) -> str:
     return out
 
 
-def render_overlay_pdf(start: datetime, end: datetime, monitors: list[dict]) -> bytes:
-    """Branded one-page PDF: stacked overlay chart + per-monitor summary table.
-
-    `monitors` is a list of {name, unit, points: [{ts: datetime, value: float}]}.
-    """
-    chart_png = render_overlay_chart_png(start, end, monitors)
+def _build_report(doc_title: str, heading: str, meta: list[tuple[str, str]],
+                  chart_png: bytes, summary_label: str, body: list,
+                  chart_height_in: float = 4.0) -> bytes:
+    """Lay out the shared one-page landscape report: brand lockup, heading,
+    metadata line, chart, then a labelled summary section (`body`)."""
     out = io.BytesIO()
     doc = SimpleDocTemplate(
         out, pagesize=landscape(letter),
         leftMargin=0.5 * inch, rightMargin=0.5 * inch,
         topMargin=0.35 * inch, bottomMargin=0.55 * inch,
-        title="Spot report",
+        title=doc_title,
     )
     title_style, _body, _muted, section_style = _dark_styles()
-
-    units = sorted({m.get("unit", "") for m in monitors if m.get("unit")})
     flow = [
         _brand_block(),
         _accent_rule(),
-        Paragraph(f"<b>{_join_monitor_names(monitors)}</b>", title_style),
-        _meta_line([
-            ("Range", f"{format_local(start)} &nbsp;&rarr;&nbsp; {format_local(end)}"),
-            ("Monitors", str(len(monitors))),
-            ("Units", ", ".join(units) if units else "—"),
-        ]),
+        Paragraph(f"<b>{_xml_escape(heading)}</b>", title_style),
+        _meta_line(meta),
         Spacer(1, 0.08 * inch),
         _section_label("Timeseries", section_style),
-        Image(io.BytesIO(chart_png), width=10 * inch, height=4.0 * inch),
+        Image(io.BytesIO(chart_png), width=10 * inch, height=chart_height_in * inch),
         Spacer(1, 0.08 * inch),
-        _section_label("Per-monitor summary", section_style),
-        Spacer(1, 0.08 * inch),
+        _section_label(summary_label, section_style),
+        *body,
     ]
-
-    rows = [["Monitor", "Unit", "Samples", "Min", "Max", "Avg"]]
-    for m in monitors:
-        ys = [p["value"] for p in m["points"]]
-        if ys:
-            rows.append([m["name"], m["unit"], str(len(ys)),
-                         _fmt(min(ys)), _fmt(max(ys)), _fmt(sum(ys) / len(ys))])
-        else:
-            rows.append([m["name"], m["unit"], "0", "—", "—", "—"])
-    tbl = Table(rows, colWidths=[2.5 * inch, 1.0 * inch, 1.0 * inch,
-                                 1.0 * inch, 1.0 * inch, 1.0 * inch])
-    tbl.setStyle(_dark_table_style(header_row=True, font_size=12))
-    flow.append(tbl)
-
     doc.build(flow, onFirstPage=_draw_dark_page, onLaterPages=_draw_dark_page)
     return out.getvalue()
 
 
-def render_pdf(monitor_name: str, unit: str, start: datetime, end: datetime,
-               points: list[tuple[datetime, float]],
-               events: list[tuple[datetime, str]],
-               summary: dict) -> bytes:
-    chart_png = render_chart_png(monitor_name, unit, points, events)
+def _range_meta(start: datetime, end: datetime) -> tuple[str, str]:
+    return ("Range", f"{format_local(start)} &nbsp;&rarr;&nbsp; {format_local(end)}")
 
-    out = io.BytesIO()
-    doc = SimpleDocTemplate(
-        out, pagesize=landscape(letter),
-        leftMargin=0.5 * inch, rightMargin=0.5 * inch,
-        topMargin=0.35 * inch, bottomMargin=0.55 * inch,
-        title=f"Spot — {monitor_name}",
+
+def render_overlay_pdf(start: datetime, end: datetime, monitors: list[dict],
+                       title: str | None = None,
+                       extra_meta: list[tuple[str, str]] | None = None) -> bytes:
+    """Branded one-page PDF: stacked overlay chart + per-monitor summary table.
+
+    `monitors` is a list of {name, unit, color, points: [{ts, value, ...}],
+    summary}, where `summary` holds exact SQL aggregates (points may be
+    downsampled). When summaries carry acoustic figures (`leq`, see
+    queries.compute_summary) the table gains Leq / L10 / L90 columns.
+    `title` replaces the monitor-name heading (e.g. a show name) and
+    `extra_meta` adds (label, plain text) pairs to the metadata line.
+    """
+    units = sorted({m.get("unit", "") for m in monitors if m.get("unit")})
+    acoustic = any("leq" in m["summary"] for m in monitors)
+    header = ["Monitor", "Unit", "Samples", "Min", "Max", "Avg"]
+    widths = [2.5, 0.8, 1.0, 0.9, 0.9, 0.9]
+    if acoustic:
+        header += ["Leq", "L10", "L90"]
+        widths += [0.9, 0.9, 0.9]
+    rows = [header]
+    for m in monitors:
+        summ = m["summary"]
+        row = [m["name"], m["unit"], f"{summ['count']:,}",
+               _fmt(summ["min"]), _fmt(summ["max"]), _fmt(summ["avg"])]
+        if acoustic:
+            row += [_fmt(summ.get("leq")), _fmt(summ.get("l10")), _fmt(summ.get("l90"))]
+        rows.append(row)
+    # Shrink the table as monitors are added so typical reports stay on one
+    # page; past that, the header row repeats on the overflow page.
+    n = len(monitors)
+    font_size = 12 if n <= 3 else 9 if n <= 6 else 8
+    tbl = Table(rows, colWidths=[w * inch for w in widths], repeatRows=1)
+    tbl.setStyle(_dark_table_style(header_row=True, font_size=font_size))
+    meta = [_range_meta(start, end),
+            ("Monitors", str(len(monitors))),
+            ("Units", _xml_escape(", ".join(units)) if units else "—")]
+    meta += [(label, _xml_escape(value)) for label, value in extra_meta or []]
+    return _build_report(
+        title or "Spot report", title or _join_monitor_names(monitors), meta,
+        render_overlay_chart_png(start, end, monitors),
+        "Per-monitor summary", [Spacer(1, 0.08 * inch), tbl],
+        chart_height_in=4.0 if n <= 3 else 3.4,
     )
-    title_style, _body, _muted, section_style = _dark_styles()
 
-    flow = [
-        _brand_block(),
-        _accent_rule(),
-        Paragraph(f"<b>{monitor_name}</b>", title_style),
-        _meta_line([
-            ("Range", f"{format_local(start)} &nbsp;&rarr;&nbsp; {format_local(end)}"),
-            ("Unit", unit),
-        ]),
-        Spacer(1, 0.08 * inch),
-        _section_label("Timeseries", section_style),
-        Image(io.BytesIO(chart_png), width=10 * inch, height=4.0 * inch),
-        Spacer(1, 0.08 * inch),
-        _section_label("Summary", section_style),
-    ]
 
+def render_pdf(monitor_name: str, unit: str, start: datetime, end: datetime,
+               points: list[dict],
+               events: list[tuple[datetime, str]],
+               summary: dict, color: str = _ACCENT_HEX) -> bytes:
     stat_row = Table(
         [[
-            _stat_tile("Samples", str(summary.get("count", 0)), value_pt=16),
+            _stat_tile("Samples", f"{summary.get('count', 0):,}", value_pt=16),
             _stat_tile("Min",     _fmt(summary.get("min")),     value_pt=24, primary=True),
             _stat_tile("Max",     _fmt(summary.get("max")),     value_pt=24, primary=True),
             _stat_tile("Average", _fmt(summary.get("avg")),     value_pt=24, primary=True),
@@ -529,10 +613,12 @@ def render_pdf(monitor_name: str, unit: str, start: datetime, end: datetime,
         ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
     ]))
-    flow.append(stat_row)
-
-    doc.build(flow, onFirstPage=_draw_dark_page, onLaterPages=_draw_dark_page)
-    return out.getvalue()
+    return _build_report(
+        f"Spot — {monitor_name}", monitor_name,
+        [_range_meta(start, end), ("Unit", _xml_escape(unit))],
+        render_chart_png(monitor_name, unit, points, events, color),
+        "Summary", [stat_row],
+    )
 
 
 def _fmt(v) -> str:
