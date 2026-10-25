@@ -233,6 +233,7 @@ Every monitor, sorted by name.
       "name": "Stage Left dB",
       "unit": "dB",
       "location": "Walt Disney Theater",
+      "category": "Audio",
       "description": null,
       "enabled": true,
       "latest": {"ts": "2026-10-24T17:51:53.631278-04:00", "value": 102.4}
@@ -246,6 +247,7 @@ Every monitor, sorted by name.
 | `id` | Use this in every other call. |
 | `unit` | Free text set in Spot: `dB`, `dBA`, `°F`, `%`, … Sound units (Setup → Units; default: anything starting with `dB`) get acoustic statistics. |
 | `location` | Free-text label set in Spot's UI, for humans. Not a 321Theater venue id; don't rely on it for mapping. |
+| `category` | Free-text kind of sensor set in Spot's UI (e.g. `Audio`, `Weather`, `Room Temps`), or `null`. For humans, like `location`. |
 | `enabled` | Disabled monitors keep their history but receive no new data. |
 | `latest` | Newest reading with a value, however old; `null` if none ever. |
 
@@ -267,6 +269,7 @@ GET /stats?monitors=1,2&start=2026-10-24T19:30:00-04:00&end=2026-10-24T22:15:00-
       "name": "Stage Left dB",
       "unit": "dB",
       "location": "Walt Disney Theater",
+      "category": "Audio",
       "stats": {
         "count": 9900,
         "events": 2,

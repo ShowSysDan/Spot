@@ -140,6 +140,7 @@ def monitor_view(m: Monitor) -> dict[str, Any]:
         "modbus_device_name": m.modbus_device.name if m.modbus_device else None,
         "decimal_places": m.decimal_places,
         "location": m.location,
+        "category": m.category,
         "color": m.color,
         "display_color": monitor_color(m.id, m.color),
         "alert_high": m.alert_high,

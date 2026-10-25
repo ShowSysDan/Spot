@@ -19,6 +19,13 @@ and is bumped with every change.
   show start/end detection. Until a list is saved, every unit starting with
   "dB" counts, as before.
 
+- **Monitor categories**: an optional *Category* on each monitor (e.g. Audio,
+  Weather, Room Temps). The Monitors page has a *Group by: Location |
+  Category* switch (remembered; `?group=`), the wall display a category menu
+  (`/wall?category=Audio`, combinable with `?location=`), and `/api/v1`
+  monitor listings and stats include `category`. New column
+  `monitors.category`, added automatically on start.
+
 ### Changed
 - The Reports PDF summary column reads *Average* instead of *Avg*.
 

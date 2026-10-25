@@ -6,6 +6,11 @@
   {% if monitors %}
   <div class="page-tools">
     <input type="search" id="filter" placeholder="Filter by name or unit…" aria-label="Filter monitors">
+    <div class="chips group-by" role="group" aria-label="Group tiles by">
+      <a class="button {{ 'active' if group_by == 'location' }}" href="{{ url_for('web.index', group='location') }}">Location</a>
+      <a class="button {{ 'active' if group_by == 'category' }}" href="{{ url_for('web.index', group='category') }}"
+         {% if not has_categories %}title="No monitor has a category yet — set one under Edit"{% endif %}>Category</a>
+    </div>
     <a class="button" href="{{ url_for('web.wall') }}" title="Full-screen display for a control-room or backstage screen">Wall display</a>
     <span id="live-status" class="live-pill" title="Values refresh every 5 seconds while this tab is visible">
       <span class="dot"></span> live
@@ -27,14 +32,14 @@
   </div>
 {% else %}
 
-{% for loc, group in groups %}
-{% if groups|length > 1 or loc %}<h2 class="tile-group" data-group>{{ loc or 'Other' }}</h2>{% endif %}
+{% for name, group in groups %}
+{% if groups|length > 1 or name %}<h2 class="tile-group" data-group>{{ name or ('Uncategorised' if group_by == 'category' else 'Other') }}</h2>{% endif %}
 <section class="tiles">
   {% for m in group %}
   <a class="tile {{ '' if m.enabled else 'is-disabled' }}" id="tile-{{ m.id }}"
      href="{{ url_for('web.monitor_dashboard', mid=m.id) }}" style="--tile-color: {{ m.display_color }}"
      data-id="{{ m.id }}" data-decimals="{{ m.decimal_places if m.decimal_places is not none else '' }}"
-     data-stale-after="{{ m.stale_after }}" data-filter="{{ (m.name ~ ' ' ~ m.unit ~ ' ' ~ (m.location or '') ~ ' ' ~ (m.description or ''))|lower }}"
+     data-stale-after="{{ m.stale_after }}" data-filter="{{ (m.name ~ ' ' ~ m.unit ~ ' ' ~ (m.location or '') ~ ' ' ~ (m.category or '') ~ ' ' ~ (m.description or ''))|lower }}"
      title="Open the live dashboard for {{ m.name }}">
     <div class="tile-head">
       <span class="fresh-dot" aria-hidden="true"></span>
@@ -195,7 +200,7 @@
     document.querySelectorAll('[data-filter]').forEach(el => {
       el.hidden = q !== '' && !el.dataset.filter.includes(q);
     });
-    // Hide location headings whose tiles are all filtered out.
+    // Hide group headings whose tiles are all filtered out.
     document.querySelectorAll('[data-group]').forEach(h => {
       const sec = h.nextElementSibling;
       h.hidden = sec.hidden = ![...sec.children].some(c => !c.hidden);

@@ -160,6 +160,7 @@ def monitors():
             ).first()
             out.append({
                 "id": m.id, "name": m.name, "unit": m.unit, "location": m.location,
+                "category": m.category,
                 "description": m.description, "enabled": m.enabled,
                 "latest": {"ts": iso_local(last.ts), "value": last.value} if last else None,
             })
@@ -184,6 +185,7 @@ def stats():
         start, end, detection = resolve_range(s, ids, start, end, _detect_opts(s))
         out = [{
             "id": m.id, "name": m.name, "unit": m.unit, "location": m.location,
+            "category": m.category,
             "stats": compute_summary(s, m.id, start, end, extended=True, unit=m.unit),
         } for m in monitors]
     body = {"start": iso_local(start), "end": iso_local(end), "monitors": out}
