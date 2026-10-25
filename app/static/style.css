@@ -205,6 +205,12 @@ input[type=search]:focus { outline: none; border-color: var(--accent); }
 .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 0.4rem; }
 #summary.grid { margin-top: 1rem; }
 
+/* "What these numbers mean" key under summary tables (_stat_legend.html). */
+.stat-legend { margin: 0.9rem 0 1.2rem; }
+.stat-legend summary { cursor: pointer; color: var(--muted); font-size: 0.9rem; }
+.stat-legend dl.meta { margin: 0.6rem 0 0.4rem; font-size: 0.9rem; max-width: 60rem; }
+.stat-legend dt { font-weight: 600; color: var(--accent); }
+
 /* Narrow screens: let wide tables scroll inside themselves instead of the page. */
 @media (max-width: 760px) {
   main { padding: 1rem 0.8rem; }

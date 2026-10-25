@@ -78,7 +78,8 @@ and lets you browse, query, graph, and export the data.
   points instead of 86,400, with the min/max band shaded behind the line.
 - **Query & export** — pick a range (or a quick preset: last hour, 24 h,
   7 days, today, yesterday, this week…); see min/max/avg/count + event count;
-  export the range to **CSV** or a one-page **PDF** with the chart.
+  export the range to **CSV** or a **PDF** with the chart (plus a page
+  explaining each figure in plain language).
 - **Reports** (formerly *Overlay*) — tick one or more monitors, pick a range,
   preview them on one chart with a per-monitor summary table, then download a
   branded **PDF report** or one combined **CSV**. Monitors that share a unit

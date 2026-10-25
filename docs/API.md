@@ -328,9 +328,10 @@ GET /series?monitors=1&start=…&end=…&max_points=500
 
 ### `GET /report.pdf`
 
-Spot's branded one-page landscape PDF for any monitors and range: a chart
-(one panel per unit) and a per-monitor table (samples, min, max, average,
-plus Leq / L10 / L90 when dB monitors are included).
+Spot's branded landscape PDF for any monitors and range: a chart (one panel
+per unit) and a per-monitor table (samples, min, max, average, plus Leq /
+L10 / L90 when dB monitors are included), followed by a *How to read this
+report* page that explains each figure in plain language.
 
 ```
 GET /report.pdf?monitors=1,2&start=…&end=…&title=Hamilton%20—%20Sat%20Eve

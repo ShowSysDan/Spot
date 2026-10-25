@@ -3,6 +3,19 @@
 All notable changes to Spot. The version number lives in `app/version.py`
 and is bumped with every change.
 
+## 1.10.0 — 2026-10-25
+
+### Added
+- **Plain-language key to the summary figures**. PDF reports gain a
+  *How to read this report* page explaining Samples, Min, Max, Average,
+  Events and, for dB monitors, Leq, L10 and L90, plus a note on what a
+  difference in dB sounds like, so the PDF can go to non-technical readers.
+  The show page and Reports page show the same key (*What these numbers
+  mean*) under their summary tables. The wording lives in `app/glossary.py`.
+
+### Changed
+- The Reports PDF summary column reads *Average* instead of *Avg*.
+
 ## 1.9.0 — 2026-10-24
 
 ### Added

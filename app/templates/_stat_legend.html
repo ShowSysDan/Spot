@@ -1,0 +1,13 @@
+{# Plain-language key to the summary columns. Expects `legend_keys`; terms in
+   `acoustic_stats` get class "acoustic" so a page can hide them for non-dB
+   monitors (reports.html toggles them client-side). #}
+<details class="stat-legend" open>
+  <summary>What these numbers mean</summary>
+  <dl class="meta">
+    {% for key, label, text in stat_legend(legend_keys) %}
+    <dt{% if key in acoustic_stats %} class="acoustic"{% endif %}>{{ label }}</dt>
+    <dd{% if key in acoustic_stats %} class="acoustic"{% endif %}>{{ text }}</dd>
+    {% endfor %}
+  </dl>
+  {% if legend_keys|select('in', acoustic_stats)|list %}<p class="muted acoustic">{{ db_note }}</p>{% endif %}
+</details>

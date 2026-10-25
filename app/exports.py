@@ -20,6 +20,7 @@ matplotlib.use("Agg")
 import matplotlib.dates as mdates
 from matplotlib.figure import Figure
 
+from . import glossary
 from .util import format_local, naive_local, now_local, to_local
 from .version import __version__
 from reportlab.lib import colors
@@ -35,6 +36,7 @@ from reportlab.graphics.shapes import (
 from reportlab.platypus import (
     HRFlowable,
     Image,
+    PageBreak,
     Paragraph,
     SimpleDocTemplate,
     Spacer,
@@ -500,6 +502,31 @@ def _dark_table_style(header_row: bool = True, font_size: int = 9) -> TableStyle
     return TableStyle(cmds)
 
 
+def _stat_legend(keys) -> list:
+    """'How to read this report' page: plain-language definitions of the
+    summary figures in `keys`. Reports go to non-technical readers, so this
+    gets its own page at a readable size rather than footnote type."""
+    title_style, _body, _muted, _section = _dark_styles()
+    term = ParagraphStyle("LegendTerm", fontName="Helvetica-Bold", fontSize=11,
+                          leading=14, textColor=_ACCENT)
+    text = ParagraphStyle("LegendText", fontName="Helvetica", fontSize=11,
+                          leading=14.5, textColor=_FG)
+    note = ParagraphStyle("LegendNote", fontName="Helvetica-Oblique",
+                          fontSize=10, leading=13, textColor=_MUTED)
+    rows = [["Figure", "What it means"]]
+    rows += [[Paragraph(_xml_escape(label), term), Paragraph(_xml_escape(expl), text)]
+             for _key, label, expl in glossary.legend(keys)]
+    tbl = Table(rows, colWidths=[1.4 * inch, 8.6 * inch])
+    tbl.setStyle(_dark_table_style(header_row=True, font_size=11))
+    tbl.setStyle(TableStyle([("VALIGN", (0, 1), (-1, -1), "TOP")]))
+    flow = [PageBreak(), _brand_block(), _accent_rule(),
+            Paragraph("<b>How to read this report</b>", title_style),
+            Spacer(1, 0.12 * inch), tbl]
+    if any(k in keys for k in glossary.ACOUSTIC):
+        flow += [Spacer(1, 0.12 * inch), Paragraph(_xml_escape(glossary.DB_NOTE), note)]
+    return flow
+
+
 def _join_monitor_names(monitors: list[dict], char_cap: int = 60) -> str:
     """'Foo, Bar + 2 more' style title summarizing the monitors in a report."""
     names = [m.get("name", "") for m in monitors if m.get("name")]
@@ -517,8 +544,9 @@ def _join_monitor_names(monitors: list[dict], char_cap: int = 60) -> str:
 def _build_report(doc_title: str, heading: str, meta: list[tuple[str, str]],
                   chart_png: bytes, summary_label: str, body: list,
                   chart_height_in: float = 4.0) -> bytes:
-    """Lay out the shared one-page landscape report: brand lockup, heading,
-    metadata line, chart, then a labelled summary section (`body`)."""
+    """Lay out the shared landscape report: brand lockup, heading, metadata
+    line, chart, then a labelled summary section (`body`, which may run on to
+    further pages such as the _stat_legend key)."""
     out = io.BytesIO()
     doc = SimpleDocTemplate(
         out, pagesize=landscape(letter),
@@ -550,7 +578,8 @@ def _range_meta(start: datetime, end: datetime) -> tuple[str, str]:
 def render_overlay_pdf(start: datetime, end: datetime, monitors: list[dict],
                        title: str | None = None,
                        extra_meta: list[tuple[str, str]] | None = None) -> bytes:
-    """Branded one-page PDF: stacked overlay chart + per-monitor summary table.
+    """Branded PDF: stacked overlay chart + per-monitor summary table, then a
+    plain-language key to the figures on its own page.
 
     `monitors` is a list of {name, unit, color, points: [{ts, value, ...}],
     summary}, where `summary` holds exact SQL aggregates (points may be
@@ -561,8 +590,8 @@ def render_overlay_pdf(start: datetime, end: datetime, monitors: list[dict],
     """
     units = sorted({m.get("unit", "") for m in monitors if m.get("unit")})
     acoustic = any("leq" in m["summary"] for m in monitors)
-    header = ["Monitor", "Unit", "Samples", "Min", "Max", "Avg"]
-    widths = [2.5, 0.8, 1.0, 0.9, 0.9, 0.9]
+    header = ["Monitor", "Unit", "Samples", "Min", "Max", "Average"]
+    widths = [2.4, 0.8, 1.0, 0.9, 0.9, 1.0]
     if acoustic:
         header += ["Leq", "L10", "L90"]
         widths += [0.9, 0.9, 0.9]
@@ -587,7 +616,10 @@ def render_overlay_pdf(start: datetime, end: datetime, monitors: list[dict],
     return _build_report(
         title or "Spot report", title or _join_monitor_names(monitors), meta,
         render_overlay_chart_png(start, end, monitors),
-        "Per-monitor summary", [Spacer(1, 0.08 * inch), tbl],
+        "Per-monitor summary",
+        [Spacer(1, 0.08 * inch), tbl,
+         *_stat_legend(["count", "min", "max", "avg",
+                        *(glossary.ACOUSTIC if acoustic else ())])],
         chart_height_in=4.0 if n <= 3 else 3.4,
     )
 
@@ -617,7 +649,8 @@ def render_pdf(monitor_name: str, unit: str, start: datetime, end: datetime,
         f"Spot — {monitor_name}", monitor_name,
         [_range_meta(start, end), ("Unit", _xml_escape(unit))],
         render_chart_png(monitor_name, unit, points, events, color),
-        "Summary", [stat_row],
+        "Summary",
+        [stat_row, *_stat_legend(["count", "min", "max", "avg", "events"])],
     )
 
 

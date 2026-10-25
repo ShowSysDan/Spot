@@ -3,6 +3,7 @@ from __future__ import annotations
 from flask import Flask, jsonify, request
 from werkzeug.exceptions import HTTPException
 
+from . import glossary
 from .alerts import AlertEngine, open_alert_count
 from .config import Config
 from .shows import ShowReporter
@@ -80,7 +81,10 @@ def create_app(config: Config | None = None) -> Flask:
             alert_count = 0
         return {"spot_version": __version__, "spot_schema": cfg.db_schema,
                 "spot_timezone": cfg.timezone,
-                "spot_alert_count": alert_count}
+                "spot_alert_count": alert_count,
+                "stat_legend": glossary.legend,
+                "acoustic_stats": glossary.ACOUSTIC,
+                "db_note": glossary.DB_NOTE}
 
     manager.start_enabled()
     modbus.start_enabled()

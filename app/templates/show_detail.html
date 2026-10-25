@@ -75,6 +75,8 @@
   {% endfor %}
   </tbody>
 </table>
+{% set legend_keys = ['count', 'min', 'max', 'avg'] + (acoustic_stats|list if acoustic else []) %}
+{% include '_stat_legend.html' %}
 <div class="chart-wrap"><canvas id="chart"></canvas></div>
 {% endif %}
 
