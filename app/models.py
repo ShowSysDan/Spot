@@ -84,6 +84,9 @@ class Monitor(Base):
     # Free-text grouping label (e.g. "Walt Disney Theater"); only used to
     # group tiles in the UI. External systems address monitors by id.
     location: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    # Free-text kind of sensor (e.g. "Audio", "Weather", "Room Temps"); an
+    # alternative way to group tiles on the Monitors page and wall display.
+    category: Mapped[str | None] = mapped_column(String(60), nullable=True)
     # Display colour (#rrggbb) for tiles, charts and reports; None = automatic.
     color: Mapped[str | None] = mapped_column(String(16), nullable=True)
 

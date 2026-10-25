@@ -89,6 +89,7 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
      'INTEGER REFERENCES "{schema}".monitors(id) ON DELETE SET NULL'),
     ("shows", "detect_window_minutes", "INTEGER NOT NULL DEFAULT 15"),
     ("shows", "detect_min_step", "DOUBLE PRECISION NOT NULL DEFAULT 6"),
+    ("monitors", "category", "VARCHAR(60)"),
 )
 
 

@@ -29,6 +29,16 @@
     </datalist>
     <small class="muted">Groups tiles on the Monitors page and the wall display.</small>
   </label>
+  <label>Category (optional)
+    <input list="categories" type="text" name="category" maxlength="60"
+           value="{{ monitor.category if monitor and monitor.category else '' }}"
+           placeholder="e.g. Audio, Weather, Room Temps">
+    <datalist id="categories">
+      {% for c in categories %}<option value="{{ c }}">{% endfor %}
+    </datalist>
+    <small class="muted">What kind of sensor this is. The Monitors page can group tiles by category instead of location,
+      and the wall display can show one category.</small>
+  </label>
   <div class="field">
     <span>Colour</span>
     {% set cur = monitor.color if monitor and monitor.color else '' %}

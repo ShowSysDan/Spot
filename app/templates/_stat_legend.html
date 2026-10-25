@@ -1,0 +1,22 @@
+{# Plain-language key to the summary columns, in sections (measured /
+   calculated). Expects `legend_keys`; calculated sound terms get class
+   "acoustic" so a page can hide them for non-dB monitors (reports.html
+   toggles them client-side). #}
+<details class="stat-legend" open>
+  <summary>What these numbers mean</summary>
+  {% for title, intro, items in stat_legend(legend_keys) %}
+  {% set sound = items[0][0] in acoustic_stats %}
+  <div class="stat-legend-group{{ ' acoustic' if sound }}">
+    <h4>{{ title }}</h4>
+    <p class="muted">{{ intro }}{% if sound %} Which units count as sound levels is set on
+      <a href="{{ url_for('web.units_settings') }}">Setup → Units</a>.{% endif %}</p>
+    <dl class="meta">
+      {% for key, label, text in items %}
+      <dt>{{ label }}</dt>
+      <dd>{{ text }}</dd>
+      {% endfor %}
+    </dl>
+    {% if sound %}<p class="muted">{{ db_note }}</p>{% endif %}
+  </div>
+  {% endfor %}
+</details>

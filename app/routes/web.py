@@ -7,7 +7,7 @@ import secrets
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 from flask import Blueprint, Response, abort, current_app, flash, redirect, render_template, request, url_for
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from ..db import session_scope
 from ..janitor import clear_monitor, effective_retention, purge_monitor
@@ -23,6 +23,7 @@ from ..modbus import (
 )
 from ..alerts import active_alerts_by_monitor
 from .. import logging_config as logcfg
+from .. import units
 from ..models import Alert, ApiKey, ModbusDevice, Monitor, Show
 from ..notify import callback_url_problem, one_line, post_json
 from ..shows import (
@@ -103,9 +104,20 @@ def _modbus() -> ModbusManager:
 # since Spot knows exactly how often those should report.
 STALE_AFTER_SECONDS = 300
 
+# Offered in the Category box on the monitor form, alongside ones in use.
+SUGGESTED_CATEGORIES = ("Audio", "Weather", "Room Temps")
+GROUP_BY = ("location", "category")
+
 
 @bp.route("/")
 def index():
+    # ?group=location|category switches the tile grouping; remembered in a
+    # cookie so the Monitors link keeps the last choice.
+    group_by = request.args.get("group")
+    if group_by not in GROUP_BY:
+        group_by = request.cookies.get("spot_group")
+    if group_by not in GROUP_BY:
+        group_by = "location"
     with session_scope() as s:
         rows = []
         for m in s.query(Monitor).order_by(Monitor.name).all():
@@ -114,17 +126,22 @@ def index():
                 v["stale_after"] = max(30, 3 * m.modbus_device.poll_interval_seconds)
             else:
                 v["stale_after"] = STALE_AFTER_SECONDS
-            # Sort key for grouping tiles: named locations A-Z, unassigned last.
-            v["location_key"] = m.location or ""
+            # Sort key for grouping tiles: named groups A-Z, unassigned last.
+            v["group_key"] = (m.category if group_by == "category" else m.location) or ""
             rows.append(v)
-    rows.sort(key=lambda r: (r["location_key"] == "", r["location_key"].lower(), r["name"].lower()))
+    rows.sort(key=lambda r: (r["group_key"] == "", r["group_key"].lower(), r["name"].lower()))
     statuses = _manager().status()
     for r in rows:
         r["listener_alive"] = statuses.get(r["id"], False)
     groups: dict[str, list[dict]] = {}
     for r in rows:
-        groups.setdefault(r["location_key"], []).append(r)
-    return render_template("index.html", monitors=rows, groups=list(groups.items()))
+        groups.setdefault(r["group_key"], []).append(r)
+    resp = current_app.make_response(render_template(
+        "index.html", monitors=rows, groups=list(groups.items()), group_by=group_by,
+        has_categories=any(r["category"] for r in rows)))
+    if request.args.get("group") == group_by:
+        resp.set_cookie("spot_group", group_by, max_age=365 * 86400, samesite="Lax")
+    return resp
 
 
 @bp.route("/monitors/new", methods=["GET", "POST"])
@@ -148,12 +165,15 @@ def _monitor_form(mid: int | None):
                    s.query(ModbusDevice).order_by(ModbusDevice.name).all()]
         locations = sorted({loc for (loc,) in s.execute(
             select(Monitor.location).where(Monitor.location.is_not(None))).all()})
+        categories = sorted({c for (c,) in s.execute(
+            select(Monitor.category).where(Monitor.category.is_not(None))).all()}
+            | set(SUGGESTED_CATEGORIES), key=str.lower)
     return render_template("monitor_form.html", monitor=data,
                            listener_types=VALID_LISTENER_TYPES,
                            default_retention=current_app.config["SPOT"].default_retention_days,
                            modbus_devices=devices,
                            modbus_data_types=DATA_TYPES,
-                           locations=locations, palette=PALETTE)
+                           locations=locations, categories=categories, palette=PALETTE)
 
 
 @bp.route("/monitors/<int:mid>/delete", methods=["POST"])
@@ -212,17 +232,24 @@ def monitor_dashboard(mid: int):
 
 @bp.route("/wall")
 def wall():
-    """Full-screen kiosk view. ?location=Name and/or ?ids=1,2 narrow it."""
+    """Full-screen kiosk view. ?location=Name, ?category=Name and/or
+    ?ids=1,2 narrow it."""
     location = request.args.get("location") or None
+    category = request.args.get("category") or None
     ids = {int(x) for x in request.args.get("ids", "").split(",") if x.isdigit()}
     with session_scope() as s:
         all_monitors = [monitor_view(m) for m in s.scalars(
             select(Monitor).where(Monitor.enabled.is_(True)).order_by(Monitor.name))]
     locations = sorted({m["location"] for m in all_monitors if m["location"]})
+    categories = sorted({m["category"] for m in all_monitors if m["category"]}, key=str.lower)
     shown = [m for m in all_monitors
-             if (not location or m["location"] == location) and (not ids or m["id"] in ids)]
+             if (not location or m["location"] == location)
+             and (not category or m["category"] == category)
+             and (not ids or m["id"] in ids)]
+    title = " · ".join(x for x in (location, category) if x) or "All monitors"
     return render_template("wall.html", monitors=shown, locations=locations,
-                           location=location, title=location or "All monitors")
+                           categories=categories, location=location,
+                           category=category, title=title)
 
 
 # ---------------------------------------------------------------------------
@@ -562,6 +589,37 @@ def logging_reset():
     flash(f"Back to the .env settings, but syslog isn't working: {err}" if err
           else "Back to the .env settings.", "error" if err else "success")
     return redirect(url_for("web.logging_settings"))
+
+
+# ---------------------------------------------------------------------------
+# Units (which ones are sound levels)
+# ---------------------------------------------------------------------------
+
+@bp.route("/setup/units", methods=["GET", "POST"])
+def units_settings():
+    if request.method == "POST":
+        chosen = request.form.getlist("sound")
+        chosen += [u.strip() for u in request.form.get("add", "").split(",")]
+        units.save([u for u in chosen if u and len(u) <= 32])
+        log.info("sound units changed: %s", ", ".join(units.saved_units()) or "(none)")
+        flash("Sound units saved.", "success")
+        return redirect(url_for("web.units_settings"))
+    with session_scope() as s:
+        in_use = dict(s.execute(
+            select(Monitor.unit, func.count()).group_by(Monitor.unit)).all())
+    # Every unit monitors use, plus saved and suggested sound units not used yet.
+    names = {u.lower(): u for u in [*units.SUGGESTED, *(units.saved_units() or []), *in_use]}
+    rows = [{"unit": u, "monitors": in_use.get(u, 0), "sound": units.is_sound_unit(u)}
+            for u in sorted(names.values(), key=str.lower)]
+    return render_template("units.html", rows=rows, saved=units.saved_units() is not None)
+
+
+@bp.route("/setup/units/reset", methods=["POST"])
+def units_reset():
+    units.reset()
+    log.info("sound units reset to default (units starting with dB)")
+    flash("Back to the default: every unit starting with “dB” is a sound unit.", "success")
+    return redirect(url_for("web.units_settings"))
 
 
 # ---------------------------------------------------------------------------
@@ -970,6 +1028,7 @@ def _save_monitor_checked(mid: int | None):
     _check(decimal_places is None or 0 <= decimal_places <= 10, decimals_err)
 
     location = _form_str("location")[:120] or None
+    category = _form_str("category")[:60] or None
     color = _form_str("color") or None
     _check(color is None or re.fullmatch(r"#[0-9a-fA-F]{6}", color) is not None,
            "Colour must be a #rrggbb value.")
@@ -1001,7 +1060,7 @@ def _save_monitor_checked(mid: int | None):
                       modbus_register_address=modbus_register_address,
                       modbus_data_type=modbus_data_type,
                       decimal_places=decimal_places,
-                      location=location, color=color,
+                      location=location, category=category, color=color,
                       alert_high=alert_high, alert_low=alert_low,
                       alert_window_seconds=alert_window or None,
                       alert_stale_seconds=alert_stale)

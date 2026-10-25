@@ -12,7 +12,7 @@
 </head>
 <body class="wall">
   {# Kiosk view: no navigation, big numbers, auto-refresh. Bookmark it per
-     screen, e.g. /wall?location=Walt%20Disney%20Theater #}
+     screen, e.g. /wall?location=Walt%20Disney%20Theater or /wall?category=Audio #}
   <header class="wall-head">
     <img src="{{ url_for('static', filename='logo.svg') }}" alt="" class="wall-logo">
     <div class="wall-title">
@@ -22,6 +22,12 @@
           <option value="">All monitors</option>
           {% for loc in locations %}<option {% if loc == location %}selected{% endif %}>{{ loc }}</option>{% endfor %}
         </select>
+        {% if categories %}
+        <select name="category" onchange="this.form.submit()" aria-label="Category">
+          <option value="">All categories</option>
+          {% for c in categories %}<option {% if c == category %}selected{% endif %}>{{ c }}</option>{% endfor %}
+        </select>
+        {% endif %}
       </form>
     </div>
     <div class="wall-clock"><span id="clock">--:--:--</span><small id="clock-date"></small></div>

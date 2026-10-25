@@ -87,6 +87,10 @@
         <th class="num acoustic" title="Level exceeded 90% of the time">L90</th><th class="num">Events</th></tr></thead>
       <tbody></tbody>
     </table>
+    <div id="summary-legend" hidden>
+      {% set legend_keys = ['count', 'min', 'max', 'avg', 'leq', 'l10', 'l90', 'events'] %}
+      {% include '_stat_legend.html' %}
+    </div>
   </section>
 </div>
 
@@ -218,8 +222,9 @@
     }).join('');
     // Leq / L10 / L90 only mean something for dB monitors.
     const acoustic = j.monitors.some(m => m.summary && 'leq' in m.summary);
-    document.querySelectorAll('#summary .acoustic').forEach(c => (c.hidden = !acoustic));
+    document.querySelectorAll('#summary .acoustic, #summary-legend .acoustic').forEach(c => (c.hidden = !acoustic));
     document.getElementById('summary').hidden = false;
+    document.getElementById('summary-legend').hidden = false;
     history.replaceState(null, '', `?${rangeParams()}`);
   }
 

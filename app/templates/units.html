@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Units — Spot{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Units</h1>
+  {% if saved %}
+  <div class="page-tools">
+    <form method="post" action="{{ url_for('web.units_reset') }}" class="inline"
+          data-confirm="Forget this list and treat every unit starting with “dB” as a sound unit?">
+      <button type="submit" class="link">Reset to default</button>
+    </form>
+  </div>
+  {% endif %}
+</div>
+<p class="muted">
+  Monitors measured in a <strong>sound unit</strong> get the calculated sound values (Leq, L10 and L90)
+  on show pages, Reports, PDFs, CSVs and the API, and are used to detect when a show really started and ended.
+  Other units get the measured values only (min, max, average).
+  {% if not saved %}Right now every unit starting with “dB” counts; saving below replaces that with exactly the units you tick.{% endif %}
+</p>
+
+<form method="post" class="form">
+  <fieldset class="group">
+    <legend>Sound units</legend>
+    <table class="grid">
+      <thead><tr><th>Unit</th><th class="num">Monitors</th><th>Sound level</th></tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr>
+          <td><code>{{ r.unit }}</code></td>
+          <td class="num">{{ r.monitors }}</td>
+          <td><label class="checkbox"><input type="checkbox" name="sound" value="{{ r.unit }}" {% if r.sound %}checked{% endif %}>
+            Leq, L10, L90</label></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <label>Add sound units not used yet
+      <input type="text" name="add" maxlength="200" placeholder="dBZ, dB SPL">
+      <small class="muted">Comma-separated. Matching ignores upper/lower case.</small>
+    </label>
+  </fieldset>
+  <div class="row"><button type="submit" class="primary">Save</button></div>
+</form>
+{% endblock %}

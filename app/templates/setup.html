@@ -24,6 +24,10 @@
     <p class="muted">Syslog destination, what gets logged, recent log lines.</p>
     <span class="badge {{ 'ok' if log_status.connected else 'off' }}">syslog {{ 'connected' if log_status.connected else ('not working' if log_status.enabled else 'off') }}</span>
   </a>
+  <a class="card setup-card" href="{{ url_for('web.units_settings') }}">
+    <h3>Units</h3>
+    <p class="muted">Which units are sound levels and get Leq, L10 and L90.</p>
+  </a>
   <a class="card setup-card" href="{{ url_for('web.alerts') }}">
     <h3>Alerts</h3>
     <p class="muted">Active alerts, thresholds in use, and history.</p>

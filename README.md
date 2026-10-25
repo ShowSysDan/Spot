@@ -54,7 +54,7 @@ and lets you browse, query, graph, and export the data.
   schedule, with a reason, when there's no clear change.
 - **Wall display** (`/wall`) — a full-screen kiosk view with huge numbers,
   sparklines, alert colours and a 24-hour clock, for a control-room or
-  backstage screen. Filter by location; bookmark one per screen.
+  backstage screen. Filter by location or category; bookmark one per screen.
 - **External API** (`/api/v1`, API-key protected) for systems such as
   321Theater: list monitors, pull statistics, series and PDF reports for any
   time range, and create/update shows. Full guide: **[docs/API.md](docs/API.md)**.
@@ -68,8 +68,9 @@ and lets you browse, query, graph, and export the data.
 - **Light theme & printing** — a ☀/☾ toggle in the menu bar switches the UI to
   a light theme (remembered per browser); printing any page gives a clean,
   light layout without menus and buttons.
-- **Locations & colours** — an optional location label groups tiles on the
-  Monitors page (e.g. per theater); each monitor can have its own colour,
+- **Locations, categories & colours** — an optional location (e.g. per
+  theater) and category (e.g. Audio, Weather, Room Temps) group tiles on
+  the Monitors page, switchable with *Group by*; each monitor can have its own colour,
   used for its tile, chart line and PDF reports.
 - **Live dashboard** — windows from 1 minute to 7 days, with current / min /
   max / average / sample-count cards, event markers drawn on the chart, a
@@ -78,7 +79,8 @@ and lets you browse, query, graph, and export the data.
   points instead of 86,400, with the min/max band shaded behind the line.
 - **Query & export** — pick a range (or a quick preset: last hour, 24 h,
   7 days, today, yesterday, this week…); see min/max/avg/count + event count;
-  export the range to **CSV** or a one-page **PDF** with the chart.
+  export the range to **CSV** or a **PDF** with the chart (plus a page
+  explaining each figure in plain language).
 - **Reports** (formerly *Overlay*) — tick one or more monitors, pick a range,
   preview them on one chart with a per-monitor summary table, then download a
   branded **PDF report** or one combined **CSV**. Monitors that share a unit
@@ -328,9 +330,9 @@ migration.
 
 | URL | Menu | What it's for |
 |-----|------|---------------|
-| `/` | Monitors | Live tiles per monitor (grouped by location) + Manage table |
-| `/wall` | Monitors → *Wall display* | Full-screen kiosk view (`?location=…`, `?ids=…`) |
-| `/monitors/new`, `/monitors/<id>/edit` | *+ New monitor*, Edit | Monitor settings: input, unit, location, colour, alerts, retention, rounding |
+| `/` | Monitors | Live tiles per monitor (grouped by location or category, `?group=`) + Manage table |
+| `/wall` | Monitors → *Wall display* | Full-screen kiosk view (`?location=…`, `?category=…`, `?ids=…`) |
+| `/monitors/new`, `/monitors/<id>/edit` | *+ New monitor*, Edit | Monitor settings: input, unit, location, category, colour, alerts, retention, rounding |
 | `/monitors/<id>` | (click a monitor) | Details, push examples with the auth token, purge / delete data |
 | `/monitors/<id>/dashboard` | Dashboard | Live chart, 1 min – 7 days |
 | `/monitors/<id>/query` | Query | Any range: stats, chart, CSV / PDF |
@@ -339,6 +341,7 @@ migration.
 | `/alerts` | Alerts | Active alerts (acknowledge), thresholds in use, history |
 | `/setup` | Setup | Hub: links below, time zone check, webhook settings and test button (`/setup/test-webhook`) |
 | `/setup/api-keys` | Setup → API keys | Keys for `/api/v1` (321Theater etc.) |
+| `/setup/units` | Setup → Units | Which units are sound levels (get Leq / L10 / L90, used for show start/end detection) |
 | `/setup/logging` | Setup → Logging & syslog | Syslog destination / transport / app name / facility, what to log, recent log |
 | `/modbus`, `/modbus/new`, `/modbus/<id>` | Setup → Modbus devices | Polled Modbus TCP sensors |
 | `/storage` | Setup → Storage | Database size and rows per monitor |
@@ -446,7 +449,8 @@ printf '92.3' | nc -u -w1 HOST <PORT>
 ### Monitors (home page)
 
 `/` shows a live tile per monitor, grouped under headings by **Location**
-when any monitor has one, plus a **Manage** table (collapsible; the
+or **Category** (the *Group by* switch next to the filter box; the choice is
+remembered), plus a **Manage** table (collapsible; the
 open/closed state and the filter box are remembered per browser).
 
 - The big number is the latest value, rounded to the monitor's
@@ -513,7 +517,10 @@ the Walt Disney Theater's sound meters.
 - **Show page** — when, delivery status, a levels table (samples, min, max,
   average, and for dB monitors **Leq** — the energy-average level, the
   standard "average loudness" — plus **L10** (loud passages) and **L90**
-  (background)), a chart, and *Download PDF* / *CSV* / *Open in Reports*.
+  (background)), a key explaining each figure in plain language, a chart,
+  and *Download PDF* / *CSV* / *Open in Reports*. Which units count as
+  sound levels is set on **Setup → Units** (default: anything starting
+  with "dB").
 - **Automatic report** — give a show a callback URL (e.g. a 321Theater
   endpoint) and Spot POSTs its PDF and statistics about 5 minutes after it ends (so late readings are
   included), retrying with backoff (1, 2, 4, 8, 16 min; 6 attempts) if
@@ -557,8 +564,9 @@ TV or monitor:
   acknowledged); readings older than 5 minutes are greyed.
 - A large 24-hour Eastern clock. Values refresh every 3 seconds; the value
   flashes in the monitor's colour when it changes.
-- `?location=Walt%20Disney%20Theater` limits it to one location (the menu in
-  the header does the same); `?ids=1,2` picks monitors. Bookmark the URL
+- `?location=Walt%20Disney%20Theater` limits it to one location and
+  `?category=Audio` to one category (the menus in the header do the same,
+  and combine); `?ids=1,2` picks monitors. Bookmark the URL
   per screen.
 - **F** or the ⛶ button toggles full screen; the mouse cursor hides after 3
   seconds of no movement; the browser is asked to keep the screen awake

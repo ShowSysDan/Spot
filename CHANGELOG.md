@@ -3,6 +3,36 @@
 All notable changes to Spot. The version number lives in `app/version.py`
 and is bumped with every change.
 
+## 1.10.0 — 2026-10-25
+
+### Added
+- **Plain-language key to the summary figures**. PDF reports gain a
+  *How to read this report* page explaining Samples, Min, Max, Average,
+  Events and, for dB monitors, Leq, L10 and L90, plus a note on what a
+  difference in dB sounds like, so the PDF can go to non-technical readers.
+  The show page and Reports page show the same key (*What these numbers
+  mean*) under their summary tables. The key has two sections: *Measured
+  values* (straight from the readings) and *Calculated sound values* (Leq,
+  L10, L90). The wording lives in `app/glossary.py`.
+- **Setup → Units** (`/setup/units`): choose which units are sound levels
+  (dB, dBA, dBC, or any other) and so get Leq / L10 / L90 and are used for
+  show start/end detection. Until a list is saved, every unit starting with
+  "dB" counts, as before.
+
+- **Monitor categories**: an optional *Category* on each monitor (e.g. Audio,
+  Weather, Room Temps). The Monitors page has a *Group by: Location |
+  Category* switch (remembered; `?group=`), the wall display a category menu
+  (`/wall?category=Audio`, combinable with `?location=`), and `/api/v1`
+  monitor listings and stats include `category`. New column
+  `monitors.category`, added automatically on start.
+
+### Changed
+- The Reports PDF summary column reads *Average* instead of *Avg*.
+
+### Fixed
+- A show mixing a dB monitor with a non-dB one (e.g. dBA and °F) no longer
+  fails to open with a server error.
+
 ## 1.9.0 — 2026-10-24
 
 ### Added

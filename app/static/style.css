@@ -130,10 +130,10 @@ input[type=search]:focus { outline: none; border-color: var(--accent); }
 
 /* Segmented "chip" buttons (time windows, quick ranges). */
 .chips { display: inline-flex; flex-wrap: wrap; gap: 0; margin: 0.5rem 0; }
-.chips button { border-radius: 0; margin-left: -1px; padding: 0.35rem 0.7rem; font-size: 0.9rem; }
-.chips button:first-child { border-radius: 4px 0 0 4px; margin-left: 0; }
-.chips button:last-child { border-radius: 0 4px 4px 0; }
-.chips button.active { background: var(--accent); color: var(--accent-fg); border-color: var(--accent);
+.chips :is(button, .button) { border-radius: 0; margin-left: -1px; padding: 0.35rem 0.7rem; font-size: 0.9rem; }
+.chips :is(button, .button):first-child { border-radius: 4px 0 0 4px; margin-left: 0; }
+.chips :is(button, .button):last-child { border-radius: 0 4px 4px 0; }
+.chips :is(button, .button).active { background: var(--accent); color: var(--accent-fg); border-color: var(--accent);
   position: relative; z-index: 1; font-weight: 600; }
 
 /* Live pill in the Monitors header. */
@@ -204,6 +204,15 @@ input[type=search]:focus { outline: none; border-color: var(--accent); }
 .pick .badge { margin-left: auto; }
 .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 0.4rem; }
 #summary.grid { margin-top: 1rem; }
+.chips.group-by { margin: 0; }
+
+/* "What these numbers mean" key under summary tables (_stat_legend.html). */
+.stat-legend { margin: 0.9rem 0 1.2rem; }
+.stat-legend summary { cursor: pointer; color: var(--muted); font-size: 0.9rem; }
+.stat-legend dl.meta { margin: 0.6rem 0 0.4rem; font-size: 0.9rem; max-width: 60rem; }
+.stat-legend dl.meta dt { font-weight: 600; color: var(--accent); }
+.stat-legend-group h4 { margin: 0.8rem 0 0.2rem; font-size: 0.95rem; }
+.stat-legend-group > p { margin: 0.2rem 0; }
 
 /* Narrow screens: let wide tables scroll inside themselves instead of the page. */
 @media (max-width: 760px) {
