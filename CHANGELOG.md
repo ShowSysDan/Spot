@@ -26,7 +26,8 @@ and is bumped with every change.
 ### Changed
 - **PDF reports redesigned** as a single portrait page for non-technical
   readers (show reports, Reports, single-monitor exports, `/api/v1/report.pdf`):
-  header with the date, times and duration; the chart with horizontal
+  header with the Spot name and tagline beside the logo and the time range
+  large on the right (the show name, if any, below); the chart with horizontal
   `HH:MM` time labels (the date is given once below the axis) instead of
   45° timestamps, event markers as labelled dashed lines (now on multi-monitor
   reports too) and a colour key above it; a *Measured values* table and a

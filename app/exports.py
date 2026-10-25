@@ -335,7 +335,7 @@ def _logo_fallback(height_inch: float = 0.55) -> Drawing:
 
 _PAGE_W, _PAGE_H = letter
 _MARGIN = 0.5 * inch
-_CONTENT_W = _PAGE_W - 2 * _MARGIN
+_CONTENT_W = _PAGE_W - 2 * _MARGIN   # content lines up with the footer rule
 _TOP, _BOTTOM = 0.45 * inch, 0.6 * inch
 _FRAME_PAD = 6                       # SimpleDocTemplate's frame padding (pt)
 _CHART_MIN_IN, _CHART_MAX_IN = 1.8, 5.8
@@ -353,7 +353,11 @@ def _styles() -> dict[str, ParagraphStyle]:
         return ParagraphStyle(name, fontName=font, fontSize=size, leading=leading,
                               textColor=color, alignment=align)
     return {
-        "title": st("Title", 17, 20, "Helvetica-Bold"),
+        "brand": st("Brand", 20, 22, "Helvetica-Bold"),
+        "tagline": st("Tagline", 8.5, 11, "Helvetica-Oblique", _MUTED),
+        "when": st("When", 16, 19, "Helvetica-Bold", align=2),
+        "when_small": st("WhenSmall", 8.5, 11, color=_MUTED, align=2),
+        "title": st("Title", 14, 17, "Helvetica-Bold"),
         "meta": st("Meta", 9, 12, color=_MUTED),
         "section": st("Section", 10.5, 13, "Helvetica-Bold"),
         "intro": st("Intro", 8, 10, color=_MUTED),
@@ -378,10 +382,9 @@ def _draw_page(canvas, doc) -> None:
     canvas.line(_MARGIN, 0.45 * inch, _PAGE_W - _MARGIN, 0.45 * inch)
     canvas.setFillColor(_MUTED)
     canvas.setFont("Helvetica", 7)
-    canvas.drawString(_MARGIN, 0.3 * inch, f"Spot · {_TAGLINE}")
+    canvas.drawString(_MARGIN, 0.3 * inch, f"Spot v{__version__}")
     stamp = now_local().strftime("%Y-%m-%d %H:%M %Z")
-    canvas.drawRightString(_PAGE_W - _MARGIN, 0.3 * inch,
-                           f"Generated {stamp} · Spot v{__version__}")
+    canvas.drawRightString(_PAGE_W - _MARGIN, 0.3 * inch, f"Generated {stamp}")
     canvas.restoreState()
 
 
@@ -394,34 +397,43 @@ def _duration(start: datetime, end: datetime) -> str:
     return " ".join(p for p in parts if p)
 
 
-def _range_text(start: datetime, end: datetime) -> str:
-    """'Sat 24 Oct 2026  19:00 – 21:45 EDT (2 h 45 min)', dates repeated only
-    when the range crosses midnight."""
+def _range_lines(start: datetime, end: datetime) -> tuple[str, str, str]:
+    """(small line above, big line, small line below) for the header's
+    time-range block: 'Sat 24 Oct 2026' / '19:00 – 21:45 EDT' / '2 h 45 min'
+    within one day; the dates big and the times small across days."""
     a, b = to_local(start), to_local(end)
     if a.date() == b.date():
-        when = f"{a:%a %d %b %Y} &nbsp;{a:%H:%M} – {b:%H:%M} {b.tzname()}"
-    else:
-        when = f"{a:%a %d %b %Y %H:%M} – {b:%a %d %b %Y %H:%M} {b.tzname()}"
-    return f"{when} &nbsp;({_duration(start, end)})"
+        return f"{a:%a %d %b %Y}", f"{a:%H:%M} – {b:%H:%M} {b.tzname()}", _duration(start, end)
+    big = (f"{a:%d %b} – {b:%d %b %Y}" if a.year == b.year
+           else f"{a:%d %b %Y} – {b:%d %b %Y}")
+    return (f"{a:%a %H:%M} → {b:%a %H:%M} {b.tzname()}", big, _duration(start, end))
 
 
-def _header(heading: str, start: datetime, end: datetime, n_monitors: int,
+def _header(title: str | None, start: datetime, end: datetime, n_monitors: int,
             extra_meta: list[tuple[str, str]], ss) -> list:
-    lines = [Paragraph(f"<b>{_xml_escape(heading)}</b>", ss["title"]),
-             Paragraph(f"{_range_text(start, end)} &nbsp;·&nbsp; "
-                       f"{n_monitors} monitor{'' if n_monitors == 1 else 's'}", ss["meta"])]
-    if extra_meta:
-        lines.append(Paragraph(" &nbsp;·&nbsp; ".join(
-            f"{_xml_escape(label)}: <font color='{_FG_HEX}'>{_xml_escape(value)}</font>"
-            for label, value in extra_meta), ss["meta"]))
-    block = Table([[_logo_drawing(0.42), lines]], colWidths=[0.6 * inch, None])
-    block.setStyle(TableStyle([
+    """Brand lockup on the left, the time range large on the right, then
+    the report's own title (a show name; omitted otherwise, since the chart
+    key names the monitors) and a line of details."""
+    brand = [Paragraph("<b>Spot</b>", ss["brand"]), Paragraph(_TAGLINE, ss["tagline"])]
+    above, big, below = _range_lines(start, end)
+    when = [Paragraph(above, ss["when_small"]), Paragraph(f"<b>{big}</b>", ss["when"]),
+            Paragraph(below, ss["when_small"])]
+    top = Table([[_logo_drawing(0.5), brand, when]],
+                colWidths=[0.65 * inch, None, 3.6 * inch])
+    top.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
         ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
     ]))
-    rule = HRFlowable(width="100%", thickness=1.2, color=_ACCENT, spaceBefore=6, spaceAfter=4)
-    return [block, rule]
+    flow = [top, HRFlowable(width="100%", thickness=1.2, color=_ACCENT,
+                            spaceBefore=6, spaceAfter=5)]
+    if title:
+        flow.append(Paragraph(f"<b>{_xml_escape(title)}</b>", ss["title"]))
+    details = [f"{n_monitors} monitor{'' if n_monitors == 1 else 's'}"]
+    details += [f"{_xml_escape(label)}: <font color='{_FG_HEX}'>{_xml_escape(value)}</font>"
+                for label, value in extra_meta]
+    flow += [Paragraph(" &nbsp;·&nbsp; ".join(details), ss["meta"]), Spacer(1, 6)]
+    return flow
 
 
 def _swatch(m: dict, ss) -> Paragraph:
@@ -489,7 +501,7 @@ def _chart_legend(monitors: list[dict], ss) -> Paragraph:
     return Paragraph(" &nbsp;&nbsp; ".join(entry(m) for m in monitors), ss["legend"])
 
 
-def _render_report(heading: str, start: datetime, end: datetime, monitors: list[dict],
+def _render_report(title: str | None, start: datetime, end: datetime, monitors: list[dict],
                    events: list[tuple[datetime, str]], doc_title: str,
                    extra_meta: list[tuple[str, str]] | None = None) -> bytes:
     """Lay out the one-page report. `monitors` are {name, unit, color,
@@ -502,7 +514,7 @@ def _render_report(heading: str, start: datetime, end: datetime, monitors: list[
     calc_title, calc_intro, _ = glossary.GROUPS[1]
     sound = [m for m in monitors if "leq" in m["summary"]]
 
-    before = [*_header(heading, start, end, len(monitors), extra_meta or [], ss),
+    before = [*_header(title, start, end, len(monitors), extra_meta or [], ss),
               Paragraph("Levels over time", ss["section"]), _chart_legend(monitors, ss),
               Spacer(1, 2)]
     after = [Spacer(1, 8),
@@ -525,25 +537,14 @@ def _render_report(heading: str, start: datetime, end: datetime, monitors: list[
 
     out = io.BytesIO()
     doc = SimpleDocTemplate(out, pagesize=letter, title=doc_title,
-                            leftMargin=_MARGIN, rightMargin=_MARGIN,
+                            # The frame pads its content by _FRAME_PAD, so pull
+                            # the margins out by that much.
+                            leftMargin=_MARGIN - _FRAME_PAD,
+                            rightMargin=_MARGIN - _FRAME_PAD,
                             topMargin=_TOP, bottomMargin=_BOTTOM)
     doc.build([KeepInFrame(_CONTENT_W, avail, before + [chart] + after, mode="shrink")],
               onFirstPage=_draw_page)
     return out.getvalue()
-
-
-def _join_monitor_names(monitors: list[dict], char_cap: int = 60) -> str:
-    """'Foo, Bar + 2 more' style title summarizing the monitors in a report."""
-    names = [m.get("name", "") for m in monitors if m.get("name")]
-    if not names:
-        return "Report"
-    out = ""
-    for i, n in enumerate(names):
-        candidate = (out + ", " if out else "") + n
-        if len(candidate) > char_cap and i > 0:
-            return f"{out} + {len(names) - i} more"
-        out = candidate
-    return out
 
 
 def _report_events(monitors: list[dict]) -> list[tuple[datetime, str]]:
@@ -561,11 +562,11 @@ def render_overlay_pdf(start: datetime, end: datetime, monitors: list[dict],
     summary, events?: [{ts, label}]}, where `summary` holds exact SQL
     aggregates (points may be downsampled). Summaries with acoustic figures
     (`leq`, see queries.compute_summary) fill the calculated-values table.
-    `title` replaces the monitor-name heading (e.g. a show name) and
-    `extra_meta` adds (label, plain text) pairs under the heading.
+    `title` (e.g. a show name) heads the report; without one the chart key
+    names the monitors. `extra_meta` adds (label, plain text) details.
     """
-    return _render_report(title or _join_monitor_names(monitors), start, end, monitors,
-                           _report_events(monitors), title or "Spot report", extra_meta)
+    return _render_report(title, start, end, monitors, _report_events(monitors),
+                          title or "Spot report", extra_meta)
 
 
 def render_pdf(monitor_name: str, unit: str, start: datetime, end: datetime,
@@ -575,8 +576,7 @@ def render_pdf(monitor_name: str, unit: str, start: datetime, end: datetime,
     """One-page PDF report for a single monitor (same layout as the overlay)."""
     monitor = {"name": monitor_name, "unit": unit, "color": color,
                "points": points, "summary": summary}
-    return _render_report(monitor_name, start, end, [monitor], events,
-                          f"Spot — {monitor_name}")
+    return _render_report(None, start, end, [monitor], events, f"Spot — {monitor_name}")
 
 
 def _fmt(v) -> str:
