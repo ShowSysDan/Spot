@@ -6,14 +6,11 @@ and is bumped with every change.
 ## 1.10.0 — 2026-10-25
 
 ### Added
-- **Plain-language key to the summary figures**. PDF reports gain a
-  *How to read this report* page explaining Samples, Min, Max, Average,
-  Events and, for dB monitors, Leq, L10 and L90, plus a note on what a
-  difference in dB sounds like, so the PDF can go to non-technical readers.
-  The show page and Reports page show the same key (*What these numbers
-  mean*) under their summary tables. The key has two sections: *Measured
+- **Plain-language key to the summary figures** on the show page and
+  Reports page (*What these numbers mean*), in two sections: *Measured
   values* (straight from the readings) and *Calculated sound values* (Leq,
-  L10, L90). The wording lives in `app/glossary.py`.
+  L10, L90), plus a note on what a difference in dB sounds like. The wording
+  lives in `app/glossary.py` and is shared with the PDF.
 - **Setup → Units** (`/setup/units`): choose which units are sound levels
   (dB, dBA, dBC, or any other) and so get Leq / L10 / L90 and are used for
   show start/end detection. Until a list is saved, every unit starting with
@@ -27,9 +24,23 @@ and is bumped with every change.
   `monitors.category`, added automatically on start.
 
 ### Changed
-- The Reports PDF summary column reads *Average* instead of *Avg*.
+- **PDF reports redesigned** as a single portrait page for non-technical
+  readers (show reports, Reports, single-monitor exports, `/api/v1/report.pdf`):
+  header with the date, times and duration; the chart with horizontal
+  `HH:MM` time labels (the date is given once below the axis) instead of
+  45° timestamps, event markers as labelled dashed lines (now on multi-monitor
+  reports too) and a colour key above it; a *Measured values* table and a
+  *Calculated sound values* table, each column with a few words saying what
+  it is; and short notes on Max, Leq, L10, L90 and decibels. The chart takes
+  whatever space the tables leave; with very many monitors the page scales
+  down, so it is always one page. Values show one decimal place.
+- Single-monitor PDF exports of sound monitors now include Leq, L10 and L90.
 
 ### Fixed
+- **Leq was far too high for any sound monitor with event markers** in range
+  (e.g. 279 dB instead of 93 dB): label-only event rows were counted as
+  300 dB readings. Affects the show page, Reports, PDFs, show webhooks and
+  `/api/v1/stats`.
 - A show mixing a dB monitor with a non-dB one (e.g. dBA and °F) no longer
   fails to open with a server error.
 

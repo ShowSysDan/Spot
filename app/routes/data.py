@@ -255,7 +255,7 @@ def overlay_export_pdf():
     with session_scope() as s:
         start, end, detection = resolve_range(s, ids, start, end, detect_arg())
         monitors = collect_overlay(s, ids, start, end, PDF_MAX_POINTS,
-                                   with_summary=True, extended=True)
+                                   with_summary=True, extended=True, with_events=True)
     body = render_overlay_pdf(start, end, monitors, extra_meta=pdf_meta(detection))
     fname = _filename("report", start, end, "pdf")
     log.info("export pdf report monitors=%s range=%s..%s detect=%s bytes=%d",
@@ -292,7 +292,7 @@ def export_pdf(mid: int):
         m = get_monitor_or_404(s, mid)
         points, bucket = fetch_points(s, mid, start, end, PDF_MAX_POINTS)
         events = fetch_events(s, mid, start, end, limit=200)
-        summary_data = compute_summary(s, mid, start, end)
+        summary_data = compute_summary(s, mid, start, end, extended=True, unit=m.unit)
         name, unit, color = m.name, m.unit, monitor_color(m.id, m.color)
     body = render_pdf(name, unit, start, end, points,
                       [(e["ts"], e["label"]) for e in events], summary_data, color=color)

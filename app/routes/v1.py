@@ -224,7 +224,7 @@ def report_pdf():
         _known_monitors(s, ids)
         start, end, detection = resolve_range(s, ids, start, end, _detect_opts(s))
         data = collect_overlay(s, ids, start, end, PDF_MAX_POINTS,
-                               with_summary=True, extended=True)
+                               with_summary=True, extended=True, with_events=True)
     body = render_overlay_pdf(start, end, data, title=title, extra_meta=pdf_meta(detection))
     return Response(body, mimetype="application/pdf", headers={
         "Content-Disposition": f'attachment; filename="spot_report_{to_local(start):%Y%m%dT%H%M}.pdf"'})

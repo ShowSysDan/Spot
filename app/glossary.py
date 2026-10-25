@@ -29,6 +29,18 @@ STATS: dict[str, tuple[str, str]] = {
                          "\"Show Start\" or \"Fire Alarm\"."),
 }
 
+# A few words for under each column heading in the PDF tables.
+SHORT: dict[str, str] = {
+    "count": "readings taken",
+    "min": "lowest reading",
+    "max": "highest reading",
+    "avg": "typical reading",
+    "events": "markers logged",
+    "leq": "overall loudness",
+    "l10": "loud parts",
+    "l90": "background",
+}
+
 ACOUSTIC = ("leq", "l10", "l90")
 
 # Legend sections: (title, one-line intro, keys). Measured figures come
