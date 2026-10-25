@@ -53,7 +53,7 @@
       <label>Listen to
         <select name="detect_monitor_id">
           <option value="">First dB monitor in the show</option>
-          {% for m in monitors if m.unit.lower().startswith('db') %}
+          {% for m in monitors if is_sound_unit(m.unit) %}
           <option value="{{ m.id }}" {% if det.monitor == m.id %}selected{% endif %}>{{ m.name }}</option>
           {% endfor %}
         </select>

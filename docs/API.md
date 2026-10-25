@@ -244,7 +244,7 @@ Every monitor, sorted by name.
 | Field | Notes |
 |-------|-------|
 | `id` | Use this in every other call. |
-| `unit` | Free text set in Spot: `dB`, `dBA`, `°F`, `%`, … Units starting with `dB` get acoustic statistics. |
+| `unit` | Free text set in Spot: `dB`, `dBA`, `°F`, `%`, … Sound units (Setup → Units; default: anything starting with `dB`) get acoustic statistics. |
 | `location` | Free-text label set in Spot's UI, for humans. Not a 321Theater venue id; don't rely on it for mapping. |
 | `enabled` | Disabled monitors keep their history but receive no new data. |
 | `latest` | Newest reading with a value, however old; `null` if none ever. |
@@ -286,7 +286,8 @@ GET /stats?monitors=1,2&start=2026-10-24T19:30:00-04:00&end=2026-10-24T22:15:00-
   range the statistics cover, and a `detection` object explains how they
   were found ([5.1](#51-finding-the-actual-start-and-end-detect)).
 * Monitors come back sorted by name (match on `id`, not position).
-* `leq`, `l10`, `l50`, `l90` appear **only for units starting with `dB`**.
+* `leq`, `l10`, `l50`, `l90` appear **only for sound units**, as set on
+  Setup → Units (default: units starting with `dB`).
 * With no readings in the range: `count` is `0` and every value is `null`.
 * Any unknown id → `404` naming the missing ids (nothing partial).
 

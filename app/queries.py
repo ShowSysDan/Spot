@@ -11,6 +11,7 @@ from sqlalchemy import Float, cast, func, literal_column, select
 from sqlalchemy.orm import Session
 
 from .models import Monitor, Reading
+from .units import is_sound_unit
 from .util import iso_local, monitor_color
 
 # Longest window any endpoint will serve in one request. Bounds query cost and
@@ -85,11 +86,6 @@ def fetch_events(s: Session, mid: int, start: datetime, end: datetime,
         .order_by(Reading.ts.desc()).limit(limit)
     ).all()
     return [{"ts": r.ts, "label": r.label} for r in reversed(rows)]
-
-
-def is_sound_unit(unit: str | None) -> bool:
-    """dB, dBA, dBC, dB SPL… — units where Leq / L10 / L90 are meaningful."""
-    return (unit or "").strip().lower().startswith("db")
 
 
 def compute_summary(s: Session, mid: int, start: datetime, end: datetime,

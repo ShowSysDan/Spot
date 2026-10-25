@@ -506,24 +506,25 @@ def _stat_legend(keys) -> list:
     """'How to read this report' page: plain-language definitions of the
     summary figures in `keys`. Reports go to non-technical readers, so this
     gets its own page at a readable size rather than footnote type."""
-    title_style, _body, _muted, _section = _dark_styles()
+    title_style, _body, _muted, section_style = _dark_styles()
     term = ParagraphStyle("LegendTerm", fontName="Helvetica-Bold", fontSize=11,
                           leading=14, textColor=_ACCENT)
     text = ParagraphStyle("LegendText", fontName="Helvetica", fontSize=11,
                           leading=14.5, textColor=_FG)
     note = ParagraphStyle("LegendNote", fontName="Helvetica-Oblique",
                           fontSize=10, leading=13, textColor=_MUTED)
-    rows = [["Figure", "What it means"]]
-    rows += [[Paragraph(_xml_escape(label), term), Paragraph(_xml_escape(expl), text)]
-             for _key, label, expl in glossary.legend(keys)]
-    tbl = Table(rows, colWidths=[1.4 * inch, 8.6 * inch])
-    tbl.setStyle(_dark_table_style(header_row=True, font_size=11))
-    tbl.setStyle(TableStyle([("VALIGN", (0, 1), (-1, -1), "TOP")]))
     flow = [PageBreak(), _brand_block(), _accent_rule(),
-            Paragraph("<b>How to read this report</b>", title_style),
-            Spacer(1, 0.12 * inch), tbl]
-    if any(k in keys for k in glossary.ACOUSTIC):
-        flow += [Spacer(1, 0.12 * inch), Paragraph(_xml_escape(glossary.DB_NOTE), note)]
+            Paragraph("<b>How to read this report</b>", title_style)]
+    for title, intro, items in glossary.legend(keys):
+        tbl = Table([[Paragraph(_xml_escape(label), term), Paragraph(_xml_escape(expl), text)]
+                     for _key, label, expl in items],
+                    colWidths=[1.4 * inch, 8.6 * inch])
+        tbl.setStyle(_dark_table_style(header_row=False, font_size=11))
+        tbl.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
+        flow += [Spacer(1, 0.16 * inch), _section_label(title, section_style),
+                 Paragraph(_xml_escape(intro), note), Spacer(1, 0.05 * inch), tbl]
+        if any(k in glossary.ACOUSTIC for k, _l, _e in items):
+            flow += [Spacer(1, 0.08 * inch), Paragraph(_xml_escape(glossary.DB_NOTE), note)]
     return flow
 
 

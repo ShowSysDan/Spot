@@ -7,7 +7,7 @@ import secrets
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 from flask import Blueprint, Response, abort, current_app, flash, redirect, render_template, request, url_for
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from ..db import session_scope
 from ..janitor import clear_monitor, effective_retention, purge_monitor
@@ -23,6 +23,7 @@ from ..modbus import (
 )
 from ..alerts import active_alerts_by_monitor
 from .. import logging_config as logcfg
+from .. import units
 from ..models import Alert, ApiKey, ModbusDevice, Monitor, Show
 from ..notify import callback_url_problem, one_line, post_json
 from ..shows import (
@@ -562,6 +563,37 @@ def logging_reset():
     flash(f"Back to the .env settings, but syslog isn't working: {err}" if err
           else "Back to the .env settings.", "error" if err else "success")
     return redirect(url_for("web.logging_settings"))
+
+
+# ---------------------------------------------------------------------------
+# Units (which ones are sound levels)
+# ---------------------------------------------------------------------------
+
+@bp.route("/setup/units", methods=["GET", "POST"])
+def units_settings():
+    if request.method == "POST":
+        chosen = request.form.getlist("sound")
+        chosen += [u.strip() for u in request.form.get("add", "").split(",")]
+        units.save([u for u in chosen if u and len(u) <= 32])
+        log.info("sound units changed: %s", ", ".join(units.saved_units()) or "(none)")
+        flash("Sound units saved.", "success")
+        return redirect(url_for("web.units_settings"))
+    with session_scope() as s:
+        in_use = dict(s.execute(
+            select(Monitor.unit, func.count()).group_by(Monitor.unit)).all())
+    # Every unit monitors use, plus saved and suggested sound units not used yet.
+    names = {u.lower(): u for u in [*units.SUGGESTED, *(units.saved_units() or []), *in_use]}
+    rows = [{"unit": u, "monitors": in_use.get(u, 0), "sound": units.is_sound_unit(u)}
+            for u in sorted(names.values(), key=str.lower)]
+    return render_template("units.html", rows=rows, saved=units.saved_units() is not None)
+
+
+@bp.route("/setup/units/reset", methods=["POST"])
+def units_reset():
+    units.reset()
+    log.info("sound units reset to default (units starting with dB)")
+    flash("Back to the default: every unit starting with “dB” is a sound unit.", "success")
+    return redirect(url_for("web.units_settings"))
 
 
 # ---------------------------------------------------------------------------

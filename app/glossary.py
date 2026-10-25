@@ -6,7 +6,7 @@ PDF in particular goes to management as an executive summary.
 """
 from __future__ import annotations
 
-# key → (label as shown in the table, explanation). Order is legend order.
+# key → (label as shown in the table, explanation).
 STATS: dict[str, tuple[str, str]] = {
     "count": ("Samples", "How many readings the monitor took in this time range."),
     "min": ("Min", "The lowest single reading."),
@@ -31,12 +31,31 @@ STATS: dict[str, tuple[str, str]] = {
 
 ACOUSTIC = ("leq", "l10", "l90")
 
+# Legend sections: (title, one-line intro, keys). Measured figures come
+# straight from the readings; calculated ones are standard sound-measurement
+# formulas, only produced for sound units (Setup → Units).
+GROUPS: list[tuple[str, str, tuple[str, ...]]] = [
+    ("Measured values",
+     "Taken directly from the monitor's readings.",
+     ("count", "min", "max", "avg", "events")),
+    ("Calculated sound values",
+     "Standard noise-measurement figures worked out from the readings. "
+     "They only appear for sound-level monitors (measured in decibels).",
+     ACOUSTIC),
+]
+
 # Shown with the acoustic terms: a sense of scale for decibel differences.
 DB_NOTE = ("Sound levels are in decibels (dB). Every 10 dB increase sounds "
            "roughly twice as loud; a change of 3 dB is about the smallest "
            "most people notice.")
 
 
-def legend(keys) -> list[tuple[str, str, str]]:
-    """(key, label, explanation) for each of `keys`, in legend order."""
-    return [(k, *STATS[k]) for k in STATS if k in keys]
+def legend(keys) -> list[tuple[str, str, list[tuple[str, str, str]]]]:
+    """Legend sections covering `keys`: (title, intro, [(key, label,
+    explanation), …]), skipping sections with none of `keys`."""
+    out = []
+    for title, intro, group in GROUPS:
+        items = [(k, *STATS[k]) for k in group if k in keys]
+        if items:
+            out.append((title, intro, items))
+    return out

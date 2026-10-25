@@ -209,7 +209,9 @@ input[type=search]:focus { outline: none; border-color: var(--accent); }
 .stat-legend { margin: 0.9rem 0 1.2rem; }
 .stat-legend summary { cursor: pointer; color: var(--muted); font-size: 0.9rem; }
 .stat-legend dl.meta { margin: 0.6rem 0 0.4rem; font-size: 0.9rem; max-width: 60rem; }
-.stat-legend dt { font-weight: 600; color: var(--accent); }
+.stat-legend dl.meta dt { font-weight: 600; color: var(--accent); }
+.stat-legend-group h4 { margin: 0.8rem 0 0.2rem; font-size: 0.95rem; }
+.stat-legend-group > p { margin: 0.2rem 0; }
 
 /* Narrow screens: let wide tables scroll inside themselves instead of the page. */
 @media (max-width: 760px) {

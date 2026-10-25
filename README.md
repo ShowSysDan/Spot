@@ -340,6 +340,7 @@ migration.
 | `/alerts` | Alerts | Active alerts (acknowledge), thresholds in use, history |
 | `/setup` | Setup | Hub: links below, time zone check, webhook settings and test button (`/setup/test-webhook`) |
 | `/setup/api-keys` | Setup → API keys | Keys for `/api/v1` (321Theater etc.) |
+| `/setup/units` | Setup → Units | Which units are sound levels (get Leq / L10 / L90, used for show start/end detection) |
 | `/setup/logging` | Setup → Logging & syslog | Syslog destination / transport / app name / facility, what to log, recent log |
 | `/modbus`, `/modbus/new`, `/modbus/<id>` | Setup → Modbus devices | Polled Modbus TCP sensors |
 | `/storage` | Setup → Storage | Database size and rows per monitor |
@@ -514,7 +515,10 @@ the Walt Disney Theater's sound meters.
 - **Show page** — when, delivery status, a levels table (samples, min, max,
   average, and for dB monitors **Leq** — the energy-average level, the
   standard "average loudness" — plus **L10** (loud passages) and **L90**
-  (background)), a chart, and *Download PDF* / *CSV* / *Open in Reports*.
+  (background)), a key explaining each figure in plain language, a chart,
+  and *Download PDF* / *CSV* / *Open in Reports*. Which units count as
+  sound levels is set on **Setup → Units** (default: anything starting
+  with "dB").
 - **Automatic report** — give a show a callback URL (e.g. a 321Theater
   endpoint) and Spot POSTs its PDF and statistics about 5 minutes after it ends (so late readings are
   included), retrying with backoff (1, 2, 4, 8, 16 min; 6 attempts) if

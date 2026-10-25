@@ -11,10 +11,20 @@ and is bumped with every change.
   Events and, for dB monitors, Leq, L10 and L90, plus a note on what a
   difference in dB sounds like, so the PDF can go to non-technical readers.
   The show page and Reports page show the same key (*What these numbers
-  mean*) under their summary tables. The wording lives in `app/glossary.py`.
+  mean*) under their summary tables. The key has two sections: *Measured
+  values* (straight from the readings) and *Calculated sound values* (Leq,
+  L10, L90). The wording lives in `app/glossary.py`.
+- **Setup → Units** (`/setup/units`): choose which units are sound levels
+  (dB, dBA, dBC, or any other) and so get Leq / L10 / L90 and are used for
+  show start/end detection. Until a list is saved, every unit starting with
+  "dB" counts, as before.
 
 ### Changed
 - The Reports PDF summary column reads *Average* instead of *Avg*.
+
+### Fixed
+- A show mixing a dB monitor with a non-dB one (e.g. dBA and °F) no longer
+  fails to open with a server error.
 
 ## 1.9.0 — 2026-10-24
 

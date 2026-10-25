@@ -3,7 +3,7 @@ from __future__ import annotations
 from flask import Flask, jsonify, request
 from werkzeug.exceptions import HTTPException
 
-from . import glossary
+from . import glossary, units
 from .alerts import AlertEngine, open_alert_count
 from .config import Config
 from .shows import ShowReporter
@@ -28,6 +28,7 @@ def create_app(config: Config | None = None) -> Flask:
     init_engine(cfg)
     init_schema(cfg)
     load_stored_settings(cfg)  # logging settings saved on Setup → Logging win over .env
+    units.load()  # which units are sound levels (Setup → Units)
 
     manager = ListenerManager(cfg)
     modbus = ModbusManager(cfg)
@@ -83,6 +84,7 @@ def create_app(config: Config | None = None) -> Flask:
                 "spot_timezone": cfg.timezone,
                 "spot_alert_count": alert_count,
                 "stat_legend": glossary.legend,
+                "is_sound_unit": units.is_sound_unit,
                 "acoustic_stats": glossary.ACOUSTIC,
                 "db_note": glossary.DB_NOTE}
 
