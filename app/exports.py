@@ -367,9 +367,12 @@ def _logo_fallback(height_inch: float = 0.55) -> Drawing:
 # ---------------------------------------------------------------------------
 
 _PAGE_W, _PAGE_H = letter
-_MARGIN = 0.5 * inch
+# Where content starts and stops, measured from the paper's edges. Kept just
+# outside the ~0.25 in most printers can't reach.
+_MARGIN = 0.4 * inch                 # left / right
 _CONTENT_W = _PAGE_W - 2 * _MARGIN   # content lines up with the footer rule
-_TOP, _BOTTOM = 0.45 * inch, 0.6 * inch
+_TOP, _BOTTOM = 0.3 * inch, 0.5 * inch
+_FOOTER_RULE_Y, _FOOTER_TEXT_Y = 0.4 * inch, 0.26 * inch
 _FRAME_PAD = 6                       # SimpleDocTemplate's frame padding (pt)
 _CHART_MIN_IN, _CHART_MAX_IN = 1.8, 5.8
 
@@ -412,12 +415,12 @@ def _draw_page(canvas, doc) -> None:
     canvas.rect(0, 0, _PAGE_W, _PAGE_H, fill=1, stroke=0)
     canvas.setStrokeColor(_BORDER)
     canvas.setLineWidth(0.5)
-    canvas.line(_MARGIN, 0.45 * inch, _PAGE_W - _MARGIN, 0.45 * inch)
+    canvas.line(_MARGIN, _FOOTER_RULE_Y, _PAGE_W - _MARGIN, _FOOTER_RULE_Y)
     canvas.setFillColor(_MUTED)
     canvas.setFont(_FONT["regular"], 7)
-    canvas.drawString(_MARGIN, 0.3 * inch, f"Spot v{__version__}")
+    canvas.drawString(_MARGIN, _FOOTER_TEXT_Y, f"Spot v{__version__}")
     stamp = now_local().strftime("%Y-%m-%d %H:%M %Z")
-    canvas.drawRightString(_PAGE_W - _MARGIN, 0.3 * inch, f"Generated {stamp}")
+    canvas.drawRightString(_PAGE_W - _MARGIN, _FOOTER_TEXT_Y, f"Generated {stamp}")
     canvas.restoreState()
 
 
@@ -564,7 +567,7 @@ def _render_report(title: str | None, start: datetime, end: datetime, monitors: 
         keys += list(glossary.ACOUSTIC)
     after += _notes(keys, ss)
 
-    avail = _PAGE_H - _TOP - _BOTTOM - 2 * _FRAME_PAD
+    avail = _PAGE_H - _TOP - _BOTTOM
     used = sum(f.wrap(_CONTENT_W, avail)[1] + f.getSpaceBefore() + f.getSpaceAfter()
                for f in before + after)
     chart_in = min(_CHART_MAX_IN, max(_CHART_MIN_IN, (avail - used) / inch - 0.05))
@@ -578,7 +581,8 @@ def _render_report(title: str | None, start: datetime, end: datetime, monitors: 
                             # the margins out by that much.
                             leftMargin=_MARGIN - _FRAME_PAD,
                             rightMargin=_MARGIN - _FRAME_PAD,
-                            topMargin=_TOP, bottomMargin=_BOTTOM)
+                            topMargin=_TOP - _FRAME_PAD,
+                            bottomMargin=_BOTTOM - _FRAME_PAD)
     doc.build([KeepInFrame(_CONTENT_W, avail, before + [chart] + after, mode="shrink")],
               onFirstPage=_draw_page)
     return out.getvalue()
