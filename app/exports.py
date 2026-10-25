@@ -55,6 +55,7 @@ except Exception:  # pragma: no cover - graceful fallback if svglib missing
 # feed matplotlib and ReportLab <font> markup; the HexColor twins feed
 # ReportLab table/canvas styling.
 _BG_HEX = "#0e1116"
+_CARD_HEX = "#161b22"
 _BORDER_HEX = "#2c313a"
 _FG_HEX = "#e6e8eb"
 _MUTED_HEX = "#8a929d"
@@ -96,14 +97,17 @@ def iter_csv(rows, include_monitor: bool = False, chunk_rows: int = 2000):
 
 
 def _style_axes(ax) -> None:
-    ax.set_facecolor(_BG_HEX)
-    for side, spine in ax.spines.items():
+    """Each panel is a shaded, outlined box (the card colour of the web UI)
+    with a faint grid, so the chart reads as one framed figure."""
+    ax.set_facecolor(_CARD_HEX)
+    for spine in ax.spines.values():
         spine.set_color(_BORDER_HEX)
-        spine.set_visible(side in ("left", "bottom"))
+        spine.set_linewidth(0.8)
     ax.tick_params(colors=_MUTED_HEX, labelsize=7, length=2)
     ax.yaxis.label.set_color(_FG_HEX)
     ax.yaxis.label.set_fontsize(8)
-    ax.grid(True, axis="y", color=_BORDER_HEX, linewidth=0.5)
+    ax.grid(True, color=_BORDER_HEX, linewidth=0.5)
+    ax.set_axisbelow(True)
 
 
 def _time_axis(ax, start: datetime, end: datetime) -> None:
