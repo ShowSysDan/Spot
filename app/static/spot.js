@@ -164,7 +164,7 @@
       ctx.fillStyle = '#ff9b94';
       ctx.setLineDash([4, 3]);
       ctx.lineWidth = 1;
-      ctx.font = '11px system-ui, sans-serif';
+      ctx.font = '11px Poppins, system-ui, sans-serif';
       for (const ev of events) {
         const px = x.getPixelForValue(ev.x);
         if (px < chart.chartArea.left || px > chart.chartArea.right) continue;
@@ -193,7 +193,7 @@
       ctx.save();
       ctx.setLineDash([6, 4]);
       ctx.lineWidth = 1.2;
-      ctx.font = '11px system-ui, sans-serif';
+      ctx.font = '11px Poppins, system-ui, sans-serif';
       ctx.textAlign = 'right';
       for (const ln of lines) {
         const py = y.getPixelForValue(ln.y);
@@ -239,7 +239,7 @@
       };
       ctx.save();
       ctx.lineWidth = 1.5;
-      ctx.font = '11px system-ui, sans-serif';
+      ctx.font = '11px Poppins, system-ui, sans-serif';
       // Scheduled labels sit at the bottom so they never collide with the detected ones.
       if (o.scheduledStart != null) line(o.scheduledStart, '#8a929d', [2, 3], 'scheduled', 'right', true);
       if (o.scheduledEnd != null) line(o.scheduledEnd, '#8a929d', [2, 3], 'scheduled', 'left', true);
@@ -306,7 +306,7 @@
         ctx.stroke();
         if (x1 - x0 > 46) {
           ctx.fillStyle = cssVar('--muted', '#8a929d');
-          ctx.font = '11px system-ui, sans-serif';
+          ctx.font = '11px Poppins, system-ui, sans-serif';
           ctx.textAlign = 'center';
           ctx.fillText('no data', (x0 + x1) / 2, bottom - 6);
           ctx.fillStyle = cssVar('--gap-fill', 'rgba(138, 146, 157, 0.10)');

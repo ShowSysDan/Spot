@@ -25,7 +25,7 @@
       const css = getComputedStyle(document.documentElement);
       Chart.defaults.color = css.getPropertyValue('--chart-text').trim() || '#cfd2d6';
       Chart.defaults.borderColor = css.getPropertyValue('--border').trim() || '#2c313a';
-      Chart.defaults.font.family = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+      Chart.defaults.font.family = css.getPropertyValue('--font').trim() || 'system-ui, sans-serif';
       const t = Chart.defaults.scales.time;
       t.adapters = { date: { zone: window.SPOT_TZ, locale: 'en-US' } };
       t.time = Object.assign(t.time || {}, {

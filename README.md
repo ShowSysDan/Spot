@@ -145,6 +145,7 @@ python3 -m venv .venv
 
 **No internet on the server?** Spot runs fully offline: every browser
 library (Chart.js and its date adapter) is vendored in `app/static/vendor/`
+(and the Poppins brand font in `app/static/fonts/`)
 and served by Spot itself, so the UI never touches a CDN. For the Python
 packages, build a wheelhouse on a machine that does have internet and the
 same OS / architecture / Python version, then copy it across:
