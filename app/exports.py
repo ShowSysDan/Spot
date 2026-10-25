@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
+import logging
 import os
 import statistics
 from datetime import datetime
@@ -18,6 +19,7 @@ os.makedirs(os.environ["MPLCONFIGDIR"], exist_ok=True)
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.dates as mdates
+from matplotlib import font_manager
 from matplotlib.figure import Figure
 
 from . import glossary
@@ -28,6 +30,9 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import inch
+from reportlab.lib.fonts import addMapping
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.graphics.shapes import (
     Circle,
     Drawing,
@@ -66,6 +71,34 @@ _BG, _BORDER, _FG, _MUTED, _ACCENT = (
 )
 
 _LOGO_PATH = os.path.join(_SPOT_ROOT, "app", "static", "logo.svg")
+_FONT_DIR = os.path.join(_SPOT_ROOT, "app", "static", "fonts")
+
+
+def _register_fonts() -> dict[str, str]:
+    """Register the Poppins brand font (app/static/fonts) with ReportLab and
+    matplotlib. Returns the ReportLab font names to use by role; falls back
+    to the built-in Helvetica if the files are missing or unreadable, so a
+    broken install still produces a report."""
+    files = {"regular": "Poppins-Regular", "semibold": "Poppins-SemiBold",
+             "bold": "Poppins-Bold", "italic": "Poppins-Italic"}
+    try:
+        for name in files.values():
+            path = os.path.join(_FONT_DIR, f"{name}.ttf")
+            pdfmetrics.registerFont(TTFont(name, path))
+            font_manager.fontManager.addfont(path)
+    except Exception as e:
+        logging.getLogger("spot").warning("Poppins font unavailable, PDFs use Helvetica: %s", e)
+        return {"regular": _FONT["regular"], "semibold": _FONT["semibold"],
+                "bold": _FONT["semibold"], "italic": _FONT["italic"]}
+    # <b> / <i> in paragraph markup.
+    for bold, italic, name in ((0, 0, files["regular"]), (1, 0, files["semibold"]),
+                               (0, 1, files["italic"]), (1, 1, files["semibold"])):
+        addMapping("Poppins", bold, italic, name)
+    matplotlib.rcParams["font.family"] = "Poppins"
+    return files
+
+
+_FONT = _register_fonts()
 _TAGLINE = "Data acquisition, down to the last spot."
 
 
@@ -349,25 +382,25 @@ _NOTE_KEYS = ("max", "leq", "l10", "l90")
 
 
 def _styles() -> dict[str, ParagraphStyle]:
-    def st(name, size, leading, font="Helvetica", color=_FG, align=0):
+    def st(name, size, leading, font=_FONT["regular"], color=_FG, align=0):
         return ParagraphStyle(name, fontName=font, fontSize=size, leading=leading,
                               textColor=color, alignment=align)
     return {
-        "brand": st("Brand", 20, 22, "Helvetica-Bold"),
-        "tagline": st("Tagline", 8.5, 11, "Helvetica-Oblique", _MUTED),
-        "when": st("When", 16, 19, "Helvetica-Bold", align=2),
+        "brand": st("Brand", 20, 23, _FONT["semibold"]),
+        "tagline": st("Tagline", 8.5, 11, _FONT["italic"], _MUTED),
+        "when": st("When", 14, 17, _FONT["semibold"], align=2),
         "when_small": st("WhenSmall", 8.5, 11, color=_MUTED, align=2),
-        "title": st("Title", 14, 17, "Helvetica-Bold"),
+        "title": st("Title", 14, 17, _FONT["semibold"]),
         "meta": st("Meta", 9, 12, color=_MUTED),
-        "section": st("Section", 10.5, 13, "Helvetica-Bold"),
+        "section": st("Section", 10.5, 13, _FONT["semibold"]),
         "intro": st("Intro", 8, 10, color=_MUTED),
         "cell": st("Cell", 8.5, 10.5),
-        "head": st("Head", 8.5, 10, "Helvetica-Bold"),
-        "head_r": st("HeadR", 8.5, 10, "Helvetica-Bold", align=2),
+        "head": st("Head", 8.5, 10, _FONT["semibold"]),
+        "head_r": st("HeadR", 8.5, 10, _FONT["semibold"], align=2),
         "sub": st("Sub", 6.8, 8, color=_MUTED),
         "sub_r": st("SubR", 6.8, 8, color=_MUTED, align=2),
         "key": st("Key", 7.6, 9.6),
-        "note": st("Note", 7.4, 9.4, "Helvetica-Oblique", _MUTED),
+        "note": st("Note", 7.4, 9.4, _FONT["italic"], _MUTED),
         "legend": st("Legend", 7.6, 10, color=_MUTED),
     }
 
@@ -381,7 +414,7 @@ def _draw_page(canvas, doc) -> None:
     canvas.setLineWidth(0.5)
     canvas.line(_MARGIN, 0.45 * inch, _PAGE_W - _MARGIN, 0.45 * inch)
     canvas.setFillColor(_MUTED)
-    canvas.setFont("Helvetica", 7)
+    canvas.setFont(_FONT["regular"], 7)
     canvas.drawString(_MARGIN, 0.3 * inch, f"Spot v{__version__}")
     stamp = now_local().strftime("%Y-%m-%d %H:%M %Z")
     canvas.drawRightString(_PAGE_W - _MARGIN, 0.3 * inch, f"Generated {stamp}")
@@ -398,15 +431,14 @@ def _duration(start: datetime, end: datetime) -> str:
 
 
 def _range_lines(start: datetime, end: datetime) -> tuple[str, str, str]:
-    """(small line above, big line, small line below) for the header's
-    time-range block: 'Sat 24 Oct 2026' / '19:00 – 21:45 EDT' / '2 h 45 min'
-    within one day; the dates big and the times small across days."""
+    """The header's time-range block: two equally prominent lines and the
+    duration. Within a day: 'Sat 24 Oct 2026' / '19:00 – 21:45 EDT'; across
+    days: 'Sat 24 Oct 2026, 19:00' / 'to Mon 26 Oct, 19:00 EDT'."""
     a, b = to_local(start), to_local(end)
     if a.date() == b.date():
         return f"{a:%a %d %b %Y}", f"{a:%H:%M} – {b:%H:%M} {b.tzname()}", _duration(start, end)
-    big = (f"{a:%d %b} – {b:%d %b %Y}" if a.year == b.year
-           else f"{a:%d %b %Y} – {b:%d %b %Y}")
-    return (f"{a:%a %H:%M} → {b:%a %H:%M} {b.tzname()}", big, _duration(start, end))
+    to = f"{b:%a %d %b}" if a.year == b.year else f"{b:%a %d %b %Y}"
+    return f"{a:%a %d %b %Y}, {a:%H:%M}", f"to {to}, {b:%H:%M} {b.tzname()}", _duration(start, end)
 
 
 def _header(title: str | None, start: datetime, end: datetime, n_monitors: int,
@@ -414,10 +446,10 @@ def _header(title: str | None, start: datetime, end: datetime, n_monitors: int,
     """Brand lockup on the left, the time range large on the right, then
     the report's own title (a show name; omitted otherwise, since the chart
     key names the monitors) and a line of details."""
-    brand = [Paragraph("<b>Spot</b>", ss["brand"]), Paragraph(_TAGLINE, ss["tagline"])]
-    above, big, below = _range_lines(start, end)
-    when = [Paragraph(above, ss["when_small"]), Paragraph(f"<b>{big}</b>", ss["when"]),
-            Paragraph(below, ss["when_small"])]
+    brand = [Paragraph("Spot", ss["brand"]), Paragraph(_TAGLINE, ss["tagline"])]
+    first, second, duration = _range_lines(start, end)
+    when = [Paragraph(first, ss["when"]), Paragraph(second, ss["when"]),
+            Paragraph(duration, ss["when_small"])]
     top = Table([[_logo_drawing(0.5), brand, when]],
                 colWidths=[0.65 * inch, None, 3.6 * inch])
     top.setStyle(TableStyle([
@@ -428,7 +460,7 @@ def _header(title: str | None, start: datetime, end: datetime, n_monitors: int,
     flow = [top, HRFlowable(width="100%", thickness=1.2, color=_ACCENT,
                             spaceBefore=6, spaceAfter=5)]
     if title:
-        flow.append(Paragraph(f"<b>{_xml_escape(title)}</b>", ss["title"]))
+        flow.append(Paragraph(_xml_escape(title), ss["title"]))
     details = [f"{n_monitors} monitor{'' if n_monitors == 1 else 's'}"]
     details += [f"{_xml_escape(label)}: <font color='{_FG_HEX}'>{_xml_escape(value)}</font>"
                 for label, value in extra_meta]
@@ -437,8 +469,13 @@ def _header(title: str | None, start: datetime, end: datetime, n_monitors: int,
 
 
 def _swatch(m: dict, ss) -> Paragraph:
-    return Paragraph(f'<font color="{m["color"]}">■</font>&nbsp; {_xml_escape(m["name"])}',
-                     ss["cell"])
+    return Paragraph(f'{_swatch_mark(m["color"])}&nbsp; {_xml_escape(m["name"])}', ss["cell"])
+
+
+def _swatch_mark(color: str) -> str:
+    """A filled square in the monitor's colour. Poppins has no ■ glyph, so
+    use ZapfDingbats 'n' (built into every PDF reader)."""
+    return f'<font name="ZapfDingbats" color="{color}" size="7">n</font>'
 
 
 def _heading_cell(key: str | None, label: str, ss, right: bool = True) -> list:
@@ -466,13 +503,13 @@ def _values_table(monitors: list[dict], cols, ss, bold_first: bool = False) -> T
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("VALIGN", (0, 0), (-1, 0), "BOTTOM"),
         ("ALIGN", (2, 1), (-1, -1), "RIGHT"),
-        ("FONT", (0, 1), (-1, -1), "Helvetica", 8.5),
+        ("FONT", (0, 1), (-1, -1), _FONT["regular"], 8.5),
         ("TEXTCOLOR", (0, 0), (-1, -1), _FG),
         ("TOPPADDING", (0, 0), (-1, -1), 2.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
         ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 4),
     ]
     if bold_first:
-        cmds.append(("FONT", (2, 1), (2, -1), "Helvetica-Bold", 8.5))
+        cmds.append(("FONT", (2, 1), (2, -1), _FONT["semibold"], 8.5))
     tbl.setStyle(TableStyle(cmds))
     return tbl
 
@@ -497,7 +534,7 @@ def _chart_legend(monitors: list[dict], ss) -> Paragraph:
     """Colour key above the chart; entries wrap as whole units."""
     def entry(m):
         text = _xml_escape(f'{m["name"]} ({m["unit"]})').replace(" ", "&nbsp;")
-        return f'<font color="{m["color"]}">■</font>&nbsp;{text}'
+        return f'{_swatch_mark(m["color"])}&nbsp;{text}'
     return Paragraph(" &nbsp;&nbsp; ".join(entry(m) for m in monitors), ss["legend"])
 
 

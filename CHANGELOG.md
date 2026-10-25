@@ -26,8 +26,8 @@ and is bumped with every change.
 ### Changed
 - **PDF reports redesigned** as a single portrait page for non-technical
   readers (show reports, Reports, single-monitor exports, `/api/v1/report.pdf`):
-  header with the Spot name and tagline beside the logo and the time range
-  large on the right (the show name, if any, below); the chart with horizontal
+  header with the Spot name and tagline beside the logo and the date and
+  times large on the right (the show name, if any, below); the chart with horizontal
   `HH:MM` time labels (the date is given once below the axis) instead of
   45° timestamps, event markers as labelled dashed lines (now on multi-monitor
   reports too) and a colour key above it; a *Measured values* table and a
@@ -36,6 +36,10 @@ and is bumped with every change.
   whatever space the tables leave; with very many monitors the page scales
   down, so it is always one page. Values show one decimal place.
 - Single-monitor PDF exports of sound monitors now include Leq, L10 and L90.
+- **Poppins**, Spot's brand font, in the web UI, wall display, charts and PDF
+  reports, with SemiBold (600) as the bold weight. Served from
+  `app/static/fonts/` (no CDN; SIL Open Font License), so it works offline;
+  PDFs fall back to Helvetica if the files are missing.
 
 ### Fixed
 - **Leq was far too high for any sound monitor with event markers** in range
