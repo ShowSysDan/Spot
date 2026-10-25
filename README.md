@@ -79,8 +79,7 @@ and lets you browse, query, graph, and export the data.
   points instead of 86,400, with the min/max band shaded behind the line.
 - **Query & export** — pick a range (or a quick preset: last hour, 24 h,
   7 days, today, yesterday, this week…); see min/max/avg/count + event count;
-  export the range to **CSV** or a **PDF** with the chart (plus a page
-  explaining each figure in plain language).
+  export the range to **CSV** or a one-page **PDF** report.
 - **Reports** (formerly *Overlay*) — tick one or more monitors, pick a range,
   preview them on one chart with a per-monitor summary table, then download a
   branded **PDF report** or one combined **CSV**. Monitors that share a unit
@@ -784,8 +783,13 @@ charts and the PDF / CSV reports live.
    30 days, today, yesterday, this week). Times are browser-local.
 3. **Preview** draws every selected monitor on one chart, one Y axis per
    unit, with a summary table (samples, min, max, average, events).
-4. **Download PDF** — branded landscape report: one chart panel per unit
-   stacked on a shared time axis, plus the per-monitor summary table.
+4. **Download PDF** — a one-page portrait report for non-technical readers:
+   one chart panel per unit on a shared time axis (event markers as dashed
+   lines), a *Measured values* table (samples, min, max, average, events),
+   a *Calculated sound values* table (Leq, L10, L90) when sound monitors are
+   included, and short notes. Every column carries a few words saying what it
+   is. With many monitors the chart shrinks, and past that the whole page
+   scales down, so it is always one page.
    **Download CSV** — one combined file with a `monitor` and `unit` column.
 
 The page URL updates as you preview (`/reports?ids=1,2&start=…&end=…`), so a

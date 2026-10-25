@@ -119,7 +119,10 @@ def compute_summary(s: Session, mid: int, start: datetime, end: datetime,
     if sound:
         # Mean energy for Leq. Clamped to 300 dB so power() can't overflow
         # on a garbage reading.
-        cols.append(func.avg(func.power(10.0, func.least(Reading.value, 300.0) / 10.0)))
+        # The FILTER matters: LEAST(NULL, 300) is 300 in Postgres, so without
+        # it every label-only event row would count as a 300 dB reading.
+        cols.append(func.avg(func.power(10.0, func.least(Reading.value, 300.0) / 10.0))
+                    .filter(Reading.value.is_not(None)))
     row = s.execute(select(*cols).where(where)).one()
     vmin, vmax, vavg, count, events = row[:5]
     count = int(count or 0)
@@ -160,8 +163,10 @@ def iso_points(points: list[dict]) -> list[dict]:
 def collect_overlay(s, ids: list[int], start: datetime, end: datetime,
                     max_points: int | None, with_summary: bool,
                     extended: bool = False,
-                    summary_range: tuple[datetime, datetime] | None = None) -> list[dict]:
-    """Points (+ optional summary) for several monitors, ordered by name.
+                    summary_range: tuple[datetime, datetime] | None = None,
+                    with_events: bool = False) -> list[dict]:
+    """Points (+ optional summary and event markers) for several monitors,
+    ordered by name.
 
     `summary_range` computes the summary over a different (narrower) range
     than the points — used to chart context around a detected show while
@@ -183,5 +188,7 @@ def collect_overlay(s, ids: list[int], start: datetime, end: datetime,
         if with_summary:
             item["summary"] = compute_summary(s, m.id, s_start, s_end,
                                               extended=extended, unit=m.unit)
+        if with_events:
+            item["events"] = fetch_events(s, m.id, start, end)
         out.append(item)
     return out

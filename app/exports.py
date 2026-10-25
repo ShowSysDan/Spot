@@ -21,11 +21,12 @@ import matplotlib.dates as mdates
 from matplotlib.figure import Figure
 
 from . import glossary
-from .util import format_local, naive_local, now_local, to_local
+from .units import is_sound_unit
+from .util import naive_local, now_local, to_local
 from .version import __version__
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import letter, landscape
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.graphics.shapes import (
     Circle,
@@ -36,7 +37,7 @@ from reportlab.graphics.shapes import (
 from reportlab.platypus import (
     HRFlowable,
     Image,
-    PageBreak,
+    KeepInFrame,
     Paragraph,
     SimpleDocTemplate,
     Spacer,
@@ -54,17 +55,13 @@ except Exception:  # pragma: no cover - graceful fallback if svglib missing
 # feed matplotlib and ReportLab <font> markup; the HexColor twins feed
 # ReportLab table/canvas styling.
 _BG_HEX = "#0e1116"
-_CARD_HEX = "#161b22"
-_CARD_2_HEX = "#1c222b"
 _BORDER_HEX = "#2c313a"
 _FG_HEX = "#e6e8eb"
 _MUTED_HEX = "#8a929d"
 _ACCENT_HEX = "#58a6ff"
-_DANGER_HEX = "#f85149"
 
-_BG, _CARD, _CARD_2, _BORDER, _FG, _MUTED, _ACCENT, _DANGER = (
-    colors.HexColor(h) for h in (_BG_HEX, _CARD_HEX, _CARD_2_HEX, _BORDER_HEX,
-                                 _FG_HEX, _MUTED_HEX, _ACCENT_HEX, _DANGER_HEX)
+_BG, _BORDER, _FG, _MUTED, _ACCENT = (
+    colors.HexColor(h) for h in (_BG_HEX, _BORDER_HEX, _FG_HEX, _MUTED_HEX, _ACCENT_HEX)
 )
 
 _LOGO_PATH = os.path.join(_SPOT_ROOT, "app", "static", "logo.svg")
@@ -98,56 +95,95 @@ def iter_csv(rows, include_monitor: bool = False, chunk_rows: int = 2000):
     yield buf.getvalue()
 
 
-def _style_dark_axes(ax) -> None:
-    ax.set_facecolor(_CARD_HEX)
-    for spine in ax.spines.values():
+def _style_axes(ax) -> None:
+    ax.set_facecolor(_BG_HEX)
+    for side, spine in ax.spines.items():
         spine.set_color(_BORDER_HEX)
-    ax.tick_params(colors=_FG_HEX, which="both")
-    ax.xaxis.label.set_color(_FG_HEX)
+        spine.set_visible(side in ("left", "bottom"))
+    ax.tick_params(colors=_MUTED_HEX, labelsize=7, length=2)
     ax.yaxis.label.set_color(_FG_HEX)
-    ax.title.set_color(_FG_HEX)
-    ax.grid(True, alpha=0.35, color=_BORDER_HEX)
+    ax.yaxis.label.set_fontsize(8)
+    ax.grid(True, axis="y", color=_BORDER_HEX, linewidth=0.5)
 
 
-def render_chart_png(monitor_name: str, unit: str,
-                     points: list[dict],
-                     events: list[tuple[datetime, str]],
-                     color: str = _ACCENT_HEX) -> bytes:
-    """Render a chart to PNG using the OO matplotlib API.
+def _time_axis(ax, start: datetime, end: datetime) -> None:
+    """Horizontal time labels: 'HH:MM' within one day, with the date once in
+    the axis title; date-aware concise labels for longer ranges."""
+    a, b = to_local(start), to_local(end)
+    ax.set_xlim(naive_local(start), naive_local(end))
+    ax.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=5, maxticks=10))
+    zone = _zone_label(start, end)
+    if a.date() == b.date():
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+        title = f"{a:%a %d %b %Y} · {zone} (24-hour)"
+    else:
+        ax.xaxis.set_major_formatter(
+            mdates.ConciseDateFormatter(ax.xaxis.get_major_locator(), show_offset=False))
+        title = f"{a:%a %d %b} – {b:%a %d %b %Y} · {zone} (24-hour)"
+    ax.set_xlabel(title, color=_MUTED_HEX, fontsize=7)
 
-    `points` are {ts, value} dicts; downsampled points also carry min/max,
-    which are drawn as a faint band behind the average line.
 
-    Avoids pyplot's global state, so this is safe under gunicorn threaded workers.
+def render_report_chart_png(start: datetime, end: datetime, monitors: list[dict],
+                            events: list[tuple[datetime, str]],
+                            width_in: float, height_in: float) -> bytes:
+    """One panel per unit, sharing the time axis; event markers as dashed
+    lines labelled along the top. Monitors are {name, unit, color, points};
+    a lone monitor with downsampled points also gets its min/max band and
+    shaded data gaps. Sized to the exact space it fills on the page.
+
+    Uses the OO matplotlib API (no pyplot state), so it is safe under
+    gunicorn threaded workers.
     """
-    fig = Figure(figsize=(11, 5), facecolor=_BG_HEX)
-    ax = fig.subplots()
-    _style_dark_axes(ax)
-    if points:
-        xs = [naive_local(p["ts"]) for p in points]
-        gaps = _gap_after([p["ts"] for p in points])
-        _shade_gaps(ax, xs, gaps)
-        if "min" in points[0]:
-            bx, lo, hi = _split_at_gaps(xs, [p["min"] for p in points],
-                                        [p["max"] for p in points], gaps=gaps)
-            ax.fill_between(bx, lo, hi, color=color, alpha=0.18, linewidth=0)
-        px, ys = _split_at_gaps(xs, [p["value"] for p in points], gaps=gaps)
-        ax.plot(px, ys, linewidth=1.2, color=color, **_sparse_markers(xs))
-    for ts, label in events:
-        local_ts = naive_local(ts)
-        ax.axvline(local_ts, color=_DANGER_HEX, linestyle="--", linewidth=0.8, alpha=0.8)
-        ax.annotate(_mpl_text(label), xy=(local_ts, 1.0), xycoords=("data", "axes fraction"),
-                    xytext=(2, -10), textcoords="offset points",
-                    fontsize=8, color=_DANGER_HEX, rotation=90,
-                    verticalalignment="top")
-    ax.set_ylabel(_mpl_text(unit))
-    ax.set_xlabel(f"Time ({_zone_label(points[0]['ts'] if points else None, points[-1]['ts'] if points else None)})")
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d %H:%M:%S"))
-    fig.autofmt_xdate()
-    fig.tight_layout()
+    units: list[str] = []
+    for m in monitors:
+        if m["unit"] not in units:
+            units.append(m["unit"])
+    units = units or [""]
+    # Sound panels carry the story of a show, so they get twice the height.
+    ratios = [2 if is_sound_unit(u) else 1 for u in units] if len(units) > 1 else [1]
+    fig = Figure(figsize=(width_in, height_in), facecolor=_BG_HEX)
+    axes = fig.subplots(len(units), 1, sharex=True, squeeze=False,
+                        gridspec_kw={"height_ratios": ratios}).flatten().tolist()
+    single = len(monitors) == 1
+    for ax, unit in zip(axes, units):
+        _style_axes(ax)
+        for m in (m for m in monitors if m["unit"] == unit):
+            pts = m["points"]
+            xs = [naive_local(p["ts"]) for p in pts]
+            gaps = _gap_after([p["ts"] for p in pts])
+            if single:
+                _shade_gaps(ax, xs, gaps)
+                if pts and "min" in pts[0]:
+                    bx, lo, hi = _split_at_gaps(xs, [p["min"] for p in pts],
+                                                [p["max"] for p in pts], gaps=gaps)
+                    ax.fill_between(bx, lo, hi, color=m["color"], alpha=0.18, linewidth=0)
+            px, ys = _split_at_gaps(xs, [p["value"] for p in pts], gaps=gaps)
+            ax.plot(px, ys, color=m["color"], linewidth=0.9, **_sparse_markers(xs))
+        ax.set_ylabel(_mpl_text(unit))
+        for ts, _label in events:
+            ax.axvline(naive_local(ts), color=_MUTED_HEX, linestyle=(0, (3, 2)), linewidth=0.7)
+    _label_events(axes[0], start, end, events)
+    _time_axis(axes[-1], start, end)
+    fig.tight_layout(pad=0.3, h_pad=0.8)
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=120, facecolor=fig.get_facecolor())
+    fig.savefig(buf, format="png", dpi=200, facecolor=fig.get_facecolor())
     return buf.getvalue()
+
+
+def _label_events(ax, start: datetime, end: datetime,
+                  events: list[tuple[datetime, str]]) -> None:
+    """Label event lines along the top of the panel, skipping any label that
+    would crowd the previous one (its line is still drawn)."""
+    span = (end - start).total_seconds() or 1
+    last = None
+    for ts, label in events:
+        frac = (ts - start).total_seconds() / span
+        if last is not None and frac - last < 0.09:
+            continue
+        last = frac
+        ax.annotate(_mpl_text(label)[:24], xy=(naive_local(ts), 1.0),
+                    xycoords=("data", "axes fraction"), xytext=(2, -2),
+                    textcoords="offset points", fontsize=6.5, color=_MUTED_HEX, va="top")
 
 
 def _gap_after(ts: list[datetime]) -> list[int]:
@@ -212,52 +248,6 @@ def _zone_label(start: datetime | None, end: datetime | None) -> str:
         if n and n not in names:
             names.append(n)
     return "/".join(names) or (now_local().tzname() or "local")
-
-
-# Brighter overlay palette tuned for dark backgrounds.
-_OVERLAY_COLORS = ("#58a6ff", "#f85149", "#56d364", "#bc8cff",
-                   "#e3b341", "#39c5cf", "#ff7b72", "#ec6cb9")
-
-
-def render_overlay_chart_png(start: datetime, end: datetime,
-                             monitors: list[dict]) -> bytes:
-    """Stack one panel per unit; each panel plots all monitors with that unit."""
-    groups: dict[str, list[dict]] = {}
-    order: list[str] = []
-    for m in monitors:
-        u = m["unit"]
-        if u not in groups:
-            groups[u] = []
-            order.append(u)
-        groups[u].append(m)
-
-    n = max(1, len(order))
-    fig = Figure(figsize=(11, 2.6 * n + 1.5), facecolor=_BG_HEX)
-    axes = fig.subplots(n, 1, sharex=True, squeeze=False).flatten().tolist()
-    color_idx = 0
-    for ax, unit in zip(axes, order):
-        _style_dark_axes(ax)
-        for m in groups[unit]:
-            xs = [naive_local(p["ts"]) for p in m["points"]]
-            xs, ys = _split_at_gaps(xs, [p["value"] for p in m["points"]],
-                                    gaps=_gap_after([p["ts"] for p in m["points"]]))
-            ax.plot(xs, ys, label=_mpl_text(m["name"]), linewidth=1.2, **_sparse_markers(xs),
-                    color=m.get("color") or _OVERLAY_COLORS[color_idx % len(_OVERLAY_COLORS)])
-            color_idx += 1
-        ax.set_ylabel(_mpl_text(unit))
-        legend = ax.legend(loc="upper right", fontsize=14,
-                           facecolor=_CARD_HEX, edgecolor=_BORDER_HEX,
-                           labelcolor=_FG_HEX)
-        if legend is not None:
-            for text in legend.get_texts():
-                text.set_color(_FG_HEX)
-    axes[-1].set_xlabel(f"Time ({_zone_label(start, end)})")
-    axes[-1].xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d %H:%M:%S"))
-    fig.autofmt_xdate()
-    fig.tight_layout()
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=120, facecolor=fig.get_facecolor())
-    return buf.getvalue()
 
 
 def _logo_drawing(height_inch: float = 0.55):
@@ -333,199 +323,209 @@ def _logo_fallback(height_inch: float = 0.55) -> Drawing:
     return d
 
 
-def _dark_styles():
-    """Paragraph styles tinted for the dark page background."""
-    base = getSampleStyleSheet()
-    title = ParagraphStyle("DarkTitle", parent=base["Title"],
-                           fontName="Helvetica-Bold",
-                           textColor=_FG, alignment=0,
-                           fontSize=18, leading=21,
-                           spaceBefore=0, spaceAfter=1)
-    body = ParagraphStyle("DarkBody", parent=base["Normal"],
-                          textColor=_FG, fontSize=10, leading=13)
-    muted = ParagraphStyle("DarkMuted", parent=base["Normal"],
-                           textColor=_MUTED, fontSize=9.5, leading=12)
-    section = ParagraphStyle("DarkSection", parent=base["Normal"],
-                             fontName="Helvetica-Bold",
-                             textColor=_ACCENT, fontSize=8.5, leading=11,
-                             spaceBefore=0, spaceAfter=1)
-    return title, body, muted, section
+# ---------------------------------------------------------------------------
+# PDF report: one portrait page — header, chart, measured values, calculated
+# sound values, notes. Written for non-technical readers: every column says
+# in a few words what it is, and the notes explain the rest.
+# ---------------------------------------------------------------------------
+
+_PAGE_W, _PAGE_H = letter
+_MARGIN = 0.5 * inch
+_CONTENT_W = _PAGE_W - 2 * _MARGIN
+_TOP, _BOTTOM = 0.45 * inch, 0.6 * inch
+_FRAME_PAD = 6                       # SimpleDocTemplate's frame padding (pt)
+_CHART_MIN_IN, _CHART_MAX_IN = 1.8, 5.8
+
+# Columns of the two tables: (summary key, heading).
+_MEASURED_COLS = (("count", "Samples"), ("min", "Min"), ("max", "Max"),
+                  ("avg", "Average"), ("events", "Events"))
+_CALCULATED_COLS = (("leq", "Leq"), ("l10", "L10"), ("l90", "L90"))
+# Terms that need more than their column label; explained under Notes.
+_NOTE_KEYS = ("max", "leq", "l10", "l90")
 
 
-def _section_label(text: str, section_style) -> Paragraph:
-    """Tracked-out uppercase section label tinted with the accent color.
-
-    Spaces letters within each word and uses non-breaking spaces between
-    words so ReportLab's whitespace collapse doesn't fuse the words.
-    """
-    words = [" ".join(w) for w in text.upper().split()]
-    return Paragraph("&nbsp;&nbsp;&nbsp;&nbsp;".join(words), section_style)
-
-
-def _accent_rule(color=_ACCENT, thickness: float = 1.5,
-                 space_before: float = 3, space_after: float = 6) -> HRFlowable:
-    return HRFlowable(width="100%", thickness=thickness, color=color,
-                      lineCap="round",
-                      spaceBefore=space_before, spaceAfter=space_after)
-
-
-def _brand_block() -> Table:
-    """Logo + SPOT wordmark + tagline lockup that anchors every report."""
-    logo = _logo_drawing(0.7)
-    wordmark = Paragraph(
-        f'<font name="Helvetica-Bold" size="22" color="{_FG_HEX}">'
-        f'<b>S P O T</b></font>',
-        ParagraphStyle("Wordmark", fontName="Helvetica-Bold", fontSize=22,
-                       textColor=_FG, leading=24, alignment=0),
-    )
-    tagline = Paragraph(
-        f'<font name="Helvetica-Oblique" size="9.5" color="{_MUTED_HEX}">'
-        f'<i>{_TAGLINE}</i></font>',
-        ParagraphStyle("Tagline", fontName="Helvetica-Oblique", fontSize=9.5,
-                       textColor=_MUTED, leading=12, alignment=0,
-                       spaceBefore=1),
-    )
-    block = Table(
-        [[logo, [wordmark, tagline]]],
-        colWidths=[0.85 * inch, None],
-    )
-    block.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-        ("TOPPADDING", (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-        ("LEFTPADDING", (1, 0), (1, 0), 12),
-    ]))
-    return block
+def _styles() -> dict[str, ParagraphStyle]:
+    def st(name, size, leading, font="Helvetica", color=_FG, align=0):
+        return ParagraphStyle(name, fontName=font, fontSize=size, leading=leading,
+                              textColor=color, alignment=align)
+    return {
+        "title": st("Title", 17, 20, "Helvetica-Bold"),
+        "meta": st("Meta", 9, 12, color=_MUTED),
+        "section": st("Section", 10.5, 13, "Helvetica-Bold"),
+        "intro": st("Intro", 8, 10, color=_MUTED),
+        "cell": st("Cell", 8.5, 10.5),
+        "head": st("Head", 8.5, 10, "Helvetica-Bold"),
+        "head_r": st("HeadR", 8.5, 10, "Helvetica-Bold", align=2),
+        "sub": st("Sub", 6.8, 8, color=_MUTED),
+        "sub_r": st("SubR", 6.8, 8, color=_MUTED, align=2),
+        "key": st("Key", 7.6, 9.6),
+        "note": st("Note", 7.4, 9.4, "Helvetica-Oblique", _MUTED),
+        "legend": st("Legend", 7.6, 10, color=_MUTED),
+    }
 
 
-def _meta_line(pairs: list[tuple[str, str]]) -> Paragraph:
-    """Metadata row: 'LABEL value · LABEL value · …' with muted/foreground tinting."""
-    parts = []
-    for label, value in pairs:
-        parts.append(
-            f'<font color="{_MUTED_HEX}" size="8.5"><b>{label.upper()}</b></font>'
-            f' &nbsp;<font color="{_FG_HEX}" size="10">{value}</font>'
-        )
-    sep = f' &nbsp;&nbsp;<font color="{_BORDER_HEX}">|</font>&nbsp;&nbsp; '
-    html = sep.join(parts)
-    return Paragraph(
-        html,
-        ParagraphStyle("Meta", fontName="Helvetica", fontSize=10, leading=14,
-                       textColor=_FG, alignment=0),
-    )
-
-
-def _draw_dark_page(canvas, doc) -> None:
-    """Page chrome: dark background + footer rule, tagline, and page number."""
+def _draw_page(canvas, doc) -> None:
+    """Dark background and a one-line footer."""
     canvas.saveState()
-    w, h = doc.pagesize
     canvas.setFillColor(_BG)
-    canvas.rect(0, 0, w, h, fill=1, stroke=0)
-
-    # Footer rule
+    canvas.rect(0, 0, _PAGE_W, _PAGE_H, fill=1, stroke=0)
     canvas.setStrokeColor(_BORDER)
     canvas.setLineWidth(0.5)
-    canvas.line(0.5 * inch, 0.5 * inch, w - 0.5 * inch, 0.5 * inch)
-
-    # Footer left: brand + tagline
+    canvas.line(_MARGIN, 0.45 * inch, _PAGE_W - _MARGIN, 0.45 * inch)
     canvas.setFillColor(_MUTED)
-    canvas.setFont("Helvetica-Oblique", 8.5)
-    canvas.drawString(0.5 * inch, 0.32 * inch,
-                      f"Spot  ·  {_TAGLINE}")
-
-    # Footer right: generated stamp + page number
+    canvas.setFont("Helvetica", 7)
+    canvas.drawString(_MARGIN, 0.3 * inch, f"Spot · {_TAGLINE}")
     stamp = now_local().strftime("%Y-%m-%d %H:%M %Z")
-    canvas.setFillColor(_MUTED)
-    canvas.setFont("Helvetica", 8.5)
-    canvas.drawRightString(w - 0.5 * inch, 0.32 * inch,
-                           f"Generated {stamp}   ·   Spot v{__version__}   ·   Page {doc.page}")
+    canvas.drawRightString(_PAGE_W - _MARGIN, 0.3 * inch,
+                           f"Generated {stamp} · Spot v{__version__}")
     canvas.restoreState()
 
 
-def _stat_tile(label: str, value: str, value_pt: int = 22,
-               primary: bool = False) -> Table:
-    """Stat card: small muted label above a large bold value.
+def _duration(start: datetime, end: datetime) -> str:
+    mins = round((end - start).total_seconds() / 60)
+    days, mins = divmod(mins, 24 * 60)
+    hours, mins = divmod(mins, 60)
+    parts = [f"{days} d" if days else "", f"{hours} h" if hours else "",
+             f"{mins} min" if mins or not (days or hours) else ""]
+    return " ".join(p for p in parts if p)
 
-    `primary=True` adds an accent-colored top edge so headline metrics stand out.
-    """
-    label_p = Paragraph(
-        f'<font color="{_MUTED_HEX}" size="9"><b>{"  ".join(label.upper())}</b></font>',
-        ParagraphStyle("StatLabel", fontName="Helvetica-Bold", alignment=1,
-                       leading=11, textColor=_MUTED),
-    )
-    value_p = Paragraph(
-        f'<font color="{_FG_HEX}" size="{value_pt}"><b>{value}</b></font>',
-        ParagraphStyle("StatValue", fontName="Helvetica-Bold", alignment=1,
-                       leading=value_pt + 2, textColor=_FG),
-    )
-    tile = Table([[label_p], [value_p]], colWidths=[None])
-    cmds = [
-        ("BACKGROUND", (0, 0), (-1, -1), _CARD_2 if primary else _CARD),
-        ("BOX", (0, 0), (-1, -1), 0.5, _BORDER),
-        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+
+def _range_text(start: datetime, end: datetime) -> str:
+    """'Sat 24 Oct 2026  19:00 – 21:45 EDT (2 h 45 min)', dates repeated only
+    when the range crosses midnight."""
+    a, b = to_local(start), to_local(end)
+    if a.date() == b.date():
+        when = f"{a:%a %d %b %Y} &nbsp;{a:%H:%M} – {b:%H:%M} {b.tzname()}"
+    else:
+        when = f"{a:%a %d %b %Y %H:%M} – {b:%a %d %b %Y %H:%M} {b.tzname()}"
+    return f"{when} &nbsp;({_duration(start, end)})"
+
+
+def _header(heading: str, start: datetime, end: datetime, n_monitors: int,
+            extra_meta: list[tuple[str, str]], ss) -> list:
+    lines = [Paragraph(f"<b>{_xml_escape(heading)}</b>", ss["title"]),
+             Paragraph(f"{_range_text(start, end)} &nbsp;·&nbsp; "
+                       f"{n_monitors} monitor{'' if n_monitors == 1 else 's'}", ss["meta"])]
+    if extra_meta:
+        lines.append(Paragraph(" &nbsp;·&nbsp; ".join(
+            f"{_xml_escape(label)}: <font color='{_FG_HEX}'>{_xml_escape(value)}</font>"
+            for label, value in extra_meta), ss["meta"]))
+    block = Table([[_logo_drawing(0.42), lines]], colWidths=[0.6 * inch, None])
+    block.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 6),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-        ("TOPPADDING", (0, 0), (0, 0), 6),
-        ("BOTTOMPADDING", (0, 0), (0, 0), 1),
-        ("TOPPADDING", (0, 1), (0, 1), 0),
-        ("BOTTOMPADDING", (0, 1), (0, 1), 8),
-    ]
-    if primary:
-        cmds.append(("LINEABOVE", (0, 0), (-1, 0), 2.5, _ACCENT))
-    tile.setStyle(TableStyle(cmds))
-    return tile
+        ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    rule = HRFlowable(width="100%", thickness=1.2, color=_ACCENT, spaceBefore=6, spaceAfter=4)
+    return [block, rule]
 
 
-def _dark_table_style(header_row: bool = True, font_size: int = 9) -> TableStyle:
-    pad = max(4, font_size // 2)
+def _swatch(m: dict, ss) -> Paragraph:
+    return Paragraph(f'<font color="{m["color"]}">■</font>&nbsp; {_xml_escape(m["name"])}',
+                     ss["cell"])
+
+
+def _heading_cell(key: str | None, label: str, ss, right: bool = True) -> list:
+    cell = [Paragraph(label, ss["head_r" if right else "head"])]
+    if key:
+        cell.append(Paragraph(glossary.SHORT[key], ss["sub_r" if right else "sub"]))
+    return cell
+
+
+def _values_table(monitors: list[dict], cols, ss, bold_first: bool = False) -> Table:
+    rows = [[_heading_cell(None, "Monitor", ss, right=False),
+             _heading_cell(None, "Unit", ss, right=False),
+             *(_heading_cell(k, label, ss) for k, label in cols)]]
+    for m in monitors:
+        s = m["summary"]
+        rows.append([_swatch(m, ss), _xml_escape(m["unit"]),
+                     *(f"{s.get(k) or 0:,}" if k in ("count", "events") else _fmt(s.get(k))
+                       for k, _label in cols)])
+    name_w, unit_w = 2.3 * inch, 0.6 * inch
+    col_w = (_CONTENT_W - name_w - unit_w) / len(cols)
+    tbl = Table(rows, colWidths=[name_w, unit_w] + [col_w] * len(cols), repeatRows=1)
     cmds = [
-        ("BOX", (0, 0), (-1, -1), 0.5, _BORDER),
-        ("INNERGRID", (0, 0), (-1, -1), 0.25, _BORDER),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.8, _FG),
+        ("LINEBELOW", (0, 1), (-1, -2), 0.3, _BORDER),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("VALIGN", (0, 0), (-1, 0), "BOTTOM"),
+        ("ALIGN", (2, 1), (-1, -1), "RIGHT"),
+        ("FONT", (0, 1), (-1, -1), "Helvetica", 8.5),
         ("TEXTCOLOR", (0, 0), (-1, -1), _FG),
-        ("BACKGROUND", (0, 0), (-1, -1), _CARD_2),
-        ("FONT", (0, 0), (-1, -1), "Helvetica", font_size),
-        ("LEFTPADDING", (0, 0), (-1, -1), 8),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-        ("TOPPADDING", (0, 0), (-1, -1), pad),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), pad),
+        ("TOPPADDING", (0, 0), (-1, -1), 2.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 4),
     ]
-    if header_row:
-        cmds.extend([
-            ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", font_size),
-            ("BACKGROUND", (0, 0), (-1, 0), _CARD),
-            ("TEXTCOLOR", (0, 0), (-1, 0), _ACCENT),
-        ])
-    return TableStyle(cmds)
+    if bold_first:
+        cmds.append(("FONT", (2, 1), (2, -1), "Helvetica-Bold", 8.5))
+    tbl.setStyle(TableStyle(cmds))
+    return tbl
 
 
-def _stat_legend(keys) -> list:
-    """'How to read this report' page: plain-language definitions of the
-    summary figures in `keys`. Reports go to non-technical readers, so this
-    gets its own page at a readable size rather than footnote type."""
-    title_style, _body, _muted, section_style = _dark_styles()
-    term = ParagraphStyle("LegendTerm", fontName="Helvetica-Bold", fontSize=11,
-                          leading=14, textColor=_ACCENT)
-    text = ParagraphStyle("LegendText", fontName="Helvetica", fontSize=11,
-                          leading=14.5, textColor=_FG)
-    note = ParagraphStyle("LegendNote", fontName="Helvetica-Oblique",
-                          fontSize=10, leading=13, textColor=_MUTED)
-    flow = [PageBreak(), _brand_block(), _accent_rule(),
-            Paragraph("<b>How to read this report</b>", title_style)]
-    for title, intro, items in glossary.legend(keys):
-        tbl = Table([[Paragraph(_xml_escape(label), term), Paragraph(_xml_escape(expl), text)]
-                     for _key, label, expl in items],
-                    colWidths=[1.4 * inch, 8.6 * inch])
-        tbl.setStyle(_dark_table_style(header_row=False, font_size=11))
-        tbl.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
-        flow += [Spacer(1, 0.16 * inch), _section_label(title, section_style),
-                 Paragraph(_xml_escape(intro), note), Spacer(1, 0.05 * inch), tbl]
-        if any(k in glossary.ACOUSTIC for k, _l, _e in items):
-            flow += [Spacer(1, 0.08 * inch), Paragraph(_xml_escape(glossary.DB_NOTE), note)]
+def _section(title: str, intro: str, ss) -> list:
+    return [Paragraph(title, ss["section"]), Paragraph(_xml_escape(intro), ss["intro"]),
+            Spacer(1, 3)]
+
+
+def _notes(keys: list[str], ss) -> list:
+    flow = [Paragraph("Notes", ss["section"]), Spacer(1, 2)]
+    for k in _NOTE_KEYS:
+        if k in keys:
+            label, text = glossary.STATS[k]
+            flow.append(Paragraph(f"<b>{label}</b> — {_xml_escape(text)}", ss["key"]))
+    if any(k in keys for k in glossary.ACOUSTIC):
+        flow += [Spacer(1, 2), Paragraph(_xml_escape(glossary.DB_NOTE), ss["note"])]
     return flow
+
+
+def _chart_legend(monitors: list[dict], ss) -> Paragraph:
+    """Colour key above the chart; entries wrap as whole units."""
+    def entry(m):
+        text = _xml_escape(f'{m["name"]} ({m["unit"]})').replace(" ", "&nbsp;")
+        return f'<font color="{m["color"]}">■</font>&nbsp;{text}'
+    return Paragraph(" &nbsp;&nbsp; ".join(entry(m) for m in monitors), ss["legend"])
+
+
+def _render_report(heading: str, start: datetime, end: datetime, monitors: list[dict],
+                   events: list[tuple[datetime, str]], doc_title: str,
+                   extra_meta: list[tuple[str, str]] | None = None) -> bytes:
+    """Lay out the one-page report. `monitors` are {name, unit, color,
+    points, summary}; summaries carrying `leq` (sound units) also fill the
+    calculated-values table. The chart gets whatever height the rest leaves;
+    if even its minimum doesn't fit (many monitors), the page is scaled down
+    rather than spilling onto a second one."""
+    ss = _styles()
+    measured_title, measured_intro, _ = glossary.GROUPS[0]
+    calc_title, calc_intro, _ = glossary.GROUPS[1]
+    sound = [m for m in monitors if "leq" in m["summary"]]
+
+    before = [*_header(heading, start, end, len(monitors), extra_meta or [], ss),
+              Paragraph("Levels over time", ss["section"]), _chart_legend(monitors, ss),
+              Spacer(1, 2)]
+    after = [Spacer(1, 8),
+             *_section(measured_title, measured_intro, ss),
+             _values_table(monitors, _MEASURED_COLS, ss), Spacer(1, 10)]
+    keys = [k for k, _ in _MEASURED_COLS]
+    if sound:
+        after += [*_section(calc_title, calc_intro, ss),
+                  _values_table(sound, _CALCULATED_COLS, ss, bold_first=True), Spacer(1, 10)]
+        keys += list(glossary.ACOUSTIC)
+    after += _notes(keys, ss)
+
+    avail = _PAGE_H - _TOP - _BOTTOM - 2 * _FRAME_PAD
+    used = sum(f.wrap(_CONTENT_W, avail)[1] + f.getSpaceBefore() + f.getSpaceAfter()
+               for f in before + after)
+    chart_in = min(_CHART_MAX_IN, max(_CHART_MIN_IN, (avail - used) / inch - 0.05))
+    chart = Image(io.BytesIO(render_report_chart_png(start, end, monitors, events,
+                                                     _CONTENT_W / inch, chart_in)),
+                  width=_CONTENT_W, height=chart_in * inch)
+
+    out = io.BytesIO()
+    doc = SimpleDocTemplate(out, pagesize=letter, title=doc_title,
+                            leftMargin=_MARGIN, rightMargin=_MARGIN,
+                            topMargin=_TOP, bottomMargin=_BOTTOM)
+    doc.build([KeepInFrame(_CONTENT_W, avail, before + [chart] + after, mode="shrink")],
+              onFirstPage=_draw_page)
+    return out.getvalue()
 
 
 def _join_monitor_names(monitors: list[dict], char_cap: int = 60) -> str:
@@ -542,123 +542,46 @@ def _join_monitor_names(monitors: list[dict], char_cap: int = 60) -> str:
     return out
 
 
-def _build_report(doc_title: str, heading: str, meta: list[tuple[str, str]],
-                  chart_png: bytes, summary_label: str, body: list,
-                  chart_height_in: float = 4.0) -> bytes:
-    """Lay out the shared landscape report: brand lockup, heading, metadata
-    line, chart, then a labelled summary section (`body`, which may run on to
-    further pages such as the _stat_legend key)."""
-    out = io.BytesIO()
-    doc = SimpleDocTemplate(
-        out, pagesize=landscape(letter),
-        leftMargin=0.5 * inch, rightMargin=0.5 * inch,
-        topMargin=0.35 * inch, bottomMargin=0.55 * inch,
-        title=doc_title,
-    )
-    title_style, _body, _muted, section_style = _dark_styles()
-    flow = [
-        _brand_block(),
-        _accent_rule(),
-        Paragraph(f"<b>{_xml_escape(heading)}</b>", title_style),
-        _meta_line(meta),
-        Spacer(1, 0.08 * inch),
-        _section_label("Timeseries", section_style),
-        Image(io.BytesIO(chart_png), width=10 * inch, height=chart_height_in * inch),
-        Spacer(1, 0.08 * inch),
-        _section_label(summary_label, section_style),
-        *body,
-    ]
-    doc.build(flow, onFirstPage=_draw_dark_page, onLaterPages=_draw_dark_page)
-    return out.getvalue()
-
-
-def _range_meta(start: datetime, end: datetime) -> tuple[str, str]:
-    return ("Range", f"{format_local(start)} &nbsp;&rarr;&nbsp; {format_local(end)}")
+def _report_events(monitors: list[dict]) -> list[tuple[datetime, str]]:
+    """Event markers from all monitors, oldest first, duplicates dropped."""
+    seen = {(e["ts"], e["label"]) for m in monitors for e in m.get("events", [])}
+    return sorted(seen, key=lambda e: e[0])
 
 
 def render_overlay_pdf(start: datetime, end: datetime, monitors: list[dict],
                        title: str | None = None,
                        extra_meta: list[tuple[str, str]] | None = None) -> bytes:
-    """Branded PDF: stacked overlay chart + per-monitor summary table, then a
-    plain-language key to the figures on its own page.
+    """One-page PDF report for several monitors.
 
     `monitors` is a list of {name, unit, color, points: [{ts, value, ...}],
-    summary}, where `summary` holds exact SQL aggregates (points may be
-    downsampled). When summaries carry acoustic figures (`leq`, see
-    queries.compute_summary) the table gains Leq / L10 / L90 columns.
+    summary, events?: [{ts, label}]}, where `summary` holds exact SQL
+    aggregates (points may be downsampled). Summaries with acoustic figures
+    (`leq`, see queries.compute_summary) fill the calculated-values table.
     `title` replaces the monitor-name heading (e.g. a show name) and
-    `extra_meta` adds (label, plain text) pairs to the metadata line.
+    `extra_meta` adds (label, plain text) pairs under the heading.
     """
-    units = sorted({m.get("unit", "") for m in monitors if m.get("unit")})
-    acoustic = any("leq" in m["summary"] for m in monitors)
-    header = ["Monitor", "Unit", "Samples", "Min", "Max", "Average"]
-    widths = [2.4, 0.8, 1.0, 0.9, 0.9, 1.0]
-    if acoustic:
-        header += ["Leq", "L10", "L90"]
-        widths += [0.9, 0.9, 0.9]
-    rows = [header]
-    for m in monitors:
-        summ = m["summary"]
-        row = [m["name"], m["unit"], f"{summ['count']:,}",
-               _fmt(summ["min"]), _fmt(summ["max"]), _fmt(summ["avg"])]
-        if acoustic:
-            row += [_fmt(summ.get("leq")), _fmt(summ.get("l10")), _fmt(summ.get("l90"))]
-        rows.append(row)
-    # Shrink the table as monitors are added so typical reports stay on one
-    # page; past that, the header row repeats on the overflow page.
-    n = len(monitors)
-    font_size = 12 if n <= 3 else 9 if n <= 6 else 8
-    tbl = Table(rows, colWidths=[w * inch for w in widths], repeatRows=1)
-    tbl.setStyle(_dark_table_style(header_row=True, font_size=font_size))
-    meta = [_range_meta(start, end),
-            ("Monitors", str(len(monitors))),
-            ("Units", _xml_escape(", ".join(units)) if units else "—")]
-    meta += [(label, _xml_escape(value)) for label, value in extra_meta or []]
-    return _build_report(
-        title or "Spot report", title or _join_monitor_names(monitors), meta,
-        render_overlay_chart_png(start, end, monitors),
-        "Per-monitor summary",
-        [Spacer(1, 0.08 * inch), tbl,
-         *_stat_legend(["count", "min", "max", "avg",
-                        *(glossary.ACOUSTIC if acoustic else ())])],
-        chart_height_in=4.0 if n <= 3 else 3.4,
-    )
+    return _render_report(title or _join_monitor_names(monitors), start, end, monitors,
+                           _report_events(monitors), title or "Spot report", extra_meta)
 
 
 def render_pdf(monitor_name: str, unit: str, start: datetime, end: datetime,
                points: list[dict],
                events: list[tuple[datetime, str]],
                summary: dict, color: str = _ACCENT_HEX) -> bytes:
-    stat_row = Table(
-        [[
-            _stat_tile("Samples", f"{summary.get('count', 0):,}", value_pt=16),
-            _stat_tile("Min",     _fmt(summary.get("min")),     value_pt=24, primary=True),
-            _stat_tile("Max",     _fmt(summary.get("max")),     value_pt=24, primary=True),
-            _stat_tile("Average", _fmt(summary.get("avg")),     value_pt=24, primary=True),
-            _stat_tile("Events",  str(summary.get("events", 0)), value_pt=16),
-        ]],
-        colWidths=[1.5 * inch, 2.05 * inch, 2.05 * inch, 2.05 * inch, 1.5 * inch],
-    )
-    stat_row.setStyle(TableStyle([
-        ("LEFTPADDING", (0, 0), (-1, -1), 5),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-        ("TOPPADDING", (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-    ]))
-    return _build_report(
-        f"Spot — {monitor_name}", monitor_name,
-        [_range_meta(start, end), ("Unit", _xml_escape(unit))],
-        render_chart_png(monitor_name, unit, points, events, color),
-        "Summary",
-        [stat_row, *_stat_legend(["count", "min", "max", "avg", "events"])],
-    )
+    """One-page PDF report for a single monitor (same layout as the overlay)."""
+    monitor = {"name": monitor_name, "unit": unit, "color": color,
+               "points": points, "summary": summary}
+    return _render_report(monitor_name, start, end, [monitor], events,
+                          f"Spot — {monitor_name}")
 
 
 def _fmt(v) -> str:
+    """One decimal for everyday magnitudes (92.2 dBA, 72.0 °F); three
+    significant figures for small values so 0.0253 doesn't print as 0.0."""
     if v is None:
         return "—"
     try:
-        return f"{float(v):.4g}"
+        f = float(v)
     except (TypeError, ValueError):
         return str(v)
+    return f"{f:,.1f}" if abs(f) >= 10 else f"{f:.3g}"

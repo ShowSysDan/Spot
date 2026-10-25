@@ -107,8 +107,9 @@ def show_stats(s: Session, show: Show, rng: Range | None = None) -> list[dict]:
 def show_report_pdf(s: Session, show: Show, rng: Range | None = None) -> bytes:
     start, end, detection = rng or show_range(s, show)
     monitors = collect_overlay(s, [m.id for m in show.monitors], start, end,
-                               PDF_MAX_POINTS, with_summary=True, extended=True)
-    extra = [("Show", show.name)]
+                               PDF_MAX_POINTS, with_summary=True, extended=True,
+                               with_events=True)
+    extra = []  # the show's name is already the heading
     if show.external_id:
         extra.append(("Ref", show.external_id))
     locations = sorted({m.location for m in show.monitors if m.location})
