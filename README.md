@@ -338,7 +338,8 @@ migration.
 | `/monitors/<id>/query` | Query | Any range: stats, chart, CSV / PDF |
 | `/shows`, `/shows/new`, `/shows/<id>` | Shows | Performances: levels, detection, PDF, automatic report delivery |
 | `/reports` | Reports | Several monitors on one chart; PDF / CSV; load / save shows (`/overlay` redirects here) |
-| `/alerts` | Alerts | Active alerts (acknowledge), thresholds in use, history |
+| `/alerts` | Alerts | Active alerts (acknowledge), thresholds in use, actions, history |
+| `/alerts/actions/new`, `/alerts/actions/<id>/edit` | Alerts → + New action, Edit | UDP / TCP / HTTP request on alert raise and clear |
 | `/setup` | Setup | Hub: links below, time zone check, webhook settings and test button (`/setup/test-webhook`) |
 | `/setup/api-keys` | Setup → API keys | Keys for `/api/v1` (321Theater etc.) |
 | `/setup/units` | Setup → Units | Which units are sound levels (get Leq / L10 / L90, used for show start/end detection) |
@@ -610,6 +611,7 @@ Where alerts show up:
   monitor that has thresholds, and the last 200 past alerts. The menu badge
   counts active, unacknowledged alerts.
 - **syslog** — `spot.alerts` logs every raise (WARNING) and recovery (INFO).
+- **Alert actions** — UDP, TCP or HTTP requests on raise and clear (below).
 - **Webhook** — when `SPOT_ALERT_WEBHOOK_URL` is set, Spot POSTs:
 
 ```json
@@ -629,6 +631,37 @@ Where alerts show up:
 
 **Setup → Notifications** shows the current webhook setting and has a *Send
 test webhook* button.
+
+#### Alert actions (UDP / TCP / HTTP)
+
+On the Alerts page, **Actions → + New action** sends a request when an alert
+is *raised* (its condition becomes true) and, optionally, another when it
+*clears* (false again) — for warning lights, show control, or any device
+that listens on the network.
+
+| Field | Meaning |
+|-------|---------|
+| Monitor / Alert type | Which alerts fire it. Blank = any monitor / any of high, low, no data. |
+| Protocol | **UDP** (one datagram; broadcast addresses work), **TCP** (connect, send, close) or **HTTP** (`POST`, `PUT` or `GET`). |
+| Host / Port | TCP/UDP destination. |
+| URL when raised / cleared | HTTP only. Blank clear URL = send nothing on clear. Redirects are not followed. |
+| Message when raised / cleared | TCP/UDP payload, or the HTTP body (not for `GET`; JSON if it starts with `{` or `[`, else plain text). Blank clear message = send nothing on clear (TCP/UDP). |
+| Retries / Seconds between tries | A failed send (HTTP status outside 2xx, connection refused or timed out, unknown host) is tried again this many times. Default 2 × 10 s. |
+
+Messages and URLs take placeholders: `{state}` (`raised`/`cleared`), `{on}`
+(`1`/`0`), `{monitor}`, `{monitor_id}`, `{location}`, `{unit}`, `{kind}`,
+`{alert_id}`, `{value}`, `{threshold}`, `{message}`, `{time}`. In URLs they
+are percent-encoded. TCP/UDP messages also understand `\r`, `\n`, `\t`, `\0`,
+`\\` and `\xHH`, e.g. `GO {monitor}\r`.
+
+Sends run on their own thread, so a slow device never delays alerting. The
+*Last result* column shows the outcome of the latest send — `HTTP 200`,
+`sent 12 bytes`, or the failure and attempt number — and every send is
+logged under `spot.alerts`. If an alert clears while its raise is still
+being retried, the retry is dropped and the clear request goes out instead.
+Turning alerting off for a monitor also sends the clear request. **Test
+raise** / **Test clear** send once, right away, with sample values (value
+99, limit 95) and show the result.
 
 ### Live dashboard
 

@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}{{ "Edit" if action else "New" }} Alert Action — Spot{% endblock %}
+{% block content %}
+<h1>{{ "Edit" if action else "New" }} Alert Action</h1>
+<p class="muted">
+  Sends a request when an alert is <strong>raised</strong> (its condition becomes true) and,
+  optionally, another when it <strong>clears</strong> (false again) — e.g. to turn a warning
+  light on and off or fire a show-control cue.
+</p>
+<form method="post" class="form">
+  <label>Name
+    <input type="text" name="name" required maxlength="120" value="{{ action.name if action else '' }}"
+           placeholder="e.g. Booth warning light">
+  </label>
+
+  <div class="form-row">
+    <label>Monitor
+      <select name="monitor_id">
+        <option value="">Any monitor</option>
+        {% for m in monitors %}
+        <option value="{{ m.id }}" {% if action and action.monitor_id == m.id %}selected{% endif %}>{{ m.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Alert type
+      <select name="kind">
+        <option value="">Any (high, low, no data)</option>
+        {% for k in kinds %}
+        <option value="{{ k }}" {% if action and action.kind == k %}selected{% endif %}>{{ {'high': 'High', 'low': 'Low', 'stale': 'No data'}[k] }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </div>
+
+  <label>Protocol
+    <select name="protocol" id="protocol">
+      {% for p in protocols %}
+      <option value="{{ p }}" {% if (action and action.protocol == p) or (not action and p == 'http') %}selected{% endif %}>{{ p|upper }}</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <fieldset class="group" id="socket_fields">
+    <legend>Destination</legend>
+    <div class="form-row">
+      <label>Host (IP or DNS)
+        <input type="text" name="host" value="{{ action.host if action and action.host else '' }}" placeholder="10.0.0.50">
+      </label>
+      <label>Port
+        <input type="number" name="port" min="1" max="65535" value="{{ action.port if action and action.port else '' }}" placeholder="e.g. 53000">
+      </label>
+    </div>
+    <small class="muted">UDP is fire-and-forget (broadcast addresses work); TCP connects, sends the message and closes.</small>
+  </fieldset>
+
+  <fieldset class="group" id="http_fields">
+    <legend>HTTP request</legend>
+    <label>Method
+      <select name="http_method">
+        {% for m in methods %}
+        <option value="{{ m }}" {% if (action and action.http_method == m) or (not action and m == 'POST') %}selected{% endif %}>{{ m }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>URL when raised
+      <input type="text" name="raise_url" value="{{ action.raise_url if action and action.raise_url else '' }}"
+             placeholder="http://10.0.0.50/api/light?state=on&amp;monitor={monitor}">
+    </label>
+    <label>URL when cleared <span class="muted">(blank = send nothing)</span>
+      <input type="text" name="clear_url" value="{{ action.clear_url if action and action.clear_url else '' }}"
+             placeholder="http://10.0.0.50/api/light?state=off">
+    </label>
+    <small class="muted">Any 2xx response counts as delivered; the status code is shown on the Alerts page.
+      Redirects are not followed. The message below is sent as the request body (not for GET);
+      a body starting with <code>{</code> or <code>[</code> goes as JSON, anything else as plain text.</small>
+  </fieldset>
+
+  <label>Message when raised
+    <textarea name="raise_payload" rows="3" placeholder='{"light": "on", "monitor": "{monitor}", "value": {value}}'>{{ action.raise_payload if action and action.raise_payload else '' }}</textarea>
+  </label>
+  <label>Message when cleared <span class="muted" id="clear_hint">(blank = send nothing)</span>
+    <textarea name="clear_payload" rows="3" placeholder='{"light": "off", "monitor": "{monitor}"}'>{{ action.clear_payload if action and action.clear_payload else '' }}</textarea>
+  </label>
+  <small class="muted">
+    Placeholders: {% for p in placeholders %}<code>{{ '{' ~ p ~ '}' }}</code>{{ ', ' if not loop.last }}{% endfor %}.
+    <code>{state}</code> is <code>raised</code>/<code>cleared</code>, <code>{on}</code> is <code>1</code>/<code>0</code>.
+    TCP/UDP messages also understand <code>\r</code>, <code>\n</code>, <code>\t</code>, <code>\0</code> and
+    <code>\xHH</code> — e.g. end with <code>\r</code> for devices that want a carriage return.
+  </small>
+
+  <fieldset class="group">
+    <legend>If a send fails</legend>
+    <div class="form-row">
+      <label>Retries
+        <input type="number" name="retries" min="0" max="10" value="{{ action.retries if action else 2 }}">
+      </label>
+      <label>Seconds between tries
+        <input type="number" name="retry_delay_seconds" min="1" max="3600" value="{{ action.retry_delay_seconds if action else 10 }}">
+      </label>
+    </div>
+    <small class="muted">A failure is an HTTP status outside 2xx, a refused or timed-out connection, or a host that
+      doesn't resolve. If the alert changes state while a retry is waiting, the old request is dropped.</small>
+  </fieldset>
+
+  <label class="checkbox">
+    <input type="checkbox" name="enabled" {% if (not action) or action.enabled %}checked{% endif %}>
+    Enabled
+  </label>
+  <div class="row">
+    <button type="submit" class="primary">Save</button>
+    <a href="{{ url_for('web.alerts') }}#actions" class="button">Cancel</a>
+  </div>
+</form>
+
+<script>
+(function () {
+  const sel = document.getElementById('protocol');
+  const http = document.getElementById('http_fields');
+  const sock = document.getElementById('socket_fields');
+  function sync() {
+    http.style.display = sel.value === 'http' ? '' : 'none';
+    sock.style.display = sel.value === 'http' ? 'none' : '';
+  }
+  sel.addEventListener('change', sync);
+  sync();
+})();
+</script>
+{% endblock %}

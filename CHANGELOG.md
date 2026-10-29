@@ -3,6 +3,27 @@
 All notable changes to Spot. The version number lives in `app/version.py`
 and is bumped with every change.
 
+## 1.11.0 — 2026-10-29
+
+### Added
+- **Alert actions** (Alerts page → *Actions*, `/alerts/actions/new`): send a
+  UDP, TCP or HTTP request when an alert is raised and, optionally, another
+  when it clears — e.g. a warning light on/off or a show-control cue. Each
+  action can be limited to one monitor and/or one alert type, and its
+  messages and URLs take placeholders (`{monitor}`, `{value}`, `{on}`, …);
+  TCP/UDP messages understand `\r`, `\n`, `\xHH`. HTTP sends record the
+  status code (any 2xx is delivered). Failed sends are retried (default 2
+  more times, 10 s apart) on a background thread; a retry still waiting
+  when the alert changes state is dropped. *Test raise* / *Test clear*
+  buttons send once with sample values and show the result. New table
+  `alert_actions`, created automatically on start.
+
+### Changed
+- Turning alerting off for a monitor (disabling it or clearing its
+  thresholds) now sends the alert actions' *clear* request for its open
+  alerts, so nothing is left switched on. The log and webhook stay quiet
+  about these closes, as before.
+
 ## 1.10.0 — 2026-10-25
 
 ### Added

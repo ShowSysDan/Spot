@@ -157,6 +157,43 @@ class Alert(Base):
     )
 
 
+class AlertAction(Base):
+    """A request Spot sends when an alert is raised (the condition becomes
+    true) and, optionally, another when it clears (false again). Sent over
+    UDP, TCP or HTTP — e.g. to flip a light or a show-control cue.
+
+    `monitor_id` / `kind` narrow which alerts fire it; None = any.
+    Payloads and URLs may contain {placeholders} (see alert_actions.py).
+    """
+    __tablename__ = "alert_actions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    monitor_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("monitors.id", ondelete="CASCADE"), nullable=True, index=True)
+    kind: Mapped[str | None] = mapped_column(String(16), nullable=True)  # high | low | stale
+    protocol: Mapped[str] = mapped_column(String(8), nullable=False, default="http")  # http | tcp | udp
+    # TCP/UDP destination.
+    host: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    port: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # HTTP: method plus a URL per state; the payload is the request body.
+    http_method: Mapped[str] = mapped_column(String(8), nullable=False, default="POST")
+    raise_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    clear_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    raise_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
+    clear_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # A failed send is tried again this many more times, this far apart.
+    retries: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+    retry_delay_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
+    # Outcome of the most recent send (e.g. "raised: HTTP 200").
+    last_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_status: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    monitor: Mapped["Monitor | None"] = relationship("Monitor")
+
+
 show_monitors = Table(
     "show_monitors",
     Base.metadata,
