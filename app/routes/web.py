@@ -21,10 +21,11 @@ from ..modbus import (
     WORD_ORDERS,
     poll_now,
 )
-from ..alerts import active_alerts_by_monitor
+from .. import alert_actions
+from ..alerts import KINDS as ALERT_KINDS, active_alerts_by_monitor
 from .. import logging_config as logcfg
 from .. import units
-from ..models import Alert, ApiKey, ModbusDevice, Monitor, Show
+from ..models import Alert, AlertAction, ApiKey, ModbusDevice, Monitor, Show
 from ..notify import callback_url_problem, one_line, post_json
 from ..shows import (
     MAX_SHOW_SECONDS,
@@ -278,9 +279,11 @@ def alerts():
         configured = [monitor_view(m) for m in s.scalars(
             select(Monitor).order_by(Monitor.name)) if
             m.alert_high is not None or m.alert_low is not None or m.alert_stale_seconds]
+        actions = [_alert_action_view(a) for a in s.scalars(
+            select(AlertAction).order_by(AlertAction.name, AlertAction.id))]
     cfg = current_app.config["SPOT"]
     return render_template("alerts.html", active=active, history=history,
-                           configured=configured,
+                           configured=configured, actions=actions,
                            webhook_on=bool(cfg.alert_webhook_url),
                            interval=cfg.alert_interval_seconds)
 
@@ -293,6 +296,166 @@ def alert_ack(aid: int):
             a.acknowledged_at = datetime.now(timezone.utc)
             log.info("alert acknowledged id=%d monitor_id=%d kind=%s", aid, a.monitor_id, a.kind)
     return redirect(_safe_next() or url_for("web.alerts"))
+
+
+# ---------------------------------------------------------------------------
+# Alert actions (UDP / TCP / HTTP request on raise and on clear)
+# ---------------------------------------------------------------------------
+
+def _alert_action_view(a: AlertAction) -> dict:
+    return {
+        "id": a.id, "name": a.name, "enabled": a.enabled,
+        "monitor_id": a.monitor_id, "monitor_name": a.monitor.name if a.monitor else None,
+        "kind": a.kind, "protocol": a.protocol, "host": a.host, "port": a.port,
+        "http_method": a.http_method, "raise_url": a.raise_url, "clear_url": a.clear_url,
+        "raise_payload": a.raise_payload, "clear_payload": a.clear_payload,
+        "retries": a.retries, "retry_delay_seconds": a.retry_delay_seconds,
+        "target": alert_actions.target(a),
+        "sends_clear": bool(a.clear_url if a.protocol == "http" else a.clear_payload),
+        "last_sent": format_local(a.last_sent_at) if a.last_sent_at else None,
+        "last_status": a.last_status,
+        "last_ok": bool(a.last_status) and "failed" not in a.last_status,
+    }
+
+
+def _get_alert_action_or_404(s, aid: int) -> AlertAction:
+    a = s.get(AlertAction, aid)
+    if a is None:
+        abort(404)
+    return a
+
+
+@bp.route("/alerts/actions/new", methods=["GET", "POST"])
+def alert_action_new():
+    if request.method == "POST":
+        return _save_alert_action(None)
+    return _alert_action_form(None)
+
+
+@bp.route("/alerts/actions/<int:aid>/edit", methods=["GET", "POST"])
+def alert_action_edit(aid: int):
+    if request.method == "POST":
+        return _save_alert_action(aid)
+    return _alert_action_form(aid)
+
+
+def _alert_action_form(aid: int | None):
+    data = None
+    with session_scope() as s:
+        if aid is not None:
+            data = _alert_action_view(_get_alert_action_or_404(s, aid))
+        monitors = [{"id": m.id, "name": m.name} for m in
+                    s.scalars(select(Monitor).order_by(Monitor.name))]
+    return render_template("alert_action_form.html", action=data, monitors=monitors,
+                           kinds=ALERT_KINDS, protocols=alert_actions.PROTOCOLS,
+                           methods=alert_actions.HTTP_METHODS,
+                           placeholders=alert_actions.PLACEHOLDERS)
+
+
+def _save_alert_action(aid: int | None):
+    try:
+        return _save_alert_action_checked(aid)
+    except _FormError as e:
+        flash(str(e), "error")
+        return redirect(request.url)
+
+
+def _save_alert_action_checked(aid: int | None):
+    name = _form_str("name")[:120]
+    protocol = _form_str("protocol", "http")
+    kind = _form_str("kind") or None
+    monitor_id = _form_int("monitor_id", None, "Invalid monitor.")
+    _check(bool(name), "Name is required.")
+    _check(protocol in alert_actions.PROTOCOLS, "Protocol must be HTTP, TCP or UDP.")
+    _check(kind is None or kind in ALERT_KINDS, "Invalid alert type.")
+    retries_err = "Retries must be 0–10."
+    retries = _form_int("retries", "0", retries_err)
+    _check(0 <= retries <= 10, retries_err)
+    delay_err = "Retry delay must be 1–3600 seconds."
+    retry_delay = _form_int("retry_delay_seconds", "10", delay_err)
+    _check(1 <= retry_delay <= 3600, delay_err)
+
+    raise_payload = request.form.get("raise_payload") or None
+    clear_payload = request.form.get("clear_payload") or None
+    host = port = raise_url = clear_url = None
+    http_method = _form_str("http_method", "POST").upper()
+    if protocol == "http":
+        _check(http_method in alert_actions.HTTP_METHODS, "Invalid HTTP method.")
+        raise_url = _form_str("raise_url") or None
+        clear_url = _form_str("clear_url") or None
+        _check(bool(raise_url), "A URL to call when the alert is raised is required.")
+        for url in (raise_url, clear_url):
+            parts = urlsplit(url or "http://x")
+            _check(parts.scheme in ("http", "https") and bool(parts.hostname),
+                   f"{url} is not an http(s) URL with a host.")
+    else:
+        host = _form_str("host") or None
+        port_err = "Port must be 1–65535."
+        port = _form_int("port", "", port_err)
+        _check(bool(host), "Host is required.")
+        _check(1 <= port <= 65535, port_err)
+        _check(bool(raise_payload), "A message to send when the alert is raised is required.")
+
+    fields = dict(name=name, protocol=protocol, kind=kind, monitor_id=monitor_id or None,
+                  host=host, port=port, http_method=http_method,
+                  raise_url=raise_url, clear_url=clear_url,
+                  raise_payload=raise_payload, clear_payload=clear_payload,
+                  retries=retries, retry_delay_seconds=retry_delay,
+                  enabled=bool(request.form.get("enabled")))
+    with session_scope() as s:
+        _check(not monitor_id or s.get(Monitor, monitor_id) is not None, "Invalid monitor.")
+        if aid is None:
+            a = AlertAction(**fields)
+            s.add(a)
+            s.flush()
+        else:
+            a = _get_alert_action_or_404(s, aid)
+            for k, v in fields.items():
+                setattr(a, k, v)
+        log.info("alert action %s: %s id=%d %s", "created" if aid is None else "updated",
+                 a.name, a.id, alert_actions.target(a))
+    flash("Alert action saved.", "success")
+    return redirect(url_for("web.alerts") + "#actions")
+
+
+@bp.route("/alerts/actions/<int:aid>/toggle", methods=["POST"])
+def alert_action_toggle(aid: int):
+    with session_scope() as s:
+        a = _get_alert_action_or_404(s, aid)
+        a.enabled = not a.enabled
+        log.info("alert action %s: %s id=%d", "enabled" if a.enabled else "disabled", a.name, aid)
+    return redirect(url_for("web.alerts") + "#actions")
+
+
+@bp.route("/alerts/actions/<int:aid>/delete", methods=["POST"])
+def alert_action_delete(aid: int):
+    with session_scope() as s:
+        a = s.get(AlertAction, aid)
+        if a:
+            log.info("alert action deleted: %s id=%d", a.name, aid)
+            s.delete(a)
+    flash("Alert action deleted.", "success")
+    return redirect(url_for("web.alerts") + "#actions")
+
+
+@bp.route("/alerts/actions/<int:aid>/test", methods=["POST"])
+def alert_action_test(aid: int):
+    """Send the raise or clear request once, now, with made-up values."""
+    state = "cleared" if request.form.get("state") == "cleared" else "raised"
+    with session_scope() as s:
+        a = _get_alert_action_or_404(s, aid)
+        ctx = alert_actions.sample_context(a, state)
+        s.expunge(a)
+    res = alert_actions.send(a, state, ctx)
+    if res.skipped:
+        flash(f"{a.name}: no {'clear' if state == 'cleared' else 'raise'} request is set.", "error")
+    else:
+        alert_actions.record(a.id, f"test {state}: {res.detail if res.ok else 'failed — ' + res.detail}")
+        log.info("alert action test %s: %s %s → %s", a.name, state,
+                 alert_actions.target(a, state), res.detail)
+        flash(f"Test {state} to {alert_actions.target(a, state)}: {res.detail}",
+              "success" if res.ok else "error")
+    return redirect(url_for("web.alerts") + "#actions")
 
 
 def _duration_text(td) -> str:

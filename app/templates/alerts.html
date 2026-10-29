@@ -62,6 +62,51 @@
 </table>
 {% endif %}
 
+<h2 id="actions">Actions</h2>
+<p class="muted">Send a UDP, TCP or HTTP request when an alert is raised, and another when it clears.
+  <a href="{{ url_for('web.alert_action_new') }}" class="button">+ New action</a></p>
+{% if actions %}
+<table class="grid">
+  <thead><tr><th>Name</th><th>For</th><th>Sends to</th><th>On clear</th><th>Retries</th><th>Last result</th><th></th></tr></thead>
+  <tbody>
+  {% for x in actions %}
+    <tr>
+      <td>{{ x.name }}{% if not x.enabled %} <span class="badge off">disabled</span>{% endif %}</td>
+      <td>{{ x.monitor_name or 'any monitor' }}<div class="muted">{{ {'high': 'high', 'low': 'low', 'stale': 'no data'}[x.kind] if x.kind else 'any alert' }}</div></td>
+      <td><span class="badge">{{ x.protocol|upper }}</span> <code>{{ x.target }}</code></td>
+      <td>{{ 'yes' if x.sends_clear else '—' }}</td>
+      <td class="num">{{ x.retries }}{% if x.retries %} <span class="muted">× {{ x.retry_delay_seconds }} s</span>{% endif %}</td>
+      <td>{% if x.last_status %}<span class="{{ 'ok' if x.last_ok else 'off' }}">{{ x.last_status }}</span>
+          <div class="muted">{{ x.last_sent }}</div>{% else %}<span class="muted">never sent</span>{% endif %}</td>
+      <td class="actions">
+        <form method="post" action="{{ url_for('web.alert_action_test', aid=x.id) }}" class="inline">
+          <input type="hidden" name="state" value="raised">
+          <button type="submit" class="link">Test raise</button>
+        </form>
+        {% if x.sends_clear %}
+        <form method="post" action="{{ url_for('web.alert_action_test', aid=x.id) }}" class="inline">
+          <input type="hidden" name="state" value="cleared">
+          <button type="submit" class="link">Test clear</button>
+        </form>
+        {% endif %}
+        <a href="{{ url_for('web.alert_action_edit', aid=x.id) }}">Edit</a>
+        <form method="post" action="{{ url_for('web.alert_action_toggle', aid=x.id) }}" class="inline">
+          <button type="submit" class="link">{{ 'Disable' if x.enabled else 'Enable' }}</button>
+        </form>
+        <form method="post" action="{{ url_for('web.alert_action_delete', aid=x.id) }}" class="inline"
+              data-confirm="Delete alert action &quot;{{ x.name }}&quot;?">
+          <button type="submit" class="link danger">Delete</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="muted">Tests send once, right away, with sample values (value 99, limit 95). Real sends are retried on failure.</p>
+{% else %}
+<p class="muted">No actions yet.</p>
+{% endif %}
+
 <h2>History <span class="muted">last 200</span></h2>
 {% if not history %}
   <p class="muted">No past alerts.</p>

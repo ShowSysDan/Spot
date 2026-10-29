@@ -21,6 +21,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, or_, select
 
+from .alert_actions import ActionDispatcher
 from .config import Config
 from .db import session_scope
 from .models import Alert, Monitor, Reading
@@ -47,6 +48,9 @@ class AlertEvent:
     started_at: datetime
     cleared_at: datetime | None
     message: str
+    # Closed because alerting was turned off, not a recovery: no log line or
+    # webhook, but alert actions still get their "cleared" request.
+    quiet: bool = False
 
 
 def describe(kind: str, unit: str, value: float | None, threshold: float | None,
@@ -151,6 +155,11 @@ def evaluate(now: datetime | None = None) -> list[AlertEvent]:
             for a in by_kind.values():
                 a.cleared_at = now
                 a.message = (a.message or "") + " (alerting turned off)"
+                m = a.monitor
+                ev = _event("cleared", a, m, m.location, None)
+                ev.quiet = True
+                ev.message = "alerting turned off"
+                events.append(ev)
     return events
 
 
@@ -170,6 +179,8 @@ def _event(action: str, a: Alert, m: Monitor, location: str | None,
 
 def notify(cfg: Config, ev: AlertEvent) -> None:
     """Deliver one alert event to the log (syslog) and the webhook, if configured."""
+    if ev.quiet:
+        return
     where = f" [{ev.location}]" if ev.location else ""
     head = "ALERT" if ev.action == "raised" else "RECOVERED"
     summary = f"{head}: {ev.monitor_name}{where} {ev.kind} — {ev.message}"
@@ -202,8 +213,10 @@ class AlertEngine(threading.Thread):
         self.interval = cfg.alert_interval_seconds
         # Not `_stop`: that would shadow Thread._stop() on Python <= 3.12.
         self._stop_event = threading.Event()
+        self.actions = ActionDispatcher()
 
     def run(self) -> None:
+        self.actions.start()
         log.info("alert engine started: interval=%ds webhook=%s",
                  self.interval,
                  "on" if self.cfg.alert_webhook_url else "off")
@@ -218,6 +231,10 @@ class AlertEngine(threading.Thread):
                         notify(self.cfg, ev)
                     except Exception:  # one bad notification mustn't drop the rest
                         log.exception("alert notification failed alert_id=%s", ev.alert_id)
+                    try:
+                        self.actions.submit(ev)
+                    except Exception:
+                        log.exception("queueing alert actions failed alert_id=%s", ev.alert_id)
             except Exception:
                 log.exception("alert pass failed")
             if self._stop_event.wait(timeout=self.interval):
@@ -226,6 +243,7 @@ class AlertEngine(threading.Thread):
 
     def stop(self) -> None:
         self._stop_event.set()
+        self.actions.stop()
 
 
 def open_alert_count() -> int:

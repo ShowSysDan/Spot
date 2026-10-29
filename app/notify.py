@@ -89,6 +89,29 @@ def post_json(url: str, payload: dict, timeout: float = HTTP_TIMEOUT) -> str | N
     return None
 
 
+def http_request(url: str, method: str, body: bytes | None,
+                 timeout: float = HTTP_TIMEOUT) -> tuple[int | None, str | None]:
+    """Send one HTTP request. Returns (status code, error): error is None on
+    a 2xx response; status is None when no response arrived at all.
+
+    A body starting with { or [ is sent as JSON, anything else as text.
+    """
+    headers = {"User-Agent": f"Spot/{__version__}"}
+    if body:
+        json_like = body.lstrip()[:1] in (b"{", b"[")
+        headers["Content-Type"] = ("application/json" if json_like
+                                   else "text/plain; charset=utf-8")
+    req = urllib.request.Request(url, data=body, method=method, headers=headers)
+    try:
+        with _opener.open(req, timeout=timeout) as resp:
+            resp.read(65536)
+            return resp.status, None
+    except urllib.error.HTTPError as e:
+        return e.code, f"HTTP {e.code}"
+    except (OSError, ValueError) as e:
+        return None, str(e) or e.__class__.__name__
+
+
 def post_multipart(url: str, fields: dict[str, str],
                    files: list[tuple[str, str, bytes, str]],
                    timeout: float = 60) -> str | None:

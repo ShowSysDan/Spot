@@ -54,7 +54,7 @@
          class="{{ 'active' if ep.startswith('web.show') }}">Shows</a>
       <a href="{{ url_for('web.reports') }}"
          class="{{ 'active' if ep == 'web.reports' }}" title="Compare monitors and export PDF / CSV reports">Reports</a>
-      <a href="{{ url_for('web.alerts') }}" class="{{ 'active' if ep == 'web.alerts' }}">Alerts{%
+      <a href="{{ url_for('web.alerts') }}" class="{{ 'active' if ep and ep.startswith('web.alert') }}">Alerts{%
         if spot_alert_count %} <span class="nav-badge" title="{{ spot_alert_count }} active, unacknowledged">{{ spot_alert_count }}</span>{% endif %}</a>
       <a href="{{ url_for('web.setup') }}"
          class="{{ 'active' if ep.startswith('web.setup') or ep.startswith('web.logging') or ep.startswith('web.api_key') or ep.startswith('web.modbus_') or ep.startswith('web.units') or ep == 'web.storage' }}">Setup</a>
