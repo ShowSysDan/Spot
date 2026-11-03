@@ -7,7 +7,7 @@ from typing import Any
 from flask import abort
 from sqlalchemy.orm import Session
 
-from .models import ModbusDevice, Monitor
+from .models import ModbusDevice, Monitor, TempestStation
 
 # Series colours, tuned for the dark theme. A monitor without its own colour
 # gets PALETTE[id % len(PALETTE)], so it looks the same on every page and PDF.
@@ -117,6 +117,26 @@ def modbus_device_view(d: ModbusDevice) -> dict[str, Any]:
     }
 
 
+def get_tempest_station_or_404(s: Session, sid: int) -> TempestStation:
+    st = s.get(TempestStation, sid)
+    if not st:
+        abort(404)
+    return st
+
+
+def tempest_station_view(st: TempestStation) -> dict[str, Any]:
+    return {
+        "id": st.id,
+        "name": st.name,
+        "description": st.description,
+        "port": st.port,
+        "serials": st.serials,
+        "enabled": st.enabled,
+        "created_at": st.created_at.isoformat() if st.created_at else None,
+        "monitor_count": len(st.monitors),
+    }
+
+
 def safe_filename(name: str) -> str:
     return "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
 
@@ -138,6 +158,9 @@ def monitor_view(m: Monitor) -> dict[str, Any]:
         "modbus_register_address": m.modbus_register_address,
         "modbus_data_type": m.modbus_data_type,
         "modbus_device_name": m.modbus_device.name if m.modbus_device else None,
+        "tempest_station_id": m.tempest_station_id,
+        "tempest_field": m.tempest_field,
+        "tempest_station_name": m.tempest_station.name if m.tempest_station else None,
         "decimal_places": m.decimal_places,
         "location": m.location,
         "category": m.category,

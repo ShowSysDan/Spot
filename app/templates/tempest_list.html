@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Tempest Weather Stations — Spot{% endblock %}
+{% block content %}
+<h1>Tempest Weather Stations</h1>
+<p class="muted">
+  WeatherFlow Tempest hubs broadcast their readings over UDP (port {{ default_port }} by
+  default). Each station here is one UDP port Spot listens on; bind
+  <a href="{{ url_for('web.index') }}">Monitors</a> to it to record the sensor values
+  you care about (temperature, wind, rain, lightning, …), each in the unit you choose.
+</p>
+
+{% if not stations %}
+  <p>No Tempest stations yet. <a href="{{ url_for('web.tempest_new') }}">Add one</a>.</p>
+{% else %}
+<table class="grid">
+  <thead>
+    <tr>
+      <th>Name</th><th>UDP port</th><th>Accept from</th><th>Monitors</th>
+      <th>Enabled</th><th>Listener</th><th>Messages</th><th>Last message</th><th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for st in stations %}
+    <tr>
+      <td><a href="{{ url_for('web.tempest_detail', sid=st.id) }}">{{ st.name }}</a>
+          {% if st.description %}<div class="muted">{{ st.description }}</div>{% endif %}</td>
+      <td><code>{{ st.port }}</code></td>
+      <td>{% if st.serials %}<code>{{ st.serials }}</code>{% else %}<span class="muted">any device</span>{% endif %}</td>
+      <td>{{ st.monitor_count }}</td>
+      <td>{% if st.enabled %}<span class="ok">on</span>{% else %}<span class="off">off</span>{% endif %}</td>
+      <td>
+        {% if not st.enabled %}<span class="muted">n/a</span>
+        {% elif st.alive %}<span class="ok">running</span>
+        {% else %}<span class="off">stopped</span>
+        {% endif %}
+      </td>
+      <td>{{ st.packets }}</td>
+      <td>{% if st.last_packet %}{{ st.last_packet }}{% else %}<span class="muted">none yet</span>{% endif %}</td>
+      <td class="actions">
+        <a href="{{ url_for('web.tempest_detail', sid=st.id) }}">Detail</a>
+        <a href="{{ url_for('web.tempest_edit', sid=st.id) }}">Edit</a>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<p style="margin-top:1rem;"><a class="button" href="{{ url_for('web.tempest_new') }}">New Tempest station</a></p>
+{% endblock %}

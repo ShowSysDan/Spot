@@ -55,6 +55,27 @@ class ModbusDevice(Base):
     )
 
 
+class TempestStation(Base):
+    """A WeatherFlow Tempest hub whose UDP broadcasts Spot listens for on
+    `port`. Monitors bind to a station and name one decoded sensor field
+    (see tempest.py). `serials` optionally limits which devices / hubs are
+    accepted, comma-separated."""
+    __tablename__ = "tempest_stations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    port: Mapped[int] = mapped_column(Integer, nullable=False, default=50222, unique=True)
+    serials: Mapped[str | None] = mapped_column(Text, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    monitors: Mapped[list["Monitor"]] = relationship(
+        "Monitor", back_populates="tempest_station",
+        cascade="all, delete-orphan", passive_deletes=True,
+    )
+
+
 class Monitor(Base):
     __tablename__ = "monitors"
 
@@ -78,6 +99,16 @@ class Monitor(Base):
     )
     modbus_register_address: Mapped[int | None] = mapped_column(Integer, nullable=True)
     modbus_data_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
+    # Tempest weather station binding: which station's broadcasts and which
+    # decoded field (e.g. "obs_st.air_temperature") this monitor records.
+    tempest_station_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("tempest_stations.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    tempest_field: Mapped[str | None] = mapped_column(String(48), nullable=True)
 
     decimal_places: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
@@ -103,6 +134,9 @@ class Monitor(Base):
     )
     modbus_device: Mapped["ModbusDevice | None"] = relationship(
         "ModbusDevice", back_populates="monitors"
+    )
+    tempest_station: Mapped["TempestStation | None"] = relationship(
+        "TempestStation", back_populates="monitors"
     )
 
     __table_args__ = (

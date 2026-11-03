@@ -3,6 +3,26 @@
 All notable changes to Spot. The version number lives in `app/version.py`
 and is bumped with every change.
 
+## 1.12.0 — 2026-11-03
+
+### Added
+- **Tempest weather stations** (Setup → *Tempest weather stations*,
+  `/tempest`): Spot listens for a WeatherFlow Tempest hub's UDP broadcasts
+  (the hub's own port 50222, or any port a router forwards them to) and
+  records whichever values you choose. A station is one UDP port plus an
+  optional list of device / hub serial numbers to accept; its page shows
+  every value the hub is sending live (temperature, humidity, pressure,
+  wind, rain, UV, solar, lightning, battery, signal, calculated dew point),
+  which devices it has heard from, and an *Add monitor* link beside each
+  value. Monitors of the new listener type **Tempest** bind to a station and
+  one sensor value and are stored in the unit you pick (°F or °C, mph /
+  km/h / knots / m/s, inHg / mb, inches / mm, miles / km); rain-start and
+  lightning-strike events become event markers. Readings carry the hub's
+  own timestamp when it is plausible (within 5 minutes of the server
+  clock). New table `tempest_stations` and columns
+  `monitors.tempest_station_id` / `monitors.tempest_field`, created
+  automatically on start.
+
 ## 1.11.0 — 2026-10-29
 
 ### Added

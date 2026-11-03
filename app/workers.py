@@ -1,4 +1,4 @@
-"""Thread bookkeeping shared by the TCP/UDP listener and Modbus managers.
+"""Thread bookkeeping shared by the TCP/UDP listener, Modbus and Tempest managers.
 
 Both keep one long-lived worker thread per id (monitor id or device id),
 need to start it unless it's already running, stop + join it, stop all of
@@ -53,6 +53,10 @@ class WorkerRegistry(Generic[T]):
             t.stop()
         for t in threads:
             t.join(timeout=JOIN_TIMEOUT)
+
+    def get(self, key: int) -> T | None:
+        with self._lock:
+            return self._threads.get(key)
 
     def status(self) -> dict[int, bool]:
         with self._lock:

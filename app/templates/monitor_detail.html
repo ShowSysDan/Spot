@@ -42,6 +42,18 @@
   <dt>Modbus register</dt>
   <dd>{{ monitor.modbus_register_address }} <span class="muted">({{ monitor.modbus_data_type or 'float32' }})</span></dd>
   {% endif %}
+  {% if monitor.listener_type == 'tempest' %}
+  <dt>Tempest station</dt>
+  <dd>
+    {% if monitor.tempest_station_id %}
+      <a href="{{ url_for('web.tempest_detail', sid=monitor.tempest_station_id) }}">{{ monitor.tempest_station_name }}</a>
+    {% else %}
+      <span class="off">not bound — set on edit</span>
+    {% endif %}
+  </dd>
+  <dt>Sensor value</dt>
+  <dd><code>{{ monitor.tempest_field }}</code> <span class="muted">stored in {{ monitor.unit }}</span></dd>
+  {% endif %}
   <dt>Enabled</dt><dd>{% if monitor.enabled %}<span class="ok">yes</span>{% else %}<span class="off">no</span>{% endif %}</dd>
   <dt>Retention</dt>
   <dd>
@@ -78,7 +90,14 @@
     <button type="button" class="link" data-copy="{{ monitor.auth_token }}">Copy</button></dd>
 </dl>
 
-{% if monitor.listener_type != 'modbus' %}
+{% if monitor.listener_type == 'tempest' %}
+<p class="muted">
+  This monitor records one value from the Tempest hub's UDP broadcasts — there's
+  nothing to push. The
+  <a href="{{ url_for('web.tempest_detail', sid=monitor.tempest_station_id) }}">station page</a>
+  shows what is arriving and when.
+</p>
+{% elif monitor.listener_type != 'modbus' %}
 <h2>Push examples</h2>
 <pre class="code">{% if monitor.listener_type == 'http' -%}
 # Numeric reading
