@@ -8,7 +8,7 @@ import re
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from .db import session_scope
 from .models import Monitor, Reading
@@ -138,6 +138,25 @@ def store_reading(monitor_id: int, value: Optional[float], label: Optional[str],
             ).scalar()
             if decimals is not None:
                 value = round(float(value), int(decimals))
+        if ts is not None:
+            # A sender that supplies its own timestamp and re-sends (retries,
+            # or one reading posted several times) would otherwise store the
+            # same reading again and again. Same monitor, timestamp, value
+            # and label is never a new reading, so return the existing row.
+            # The per-monitor lock (released at commit) stops copies arriving
+            # at the same moment on different threads from all getting in.
+            s.execute(select(func.pg_advisory_xact_lock(monitor_id)))
+            existing = s.execute(
+                select(Reading.id).where(
+                    Reading.monitor_id == monitor_id,
+                    Reading.ts == ts,
+                    Reading.value.is_(None) if value is None else Reading.value == value,
+                    Reading.label.is_(None) if label is None else Reading.label == label,
+                ).limit(1)
+            ).scalar()
+            if existing is not None:
+                log.debug("duplicate reading ignored monitor=%s ts=%s", monitor_id, ts)
+                return existing
         r = Reading(
             monitor_id=monitor_id,
             ts=ts or datetime.now(timezone.utc),
