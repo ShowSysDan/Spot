@@ -88,20 +88,21 @@ def ingest(token: str):
 def event(token: str):
     """Convenience endpoint: post a label-only event marker."""
     monitor_id, monitor_name, _ = _resolve_monitor(token)
-    label: str | None = None
     ctype = (request.content_type or "").lower()
     if "application/json" in ctype:
-        data = request.get_json(silent=True) or {}
-        if data.get("label"):
-            label = str(data["label"])
+        data = request.get_json(silent=True)
+        raw = data.get("label") if isinstance(data, dict) else None
     elif request.form.get("label"):
-        label = request.form["label"]
+        raw = request.form["label"]
     else:
-        label = (request.get_data(as_text=True) or "").strip() or None
-
+        raw = request.get_data(as_text=True)
+    label = str(raw).strip() if raw is not None else ""
     if not label:
         return jsonify({"ok": False, "error": "label required"}), 400
 
-    rid = store_reading(monitor_id, None, label)
-    log.info("event monitor=%s label=%r id=%s", monitor_name, label, rid)
+    try:
+        rid = store_reading(monitor_id, None, label)
+    except MalformedData as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    log.info("event monitor=%s label=%r id=%s", monitor_name, label[:200], rid)
     return jsonify({"ok": True, "id": rid})

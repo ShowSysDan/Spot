@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import functools
 import json
 import logging
+import math
 import re
 from datetime import datetime, timezone
 from typing import Optional
@@ -13,14 +15,34 @@ from .models import Monitor, Reading
 
 log = logging.getLogger("spot.ingest")
 
+# Longest message (one HTTP body, TCP line or UDP datagram) and longest
+# event label accepted. Matches the TCP/UDP listeners' line cap, so every
+# input path has the same limit and a regex never scans a huge string.
+MAX_PAYLOAD_CHARS = 8192
+MAX_LABEL_CHARS = 8192
+
 
 class MalformedData(ValueError):
     pass
 
 
+@functools.lru_cache(maxsize=256)
+def _compile(pattern: str) -> re.Pattern:
+    """Monitors' value regexes, compiled once (not per message)."""
+    return re.compile(pattern)
+
+
+def _finite(v: float) -> float:
+    """NaN / ±Infinity would poison averages, alerts and charts (and are not
+    valid JSON), so they are refused like any other malformed value."""
+    if not math.isfinite(v):
+        raise MalformedData(f"value is not a finite number: {v!r}")
+    return v
+
+
 def _apply_regex(text: str, pattern: str) -> tuple[Optional[float], Optional[str]]:
     try:
-        rx = re.compile(pattern)
+        rx = _compile(pattern)
     except re.error as e:
         raise MalformedData(f"invalid regex: {e}") from e
     m = rx.search(text)
@@ -56,6 +78,8 @@ def parse_payload(raw: str, regex: str | None = None) -> tuple[Optional[float], 
     text = (raw or "").strip()
     if not text:
         raise MalformedData("empty payload")
+    if len(text) > MAX_PAYLOAD_CHARS:
+        raise MalformedData(f"payload longer than {MAX_PAYLOAD_CHARS} characters")
 
     if regex:
         return _apply_regex(text, regex)
@@ -103,6 +127,10 @@ def store_reading(monitor_id: int, value: Optional[float], label: Optional[str],
                   ts: Optional[datetime] = None) -> int:
     if value is None and not label:
         raise MalformedData("reading must have a value or label")
+    if value is not None:
+        value = _finite(float(value))
+    if label is not None and len(label) > MAX_LABEL_CHARS:
+        raise MalformedData(f"label longer than {MAX_LABEL_CHARS} characters")
     with session_scope() as s:
         if value is not None:
             decimals = s.execute(

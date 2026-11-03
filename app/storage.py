@@ -13,15 +13,20 @@ def schema_total_bytes(s: Session, schema: str) -> int:
     return int(row[0] or 0)
 
 
+def _rel(schema: str, table: str) -> str:
+    """Quoted "schema".table, so mixed-case or punctuated schema names work."""
+    return '"%s".%s' % (schema.replace('"', '""'), table)
+
+
 def relation_bytes(s: Session, qualified: str) -> int:
-    row = s.execute(text("SELECT pg_total_relation_size(:rel)"),
+    row = s.execute(text("SELECT pg_total_relation_size(CAST(:rel AS regclass))"),
                     {"rel": qualified}).first()
     return int((row[0] if row else 0) or 0)
 
 
 def per_monitor_stats(s: Session, schema: str) -> list[dict]:
     """Per-monitor row counts + estimated bytes (proportional split of readings table)."""
-    readings_bytes = relation_bytes(s, f'{schema}.readings')
+    readings_bytes = relation_bytes(s, _rel(schema, 'readings'))
 
     rows = s.execute(text(
         "SELECT m.id, m.name, m.unit, m.retention_days, "
@@ -56,7 +61,7 @@ def storage_overview(s: Session, schema: str) -> dict:
     return {
         "schema": schema,
         "schema_bytes": schema_total_bytes(s, schema),
-        "readings_bytes": relation_bytes(s, f'{schema}.readings'),
-        "monitors_bytes": relation_bytes(s, f'{schema}.monitors'),
+        "readings_bytes": relation_bytes(s, _rel(schema, 'readings')),
+        "monitors_bytes": relation_bytes(s, _rel(schema, 'monitors')),
         "monitors": per_monitor_stats(s, schema),
     }

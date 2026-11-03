@@ -30,6 +30,7 @@ import select
 import socket
 import sys
 import threading
+import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 
@@ -192,6 +193,12 @@ class SyslogSender(logging.Handler):
     """
 
     MAX_BYTES = 8192
+    # After a failed (re)connect, lines are counted as failed without trying
+    # again for this long. Logging runs inside every thread's code path, and
+    # each attempt can block for the 5 s connect timeout while holding the
+    # handler lock, so retrying per line against a dead collector would stall
+    # the whole application.
+    RETRY_SECONDS = 30
 
     def __init__(self, address: str, protocol: str, facility: str, tag: str):
         super().__init__()
@@ -206,8 +213,10 @@ class SyslogSender(logging.Handler):
         self.last_error_at: datetime | None = None
         self.last_sent_at: datetime | None = None
         self._sock: socket.socket | None = None
+        self._sock_kind = socket.SOCK_DGRAM
         self._target = None
         self._local = address.startswith("/")
+        self._retry_at = 0.0  # monotonic time before which no reconnect is tried
         self._connect()  # raises OSError if the destination is unusable
 
     def describe(self) -> str:
@@ -269,11 +278,17 @@ class SyslogSender(logging.Handler):
         except (OSError, ValueError):
             return True
 
-    def _send(self, data: bytes) -> None:
+    def _send(self, data: bytes, force: bool = False) -> None:
         if self._sock is not None and self._sock_kind == socket.SOCK_STREAM and self._peer_closed():
             self._drop_socket()
         if self._sock is None:
-            self._connect()
+            if not force and time.monotonic() < self._retry_at:
+                raise OSError(self.last_error or "syslog destination unreachable; retrying shortly")
+            try:
+                self._connect()
+            except OSError:
+                self._retry_at = time.monotonic() + self.RETRY_SECONDS
+                raise
         if self._sock_kind == socket.SOCK_STREAM:
             self._sock.sendall(data)
         elif self._target is not None:
@@ -287,16 +302,23 @@ class SyslogSender(logging.Handler):
         except Exception as e:  # formatting problem: count it, never raise
             self._note_error(e)
             return
+        # `force` (the Logging page's test button) skips the reconnect back-off.
+        force = bool(getattr(record, "syslog_force", False))
         for attempt in (1, 2):
             try:
-                self._send(data)
+                self._send(data, force)
                 self.sent += 1
                 self.last_sent_at = datetime.now(timezone.utc)
+                self._retry_at = 0.0
                 return
             except OSError as e:
+                had_socket = self._sock is not None
                 self._drop_socket()
-                if attempt == 2:
+                # Only a send on a live socket is worth one immediate retry
+                # (a collector restart); a failed connect isn't.
+                if attempt == 2 or not had_socket:
                     self._note_error(e)
+                    return
 
     def _note_error(self, e: Exception) -> None:
         self.failed += 1
@@ -327,6 +349,15 @@ class RecentLog(logging.Handler):
     def __init__(self, size: int = 500):
         super().__init__(level=logging.DEBUG)
         self.records: collections.deque = collections.deque(maxlen=size)
+
+    def snapshot(self) -> list[tuple]:
+        """A copy taken under the handler lock: iterating the live deque while
+        another thread logs raises "deque mutated during iteration"."""
+        self.acquire()
+        try:
+            return list(self.records)
+        finally:
+            self.release()
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
@@ -475,6 +506,7 @@ def send_test_message() -> str | None:
                             None, None)
     rec.src = ""
     rec.src_suffix = ""
+    rec.syslog_force = True
     h.handle(rec)
     return h.last_error if h.failed > before else None
 
@@ -482,7 +514,7 @@ def send_test_message() -> str | None:
 def recent(limit: int = 300, min_level: str = "debug", category: str = "") -> list[dict]:
     lvl = LEVELS.get(min_level, logging.DEBUG)
     out = []
-    for created, levelname, name, msg, src in reversed(_state["recent"].records):
+    for created, levelname, name, msg, src in reversed(_state["recent"].snapshot()):
         if logging.getLevelName(levelname) < lvl:
             continue
         cat = category_of(name)
