@@ -33,6 +33,7 @@
     </select>
   </label>
   <label class="compact checkbox"><input type="checkbox" id="zero"> Start Y at 0</label>
+  <label class="compact checkbox"><input type="checkbox" id="show-events"> Events</label>
   <button type="button" id="btn-pause" class="button">Pause</button>
 </div>
 
@@ -77,6 +78,8 @@
   if (!refreshSel.value) refreshSel.value = 'auto';
   const zero = document.getElementById('zero');
   zero.checked = Spot.store.get(`${storeKey}.zero`, '0') === '1';
+  const showEvents = document.getElementById('show-events');
+  showEvents.checked = Spot.store.get(`${storeKey}.events`, '1') === '1';
 
   // Auto refresh scales with the window: no point re-fetching a 7-day chart every second.
   function refreshMs() {
@@ -115,7 +118,7 @@
           filter: item => item.datasetIndex === 2,
           callbacks: { label: item => `${fmt(item.parsed.y)} ${unit}` },
         },
-        spotEvents: { events: [] },
+        spotEvents: { events: [], show: showEvents.checked },
         spotThresholds: { lines: [
           ...(alertHigh !== null ? [{ y: alertHigh, label: `alert above ${fmt(alertHigh)} ${unit}`, color: '#f85149' }] : []),
           ...(alertLow !== null ? [{ y: alertLow, label: `alert below ${fmt(alertLow)} ${unit}`, color: '#e3b341' }] : []),
@@ -235,6 +238,11 @@
   refreshSel.addEventListener('change', () => {
     Spot.store.set(`${storeKey}.refresh`, refreshSel.value);
     poll.setInterval(refreshMs());
+  });
+  showEvents.addEventListener('change', () => {
+    Spot.store.set(`${storeKey}.events`, showEvents.checked ? '1' : '0');
+    chart.options.plugins.spotEvents.show = showEvents.checked;
+    chart.update('none');
   });
   zero.addEventListener('change', () => {
     Spot.store.set(`${storeKey}.zero`, zero.checked ? '1' : '0');

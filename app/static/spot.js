@@ -149,32 +149,62 @@
     set(k, v) { try { localStorage.setItem(k, v); } catch (_) { /* ignore */ } },
   };
 
-  // Chart.js plugin: vertical dashed markers for label-only events.
-  // Configure with options.plugins.spotEvents = { events: [{x, label}] }.
+  // Chart.js plugin: markers for label-only events.
+  // Configure with options.plugins.spotEvents = { events: [{x, label}], show }.
+  // Drawn behind the data so a busy event stream never hides the line. A few
+  // events get full-height dashed lines; labels are skipped where they would
+  // overlap the previous one. When there are more events than the chart has
+  // room for (a sensor posting text every few seconds), they collapse to a
+  // thin tick strip along the top edge with a count instead.
   const eventLinesPlugin = {
     id: 'spotEvents',
-    afterDatasetsDraw(chart, _args, opts) {
+    beforeDatasetsDraw(chart, _args, opts) {
+      if (opts && opts.show === false) return;
       const events = (opts && opts.events) || [];
       const x = chart.scales.x;
       if (!events.length || !x) return;
-      const { top, bottom } = chart.chartArea;
-      const ctx = chart.ctx;
-      ctx.save();
-      ctx.strokeStyle = 'rgba(248, 81, 73, 0.75)';
-      ctx.fillStyle = '#ff9b94';
-      ctx.setLineDash([4, 3]);
-      ctx.lineWidth = 1;
-      ctx.font = '11px Poppins, system-ui, sans-serif';
+      const { left, right, top, bottom } = chart.chartArea;
+      const pxs = [];
       for (const ev of events) {
         const px = x.getPixelForValue(ev.x);
-        if (px < chart.chartArea.left || px > chart.chartArea.right) continue;
-        ctx.beginPath(); ctx.moveTo(px, top); ctx.lineTo(px, bottom); ctx.stroke();
-        if (ev.label) {
-          ctx.save();
-          ctx.translate(px + 3, top + 4);
-          ctx.rotate(Math.PI / 2);
-          ctx.fillText(String(ev.label).slice(0, 40), 0, 0);
-          ctx.restore();
+        if (px >= left && px <= right) pxs.push([px, ev]);
+      }
+      if (!pxs.length) return;
+      const ctx = chart.ctx;
+      ctx.save();
+      ctx.font = '11px Poppins, system-ui, sans-serif';
+      const dense = pxs.length > (right - left) / 10;
+      if (dense) {
+        ctx.strokeStyle = 'rgba(248, 81, 73, 0.6)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        let last = -Infinity;
+        for (const [px] of pxs) {
+          if (px - last < 2) continue;
+          last = px;
+          ctx.moveTo(px, top); ctx.lineTo(px, top + 6);
+        }
+        ctx.stroke();
+        ctx.fillStyle = '#ff9b94';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'top';
+        ctx.fillText(`${pxs.length.toLocaleString()} events`, right - 4, top + 9);
+      } else {
+        ctx.strokeStyle = 'rgba(248, 81, 73, 0.5)';
+        ctx.fillStyle = '#ff9b94';
+        ctx.setLineDash([4, 3]);
+        ctx.lineWidth = 1;
+        let lastLabel = -Infinity;
+        for (const [px, ev] of pxs) {
+          ctx.beginPath(); ctx.moveTo(px, top); ctx.lineTo(px, bottom); ctx.stroke();
+          if (ev.label && px - lastLabel >= 14) {
+            lastLabel = px;
+            ctx.save();
+            ctx.translate(px + 3, top + 4);
+            ctx.rotate(Math.PI / 2);
+            ctx.fillText(String(ev.label).slice(0, 40), 0, 0);
+            ctx.restore();
+          }
         }
       }
       ctx.restore();

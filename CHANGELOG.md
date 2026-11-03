@@ -3,6 +3,22 @@
 All notable changes to Spot. The version number lives in `app/version.py`
 and is bumped with every change.
 
+## 1.13.1 — 2026-11-03
+
+Charts stay readable when a monitor has lots of events. **No action needed
+to upgrade**: front-end only. `git pull` and restart as usual.
+
+### Fixed
+- **Event markers could hide the data line.** A feed that sends a text
+  message every few seconds (for example `weather.windDirection = 111.0`
+  arriving on a wind-speed monitor) became one event per message, and each
+  was drawn as a full-height red line with a label on top of the chart.
+  Event markers are now drawn behind the data, labels that would overlap
+  are skipped, and when there are more events than the chart has room for
+  they collapse to a thin tick strip along the top edge with a count.
+- **New "Events" checkbox** on the live monitor page hides event markers
+  (remembered per monitor).
+
 ## 1.13.0 — 2026-11-03
 
 Security and robustness review. **No action needed to upgrade**: no new
