@@ -6,7 +6,8 @@ import re
 import secrets
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
-from flask import Blueprint, Response, abort, current_app, flash, redirect, render_template, request, url_for
+from flask import (Blueprint, Response, abort, current_app, flash, jsonify, redirect,
+                   render_template, request, url_for)
 from sqlalchemy import func, select
 
 from ..db import session_scope
@@ -22,10 +23,12 @@ from ..modbus import (
     poll_now,
 )
 from .. import alert_actions
+from .. import tempest
+from ..tempest import TempestManager
 from ..alerts import KINDS as ALERT_KINDS, active_alerts_by_monitor
 from .. import logging_config as logcfg
 from .. import units
-from ..models import Alert, AlertAction, ApiKey, ModbusDevice, Monitor, Show
+from ..models import Alert, AlertAction, ApiKey, ModbusDevice, Monitor, Show, TempestStation
 from ..notify import callback_url_problem, one_line, post_json
 from ..shows import (
     MAX_SHOW_SECONDS,
@@ -36,19 +39,21 @@ from ..shows import (
     show_stats,
     show_view,
 )
-from ..portalloc import PORT_RANGE_END, PORT_RANGE_START, allocate_port
+from ..portalloc import PORT_RANGE_END, PORT_RANGE_START, allocate_port, can_bind
 from ..storage import storage_overview
 from ..util import (
     PALETTE,
     format_bytes,
     format_local,
     get_modbus_device_or_404,
+    get_tempest_station_or_404,
     local_naive_to_utc,
     now_local,
     get_monitor_or_404,
     modbus_device_view,
     monitor_view,
     parse_iso_ts,
+    tempest_station_view,
 )
 from .v1 import hash_key
 
@@ -79,7 +84,7 @@ def _same_origin_posts():
     return None
 
 
-VALID_LISTENER_TYPES = ("http", "tcp", "udp", "modbus")
+VALID_LISTENER_TYPES = ("http", "tcp", "udp", "modbus", "tempest")
 
 
 def _safe_next() -> str | None:
@@ -100,10 +105,17 @@ def _modbus() -> ModbusManager:
     return current_app.config["SPOT_MODBUS"]
 
 
+def _tempest() -> TempestManager:
+    return current_app.config["SPOT_TEMPEST"]
+
+
 # A monitor whose newest reading is older than this is shown as "stale" on
 # the home page. Modbus monitors use 3x their device's poll interval instead,
-# since Spot knows exactly how often those should report.
+# since Spot knows exactly how often those should report; Tempest monitors
+# 3x their message's interval, and Tempest events (a lightning strike, rain
+# starting) may be weeks apart, so they never count as stale.
 STALE_AFTER_SECONDS = 300
+NEVER_STALE_SECONDS = 10 * 365 * 86400
 
 # Offered in the Category box on the monitor form, alongside ones in use.
 SUGGESTED_CATEGORIES = ("Audio", "Weather", "Room Temps")
@@ -125,6 +137,8 @@ def index():
             v = monitor_view(m)
             if m.modbus_device is not None:
                 v["stale_after"] = max(30, 3 * m.modbus_device.poll_interval_seconds)
+            elif m.listener_type == "tempest":
+                v["stale_after"] = _tempest_stale_after(m.tempest_field)
             else:
                 v["stale_after"] = STALE_AFTER_SECONDS
             # Sort key for grouping tiles: named groups A-Z, unassigned last.
@@ -159,32 +173,67 @@ def monitor_edit(mid: int):
     return _monitor_form(mid)
 
 
+def _tempest_stale_after(field_key: str | None) -> int:
+    field = tempest.FIELD_MAP.get(field_key or "")
+    if field is None or field.interval is None:
+        return NEVER_STALE_SECONDS
+    return max(STALE_AFTER_SECONDS, 3 * field.interval)
+
+
+def _tempest_prefill(s) -> dict | None:
+    """A new-monitor form opened from a station page's *Add monitor* link
+    (`?station=<id>&field=<key>`) starts filled in for that sensor."""
+    sid = request.args.get("station", "")
+    field = tempest.FIELD_MAP.get(request.args.get("field", ""))
+    st = s.get(TempestStation, int(sid)) if sid.isdigit() else None
+    if st is None or field is None:
+        return None
+    return {
+        "name": f"{st.name} {field.label.replace(' (calculated)', '')}",
+        "unit": field.units[0],
+        "listener_type": "tempest",
+        "tempest_station_id": st.id,
+        "tempest_field": field.key,
+        "category": "Weather",
+        "decimal_places": 1 if field.kind else None,
+        "enabled": True,
+    }
+
+
 def _monitor_form(mid: int | None):
     with session_scope() as s:
-        data = monitor_view(get_monitor_or_404(s, mid)) if mid is not None else None
+        data = monitor_view(get_monitor_or_404(s, mid)) if mid is not None else _tempest_prefill(s)
         devices = [modbus_device_view(d) for d in
                    s.query(ModbusDevice).order_by(ModbusDevice.name).all()]
+        stations = [tempest_station_view(st) for st in
+                    s.query(TempestStation).order_by(TempestStation.name).all()]
         locations = sorted({loc for (loc,) in s.execute(
             select(Monitor.location).where(Monitor.location.is_not(None))).all()})
         categories = sorted({c for (c,) in s.execute(
             select(Monitor.category).where(Monitor.category.is_not(None))).all()}
             | set(SUGGESTED_CATEGORIES), key=str.lower)
-    return render_template("monitor_form.html", monitor=data,
+    return render_template("monitor_form.html", monitor=data, is_new=mid is None,
                            listener_types=VALID_LISTENER_TYPES,
                            default_retention=current_app.config["SPOT"].default_retention_days,
                            modbus_devices=devices,
                            modbus_data_types=DATA_TYPES,
+                           tempest_stations=stations,
+                           tempest_groups=tempest.fields_by_message(),
+                           tempest_catalogue=tempest.catalogue(),
                            locations=locations, categories=categories, palette=PALETTE)
 
 
 @bp.route("/monitors/<int:mid>/delete", methods=["POST"])
 def monitor_delete(mid: int):
     _manager().stop_monitor(mid)
+    station_id = None
     with session_scope() as s:
         m = s.get(Monitor, mid)
         if m:
+            station_id = m.tempest_station_id
             log.info("monitor deleted: %s id=%d", m.name, mid)
             s.delete(m)
+    _tempest().refresh(station_id)
     flash("Monitor deleted.", "success")
     return redirect(url_for("web.index"))
 
@@ -202,6 +251,7 @@ def monitor_toggle(mid: int):
     else:
         _manager().stop_monitor(info["id"])
         log.info("monitor disabled: %s id=%d", info["name"], info["id"])
+    _tempest().refresh(info["tempest_station_id"])
     flash(f"{info['name']} {'enabled' if info['enabled'] else 'disabled'}.", "success")
     return redirect(_safe_next() or url_for("web.index"))
 
@@ -795,6 +845,7 @@ def setup():
     with session_scope() as s:
         counts = {
             "modbus": s.query(ModbusDevice).count(),
+            "tempest": s.query(TempestStation).count(),
             "monitors": s.query(Monitor).count(),
             "api_keys": s.query(ApiKey).filter(ApiKey.enabled.is_(True)).count(),
         }
@@ -981,6 +1032,231 @@ def modbus_poll_now(did: int):
     else:
         flash(f"Read {len(regs)} register(s): {regs}", "success")
     return redirect(url_for("web.modbus_detail", did=did))
+
+
+# ---------------------------------------------------------------------------
+# Tempest weather station CRUD
+# ---------------------------------------------------------------------------
+
+@bp.route("/tempest")
+def tempest_list():
+    with session_scope() as s:
+        stations = [tempest_station_view(st) for st in
+                    s.query(TempestStation).order_by(TempestStation.name).all()]
+    statuses = _tempest().status()
+    for st in stations:
+        st["alive"] = statuses.get(st["id"], False)
+        snap = _tempest().snapshot(st["id"])
+        st["packets"] = snap["packets"] if snap else 0
+        st["last_packet"] = _ago_text(snap["last_packet_at"]) if snap else None
+    return render_template("tempest_list.html", stations=stations,
+                           default_port=tempest.DEFAULT_PORT)
+
+
+@bp.route("/tempest/new", methods=["GET", "POST"])
+def tempest_new():
+    if request.method == "POST":
+        return _save_tempest_station(None)
+    return _tempest_form(None)
+
+
+@bp.route("/tempest/<int:sid>")
+def tempest_detail(sid: int):
+    with session_scope() as s:
+        st = get_tempest_station_or_404(s, sid)
+        data = tempest_station_view(st)
+        bound = [monitor_view(m) for m in sorted(st.monitors, key=lambda m: m.name.lower())]
+    data["alive"] = _tempest().status().get(sid, False)
+    data["serial_list"] = sorted(tempest.parse_serials(data["serials"]))
+    live = _tempest_live(sid)
+    by_field: dict[str, list[dict]] = {}
+    for m in bound:
+        by_field.setdefault(m["tempest_field"] or "", []).append(m)
+    groups = []
+    for mt, fields in tempest.fields_by_message():
+        rows = []
+        for f in fields:
+            latest = live["latest"].get(f.key) if live else None
+            rows.append({"key": f.key, "label": f.label, "unit": f.unit,
+                         "units": f.units, "note": f.note,
+                         "value": latest["value"] if latest else None,
+                         "ago": latest["ago"] if latest else None,
+                         "monitors": by_field.get(f.key, [])})
+        groups.append({"type": mt.key, "title": mt.title,
+                       "count": (live["by_type"].get(mt.key, 0) if live else 0),
+                       "fields": rows})
+    return render_template("tempest_detail.html", station=data, monitors=bound,
+                           live=live, groups=groups,
+                           field_units={f.key: f.unit for f in tempest.FIELDS})
+
+
+@bp.route("/tempest/<int:sid>/live.json")
+def tempest_live(sid: int):
+    """What the station's listener has seen; polled by the station page."""
+    with session_scope() as s:
+        get_tempest_station_or_404(s, sid)
+    live = _tempest_live(sid)
+    return jsonify(live or {"alive": False})
+
+
+def _ago_text(dt: datetime | None) -> str | None:
+    if dt is None:
+        return None
+    secs = max(0, int((datetime.now(timezone.utc) - dt).total_seconds()))
+    if secs < 90:
+        return f"{secs} s ago"
+    if secs < 5400:
+        return f"{secs // 60} min ago"
+    if secs < 172800:
+        return f"{secs // 3600} h ago"
+    return f"{secs // 86400} d ago"
+
+
+def _tempest_live(sid: int) -> dict | None:
+    snap = _tempest().snapshot(sid)
+    if snap is None:
+        return None
+    latest = {}
+    for key, (value, ts) in snap["latest"].items():
+        latest[key] = {"value": (round(value, 3) if value is not None else None),
+                       "ts": format_local(ts), "ago": _ago_text(ts)}
+    return {
+        "alive": True,
+        "started": format_local(snap["started_at"]),
+        "packets": snap["packets"],
+        "ignored": snap["ignored"],
+        "last_packet": format_local(snap["last_packet_at"]) if snap["last_packet_at"] else None,
+        "last_packet_ago": _ago_text(snap["last_packet_at"]),
+        "last_from": snap["last_from"],
+        "by_type": snap["by_type"],
+        "devices": [{"serial": k, "type": v["type"], "hub": v.get("hub"),
+                     "ago": _ago_text(v["last"])}
+                    for k, v in sorted(snap["devices"].items())],
+        "latest": latest,
+    }
+
+
+@bp.route("/tempest/<int:sid>/edit", methods=["GET", "POST"])
+def tempest_edit(sid: int):
+    if request.method == "POST":
+        return _save_tempest_station(sid)
+    return _tempest_form(sid)
+
+
+def _tempest_form(sid: int | None):
+    data = None
+    if sid is not None:
+        with session_scope() as s:
+            data = tempest_station_view(get_tempest_station_or_404(s, sid))
+    return render_template("tempest_form.html", station=data,
+                           default_port=tempest.DEFAULT_PORT, is_new=sid is None)
+
+
+@bp.route("/tempest/<int:sid>/delete", methods=["POST"])
+def tempest_delete(sid: int):
+    _tempest().stop_station(sid)
+    with session_scope() as s:
+        st = s.get(TempestStation, sid)
+        if st:
+            log.info("tempest station deleted: %s id=%d (cascaded %d monitor(s))",
+                     st.name, sid, len(st.monitors))
+            s.delete(st)
+    flash("Tempest station deleted.", "success")
+    return redirect(url_for("web.tempest_list"))
+
+
+@bp.route("/tempest/<int:sid>/toggle", methods=["POST"])
+def tempest_toggle(sid: int):
+    with session_scope() as s:
+        st = get_tempest_station_or_404(s, sid)
+        st.enabled = not st.enabled
+        info = tempest_station_view(st)
+    if info["enabled"]:
+        _tempest().start_station(info["id"], info["name"], info["port"], info["serials"])
+        log.info("tempest station enabled: %s id=%d", info["name"], info["id"])
+    else:
+        _tempest().stop_station(info["id"])
+        log.info("tempest station disabled: %s id=%d", info["name"], info["id"])
+    return redirect(url_for("web.tempest_detail", sid=info["id"]))
+
+
+def _save_tempest_station(sid: int | None):
+    try:
+        return _save_tempest_station_checked(sid)
+    except _FormError as e:
+        flash(str(e), "error")
+        return redirect(request.url)
+
+
+def _save_tempest_station_checked(sid: int | None):
+    cfg = current_app.config["SPOT"]
+    name = _form_str("name")[:120]
+    description = _form_str("description") or None
+    serials = ", ".join(sorted(tempest.parse_serials(_form_str("serials")))) or None
+    enabled = bool(request.form.get("enabled"))
+    port_err = "UDP port must be a whole number from 1 to 65535."
+    port = _form_int("port", str(tempest.DEFAULT_PORT), port_err)
+    _check(bool(name), "Name is required.")
+    _check(1 <= port <= 65535, port_err)
+    _check(port != cfg.web_port, f"Port {port} is Spot's own web port.")
+    _check(not (PORT_RANGE_START <= port <= PORT_RANGE_END),
+           f"Ports {PORT_RANGE_START}–{PORT_RANGE_END} are reserved for TCP/UDP monitors.")
+
+    with session_scope() as s:
+        clash = s.scalar(select(TempestStation).where(
+            TempestStation.port == port, TempestStation.id != (sid or 0)))
+        _check(clash is None, f"Port {port} is already used by Tempest station “{clash.name}”."
+               if clash else "")
+        taken = s.scalar(select(Monitor).where(
+            Monitor.listener_type == "udp", Monitor.port == port))
+        _check(taken is None, f"Port {port} is already used by UDP monitor “{taken.name}”."
+               if taken else "")
+        old = tempest_station_view(get_tempest_station_or_404(s, sid)) if sid is not None else None
+
+    # Stop the old listener before checking the port, so a station keeping
+    # its port isn't refused because it holds the port itself.
+    if old is not None:
+        _tempest().stop_station(old["id"])
+    if not can_bind(port, "udp"):
+        if old is not None and old["enabled"]:
+            _tempest().start_station(old["id"], old["name"], old["port"], old["serials"])
+        raise _FormError(f"UDP port {port} is in use by another program on this server.")
+
+    fields = dict(name=name, description=description, port=port, serials=serials,
+                  enabled=enabled)
+    with session_scope() as s:
+        if sid is None:
+            st = TempestStation(**fields)
+            s.add(st)
+            s.flush()
+        else:
+            st = get_tempest_station_or_404(s, sid)
+            for k, v in fields.items():
+                setattr(st, k, v)
+        info = tempest_station_view(st)
+        log.info("tempest station %s: %s id=%d port=%d serials=%s",
+                 "created" if sid is None else "updated", info["name"], info["id"],
+                 info["port"], info["serials"] or "any")
+    if info["enabled"]:
+        _tempest().start_station(info["id"], info["name"], info["port"], info["serials"])
+    flash("Tempest station saved.", "success")
+    return redirect(url_for("web.tempest_detail", sid=info["id"]))
+
+
+def _validate_tempest_monitor(s, station_id: int | None, field_key: str | None,
+                              unit: str) -> str:
+    """Validate a Tempest monitor's binding. Returns "" on success or a
+    flashable error message."""
+    if not station_id:
+        return "Tempest monitors need a Tempest station."
+    if s.get(TempestStation, station_id) is None:
+        return "Selected Tempest station does not exist."
+    field = tempest.FIELD_MAP.get(field_key or "")
+    if field is None:
+        return "Choose which sensor value this monitor records."
+    if unit not in field.units:
+        return f"{field.label} can be stored in {', '.join(field.units)}, not “{unit}”."
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -1182,6 +1458,14 @@ def _save_monitor_checked(mid: int | None):
                                             "Register address must be an integer.")
         modbus_data_type = _form_str("modbus_data_type", "float32")
 
+    tempest_station_id: int | None = None
+    tempest_field: str | None = None
+    if listener_type == "tempest":
+        tempest_station_id = _form_int("tempest_station_id", None, "Invalid Tempest station.")
+        tempest_field = _form_str("tempest_field") or None
+        # The unit comes from the sensor's own list (°C or °F, m/s or mph, …).
+        unit = _form_str("tempest_unit") or unit
+
     retention_err = "Retention must be a positive integer (days), or blank for keep-forever."
     retention_days = _form_int("retention_days", None, retention_err)
     _check(retention_days is None or retention_days >= 1, retention_err)
@@ -1212,8 +1496,13 @@ def _save_monitor_checked(mid: int | None):
             err = _validate_modbus_monitor(
                 s, modbus_device_id, modbus_register_address, modbus_data_type)
             _check(not err, err)
+        if listener_type == "tempest":
+            err = _validate_tempest_monitor(s, tempest_station_id, tempest_field, unit)
+            _check(not err, err)
 
-        existing_port = get_monitor_or_404(s, mid).port if mid is not None else None
+        existing = get_monitor_or_404(s, mid) if mid is not None else None
+        existing_port = existing.port if existing is not None else None
+        old_station_id = existing.tempest_station_id if existing is not None else None
         port = _assign_port(s, mid, listener_type, existing_port, cfg.web_port)
 
         fields = dict(name=name, description=description, unit=unit,
@@ -1222,6 +1511,8 @@ def _save_monitor_checked(mid: int | None):
                       modbus_device_id=modbus_device_id,
                       modbus_register_address=modbus_register_address,
                       modbus_data_type=modbus_data_type,
+                      tempest_station_id=tempest_station_id,
+                      tempest_field=tempest_field,
                       decimal_places=decimal_places,
                       location=location, category=category, color=color,
                       alert_high=alert_high, alert_low=alert_low,
@@ -1246,6 +1537,8 @@ def _save_monitor_checked(mid: int | None):
     if info["enabled"]:
         _manager().start_monitor(info["id"], info["name"], info["listener_type"],
                                  info["port"], info["value_regex"])
+    for station_id in {old_station_id, info["tempest_station_id"]}:
+        _tempest().refresh(station_id)
 
     flash("Monitor saved.", "success")
     return redirect(url_for("web.monitor_detail", mid=info["id"]))

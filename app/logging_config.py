@@ -15,7 +15,7 @@ or "ingest: warnings only" without knowing logger names:
   ingest    spot.ingest, spot.api           malformed data (warning); every accepted reading (debug)
   ui        spot.web                        changes made in the web UI, with the source IP
   reports   spot.shows, spot.notify         show report delivery, webhooks / callbacks
-  inputs    spot.listeners, spot.modbus, …  TCP/UDP listeners, Modbus polling
+  inputs    spot.listeners, spot.modbus, spot.tempest, …  TCP/UDP/Tempest listeners, Modbus polling
   exports   spot.data                       CSV / PDF downloads
   system    spot, spot.db, spot.janitor, …  start-up, database, retention
 """
@@ -90,15 +90,16 @@ CATEGORIES: tuple[Category, ...] = (
              "Malformed payloads at warning. At debug, every accepted reading (very busy).",
              ("spot.ingest", "spot.api"), "warning"),
     Category("ui", "Changes in the web UI",
-             "Monitors, shows, Modbus devices, API keys, alert acknowledgements and settings "
+             "Monitors, shows, Modbus devices, Tempest stations, API keys, alert acknowledgements and settings "
              "created, changed or deleted — with the source IP.",
              ("spot.web",), "info"),
     Category("reports", "Show reports & webhooks",
              "Show report deliveries to callback URLs, alert webhook posts, and their failures.",
              ("spot.shows", "spot.notify"), "info"),
-    Category("inputs", "Listeners & Modbus",
-             "TCP/UDP listeners starting, stopping or failing to bind; Modbus polling errors.",
-             ("spot.listeners", "spot.modbus", "spot.portalloc"), "info"),
+    Category("inputs", "Listeners, Modbus & Tempest",
+             "TCP/UDP and Tempest listeners starting, stopping or failing to bind; "
+             "Modbus polling errors; Tempest messages that could not be read.",
+             ("spot.listeners", "spot.modbus", "spot.tempest", "spot.portalloc"), "info"),
     Category("exports", "Exports",
              "CSV and PDF downloads (what and which range).",
              ("spot.data",), "info"),

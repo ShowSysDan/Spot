@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block title %}{{ "Edit" if monitor else "New" }} Monitor — Spot{% endblock %}
+{% block title %}{{ "New" if is_new else "Edit" }} Monitor — Spot{% endblock %}
 {% block content %}
-<h1>{{ "Edit" if monitor else "New" }} Monitor</h1>
+<h1>{{ "New" if is_new else "Edit" }} Monitor</h1>
 <form method="post" class="form">
   <label>Name
     <input type="text" name="name" required value="{{ monitor.name if monitor else '' }}">
@@ -9,7 +9,7 @@
   <label>Description
     <textarea name="description" rows="2">{{ monitor.description if monitor and monitor.description else '' }}</textarea>
   </label>
-  <label>Unit
+  <label id="unit_field">Unit
     <input list="units" type="text" name="unit" required
            value="{{ monitor.unit if monitor else 'value' }}"
            placeholder="dB, °F, °C, %, lux, …">
@@ -70,7 +70,9 @@
     <small class="muted">
       HTTP uses the shared web port. TCP/UDP get a dedicated port automatically
       assigned from the 6101–6199 range on save. Modbus polls a Modbus TCP
-      device — see the Modbus tab to add devices.
+      device — see the Modbus tab to add devices. Tempest records one value
+      from a WeatherFlow Tempest weather station's UDP broadcasts — see
+      Setup → Tempest stations.
     </small>
   </label>
   {% if monitor and monitor.port %}
@@ -124,7 +126,49 @@
       </small>
     </label>
   </fieldset>
-  <label>Value extraction regex
+  <fieldset id="tempest_fields" class="group">
+    <legend>Tempest weather station</legend>
+    <label>Station
+      <select name="tempest_station_id">
+        <option value="">— select a station —</option>
+        {% for st in tempest_stations %}
+        <option value="{{ st.id }}"
+          {% if monitor and monitor.tempest_station_id == st.id %}selected{% endif %}>
+          {{ st.name }} — UDP port {{ st.port }}
+        </option>
+        {% endfor %}
+      </select>
+      <small class="muted">
+        {% if not tempest_stations %}
+          No Tempest stations yet. <a href="{{ url_for('web.tempest_new') }}">Add one first</a>.
+        {% else %}
+          Manage stations on the <a href="{{ url_for('web.tempest_list') }}">Tempest</a> page;
+          each station page shows the values the hub is sending.
+        {% endif %}
+      </small>
+    </label>
+    <label>Sensor value
+      <select name="tempest_field" id="tempest_field">
+        <option value="">— choose a value —</option>
+        {% for mt, fields in tempest_groups %}
+        <optgroup label="{{ mt.title }}">
+          {% for f in fields %}
+          <option value="{{ f.key }}" {% if monitor and monitor.tempest_field == f.key %}selected{% endif %}>{{ f.label }}{% if f.unit %} ({{ f.unit }}){% endif %}</option>
+          {% endfor %}
+        </optgroup>
+        {% endfor %}
+      </select>
+      <small class="muted" id="tempest_note"></small>
+    </label>
+    <label>Store as
+      <select name="tempest_unit" id="tempest_unit"></select>
+      <small class="muted">
+        The hub sends metric (°C, m/s, mb, mm, km); pick the unit you want on
+        tiles, charts and reports. This becomes the monitor's unit.
+      </small>
+    </label>
+  </fieldset>
+  <label id="regex_field">Value extraction regex
     <input type="text" name="value_regex"
            value="{{ monitor.value_regex if monitor and monitor.value_regex else '' }}"
            placeholder="optional — e.g. (?P&lt;value&gt;-?\d+(?:\.\d+)?)">
@@ -204,10 +248,44 @@
 (function () {
   const sel = document.getElementById('listener_type');
   const fs = document.getElementById('modbus_fields');
-  if (!sel || !fs) return;
-  function sync() { fs.style.display = (sel.value === 'modbus') ? '' : 'none'; }
+  const tf = document.getElementById('tempest_fields');
+  if (!sel || !fs || !tf) return;
+  const unitField = document.getElementById('unit_field');
+  const regexField = document.getElementById('regex_field');
+  const unitInput = unitField.querySelector('input');
+  function sync() {
+    const t = sel.value;
+    fs.style.display = (t === 'modbus') ? '' : 'none';
+    tf.style.display = (t === 'tempest') ? '' : 'none';
+    // A Tempest monitor's unit comes from the sensor's own list below.
+    unitField.style.display = (t === 'tempest') ? 'none' : '';
+    unitInput.required = (t !== 'tempest');
+    regexField.style.display = (t === 'tempest' || t === 'modbus') ? 'none' : '';
+  }
   sel.addEventListener('change', sync);
   sync();
+
+  // Tempest: the "Store as" choices depend on the chosen sensor value.
+  const catalogue = {{ tempest_catalogue|tojson }};
+  const byKey = Object.fromEntries(catalogue.map(f => [f.key, f]));
+  const fieldSel = document.getElementById('tempest_field');
+  const unitSel = document.getElementById('tempest_unit');
+  const note = document.getElementById('tempest_note');
+  const current = {{ (monitor.unit if monitor else '')|tojson }};
+  function syncUnits() {
+    const f = byKey[fieldSel.value];
+    unitSel.innerHTML = '';
+    note.textContent = f ? f.note : '';
+    if (!f) return;
+    for (const u of f.units) {
+      const o = document.createElement('option');
+      o.value = u; o.textContent = u;
+      if (u === current) o.selected = true;
+      unitSel.appendChild(o);
+    }
+  }
+  fieldSel.addEventListener('change', syncUnits);
+  syncUnits();
   // The custom colour picker feeds its radio button.
   const picker = document.getElementById('color-custom');
   const radio = document.getElementById('color-custom-radio');

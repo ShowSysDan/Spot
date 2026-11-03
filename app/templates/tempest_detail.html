@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% block title %}{{ station.name }} — Tempest — Spot{% endblock %}
+{% block content %}
+<h1>{{ station.name }} <span class="muted">Tempest weather station</span></h1>
+{% if station.description %}<p class="muted">{{ station.description }}</p>{% endif %}
+
+<dl class="meta">
+  <dt>UDP port</dt><dd><code>{{ station.port }}</code></dd>
+  <dt>Accept from</dt>
+  <dd>{% if station.serial_list %}{% for sn in station.serial_list %}<code>{{ sn }}</code>{{ ' ' }}{% endfor %}
+      {% else %}<span class="muted">any device on this port</span>{% endif %}</dd>
+  <dt>Enabled</dt><dd>{% if station.enabled %}<span class="ok">yes</span>{% else %}<span class="off">no</span>{% endif %}</dd>
+  <dt>Listener</dt>
+  <dd>
+    {% if not station.enabled %}<span class="muted">disabled</span>
+    {% elif station.alive %}<span class="ok">running</span>{% if live %} <span class="muted">since {{ live.started }}</span>{% endif %}
+    {% else %}<span class="off">stopped</span> <span class="muted">— the port may be in use; check the log on Setup → Logging</span>{% endif %}
+  </dd>
+  <dt>Messages</dt>
+  <dd>
+    <span id="live-packets">{{ live.packets if live else 0 }}</span> received
+    <span class="muted">(<span id="live-ignored">{{ live.ignored if live else 0 }}</span> ignored: other devices or not Tempest JSON)</span>
+  </dd>
+  <dt>Last message</dt>
+  <dd id="live-last">
+    {% if live and live.last_packet %}{{ live.last_packet }} <span class="muted">({{ live.last_packet_ago }}, from {{ live.last_from }})</span>
+    {% elif station.enabled and station.alive %}<span class="off">nothing received yet</span>
+      <span class="muted">— the hub broadcasts every few seconds; check that packets reach this server on UDP port {{ station.port }}</span>
+    {% else %}<span class="muted">—</span>{% endif %}
+  </dd>
+  <dt>Devices heard</dt>
+  <dd id="live-devices">
+    {% if live and live.devices %}
+      {% for d in live.devices %}<div><code>{{ d.serial }}</code> <span class="muted">{{ d.type }}{% if d.hub %} via hub {{ d.hub }}{% endif %}, {{ d.ago }}</span></div>{% endfor %}
+    {% else %}<span class="muted">none yet</span>{% endif %}
+  </dd>
+</dl>
+
+<div class="row">
+  <a class="button" href="{{ url_for('web.tempest_edit', sid=station.id) }}">Edit station</a>
+  <form method="post" action="{{ url_for('web.tempest_toggle', sid=station.id) }}" class="inline">
+    <button type="submit" class="button">{{ 'Disable' if station.enabled else 'Enable' }}</button>
+  </form>
+  <form method="post" action="{{ url_for('web.tempest_delete', sid=station.id) }}" class="inline"
+        data-confirm="Delete Tempest station &quot;{{ station.name }}&quot; AND its {{ monitors|length }} bound monitor(s), with all their readings?">
+    <button type="submit" class="button danger-btn">Delete station</button>
+  </form>
+</div>
+
+<h2>Sensor values <span class="live-pill" id="live-status" title="Refreshes every 5 seconds while this tab is visible"><span class="dot"></span> live</span></h2>
+<p class="muted">
+  Everything the hub can send, with the latest value heard (in the hub's own units).
+  <strong>Add monitor</strong> creates a monitor for that value; you pick the unit
+  (°F or °C, mph or m/s, …) on the form. Events (lightning, rain starting) are stored
+  as markers rather than a line.
+</p>
+{% for g in groups %}
+<h3 class="tile-group">{{ g.title }} <span class="muted" data-type-count="{{ g.type }}">{% if g.count %}· {{ g.count }} received{% endif %}</span></h3>
+<table class="grid">
+  <thead><tr><th>Value</th><th>Latest</th><th>Heard</th><th>Monitors</th><th></th></tr></thead>
+  <tbody>
+  {% for f in g.fields %}
+    <tr>
+      <td>{{ f.label }}{% if f.note %}<div class="muted">{{ f.note }}</div>{% endif %}</td>
+      <td data-field-value="{{ f.key }}">{% if f.value is not none %}<strong>{{ f.value }}</strong> {{ f.unit }}{% elif f.ago %}<span class="muted">event</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+      <td class="muted" data-field-ago="{{ f.key }}">{{ f.ago or '' }}</td>
+      <td>
+        {% for m in f.monitors %}
+          <a href="{{ url_for('web.monitor_detail', mid=m.id) }}">{{ m.name }}</a> <span class="muted">({{ m.unit }})</span>{% if not loop.last %}<br>{% endif %}
+        {% endfor %}
+      </td>
+      <td class="actions"><a href="{{ url_for('web.monitor_new', station=station.id, field=f.key) }}">Add monitor</a></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endfor %}
+
+<h2>Bound monitors</h2>
+{% if not monitors %}
+  <p class="muted">No monitors yet. Use <strong>Add monitor</strong> beside a value above, or
+    <a href="{{ url_for('web.monitor_new') }}">create a monitor</a> with listener type <strong>Tempest</strong>.</p>
+{% else %}
+<table class="grid">
+  <thead><tr><th>Name</th><th>Sensor value</th><th>Unit</th><th>Enabled</th><th></th></tr></thead>
+  <tbody>
+  {% for m in monitors %}
+    <tr>
+      <td><a href="{{ url_for('web.monitor_detail', mid=m.id) }}">{{ m.name }}</a></td>
+      <td><code>{{ m.tempest_field }}</code></td>
+      <td>{{ m.unit }}</td>
+      <td>{% if m.enabled %}<span class="ok">on</span>{% else %}<span class="off">off</span>{% endif %}</td>
+      <td class="actions">
+        <a href="{{ url_for('web.monitor_dashboard', mid=m.id) }}">Dashboard</a>
+        <a href="{{ url_for('web.monitor_edit', mid=m.id) }}">Edit</a>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if station.enabled %}
+<script>
+(function () {
+  const url = {{ url_for('web.tempest_live', sid=station.id)|tojson }};
+  const unitOf = {{ field_units|tojson }};
+  const esc = Spot.escapeHtml;
+  const pill = document.getElementById('live-status');
+  async function tick() {
+    const r = await fetch(url, { cache: 'no-store' });
+    if (!r.ok) { pill.classList.add('down'); return; }
+    const d = await r.json();
+    pill.classList.toggle('down', !d.alive);
+    if (!d.alive) return;
+    document.getElementById('live-packets').textContent = d.packets;
+    document.getElementById('live-ignored').textContent = d.ignored;
+    const last = document.getElementById('live-last');
+    if (d.last_packet) {
+      last.innerHTML = esc(d.last_packet) + ' <span class="muted">(' + esc(d.last_packet_ago) + ', from ' + esc(d.last_from) + ')</span>';
+    }
+    if (d.devices.length) {
+      document.getElementById('live-devices').innerHTML = d.devices.map(x =>
+        '<div><code>' + esc(x.serial) + '</code> <span class="muted">' + esc(x.type) +
+        (x.hub ? ' via hub ' + esc(x.hub) : '') + ', ' + esc(x.ago) + '</span></div>').join('');
+    }
+    for (const [type, n] of Object.entries(d.by_type)) {
+      const el = document.querySelector('[data-type-count="' + type + '"]');
+      if (el) el.textContent = '· ' + n + ' received';
+    }
+    for (const [key, v] of Object.entries(d.latest)) {
+      const cell = document.querySelector('[data-field-value="' + key + '"]');
+      const ago = document.querySelector('[data-field-ago="' + key + '"]');
+      if (!cell) continue;
+      cell.innerHTML = v.value === null ? '<span class="muted">event</span>'
+        : '<strong>' + esc(String(v.value)) + '</strong> ' + esc(unitOf[key] || '');
+      if (ago) ago.textContent = v.ago || '';
+    }
+  }
+  Spot.poller(tick, 5000);
+})();
+</script>
+{% endif %}
+{% endblock %}

@@ -24,10 +24,11 @@
     <img src="{{ url_for('static', filename='logo.svg') }}" alt="" class="empty-logo">
     <h2>No monitors yet</h2>
     <p class="muted">A monitor is one stream of readings — a sound level meter, a temperature probe,
-      anything that can send numbers over HTTP, TCP, UDP, or Modbus.</p>
+      anything that can send numbers over HTTP, TCP, UDP, or Modbus, or a Tempest weather station.</p>
     <p>
       <a class="button primary" href="{{ url_for('web.monitor_new') }}">Add your first monitor</a>
       <a class="button" href="{{ url_for('web.modbus_new') }}">Add a Modbus sensor</a>
+      <a class="button" href="{{ url_for('web.tempest_new') }}">Add a Tempest weather station</a>
     </p>
   </div>
 {% else %}
@@ -77,6 +78,8 @@
           {{ m.listener_type|upper }}{% if m.port %} <span class="muted">:{{ m.port }}</span>{% endif %}
           {% if m.listener_type == 'modbus' and m.modbus_device_name %}
             <div class="muted">via {{ m.modbus_device_name }}</div>
+          {% elif m.listener_type == 'tempest' and m.tempest_station_name %}
+            <div class="muted">{{ m.tempest_field }} via {{ m.tempest_station_name }}</div>
           {% endif %}
         </td>
         <td>{% if m.retention_days %}{{ m.retention_days }}d{% else %}<span class="muted">default</span>{% endif %}</td>

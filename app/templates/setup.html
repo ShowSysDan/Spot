@@ -9,6 +9,11 @@
     <p class="muted">Polled Modbus TCP sensors (temperature, humidity, PLC values).</p>
     <span class="badge off">{{ counts.modbus }} device{{ '' if counts.modbus == 1 else 's' }}</span>
   </a>
+  <a class="card setup-card" href="{{ url_for('web.tempest_list') }}">
+    <h3>Tempest weather stations</h3>
+    <p class="muted">WeatherFlow Tempest hubs heard over UDP (temperature, wind, rain, lightning, …).</p>
+    <span class="badge off">{{ counts.tempest }} station{{ '' if counts.tempest == 1 else 's' }}</span>
+  </a>
   <a class="card setup-card" href="{{ url_for('web.storage') }}">
     <h3>Storage</h3>
     <p class="muted">Database size, rows per monitor, retention.</p>

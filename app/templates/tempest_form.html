@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}{{ "New" if is_new else "Edit" }} Tempest Station — Spot{% endblock %}
+{% block content %}
+<h1>{{ "New" if is_new else "Edit" }} Tempest Station</h1>
+<form method="post" class="form">
+  <label>Name
+    <input type="text" name="name" required maxlength="120" value="{{ station.name if station else '' }}"
+           placeholder="e.g. Roof Weather Station">
+  </label>
+  <label>Description
+    <textarea name="description" rows="2">{{ station.description if station and station.description else '' }}</textarea>
+  </label>
+
+  <label>UDP port
+    <input type="number" name="port" min="1" max="65535" required
+           value="{{ station.port if station else default_port }}">
+    <small class="muted">
+      The Tempest hub broadcasts on <strong>{{ default_port }}</strong>. If the hub is on
+      another network and a router forwards its packets to this server, use whatever
+      destination port the router sends them to. Each station needs its own port.
+    </small>
+  </label>
+
+  <label>Accept only these serial numbers (optional)
+    <input type="text" name="serials" value="{{ station.serials if station and station.serials else '' }}"
+           placeholder="e.g. ST-00012345, HB-00067890">
+    <small class="muted">
+      Comma-separated device (<code>ST-…</code>, <code>AR-…</code>, <code>SK-…</code>) and/or
+      hub (<code>HB-…</code>) serial numbers. A message is accepted when either its device or
+      its hub serial is listed. Leave blank to accept everything arriving on the port. The
+      station page lists the serial numbers it has heard from.
+    </small>
+  </label>
+
+  <label class="checkbox">
+    <input type="checkbox" name="enabled" {% if (not station) or station.enabled %}checked{% endif %}>
+    Enabled
+  </label>
+
+  <div class="row">
+    <button type="submit" class="primary">Save</button>
+    <a href="{{ url_for('web.tempest_detail', sid=station.id) if station else url_for('web.tempest_list') }}" class="button">Cancel</a>
+  </div>
+</form>
+{% if is_new %}
+<p class="muted">
+  After saving, the station page shows every value the hub is sending; add a monitor
+  for each one you want to keep from there.
+</p>
+{% endif %}
+{% endblock %}

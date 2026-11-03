@@ -12,6 +12,7 @@ from .janitor import JanitorThread
 from .logging_config import configure_logging, load_stored_settings
 from .listeners import ListenerManager
 from .modbus import ModbusManager
+from .tempest import TempestManager
 from .util import format_local, parse_iso_ts, set_display_timezone
 from .version import __version__
 
@@ -32,9 +33,11 @@ def create_app(config: Config | None = None) -> Flask:
 
     manager = ListenerManager(cfg)
     modbus = ModbusManager(cfg)
+    tempest = TempestManager(cfg)
     janitor = JanitorThread(cfg.janitor_interval_seconds, cfg.default_retention_days)
     app.config["SPOT_LISTENERS"] = manager
     app.config["SPOT_MODBUS"] = modbus
+    app.config["SPOT_TEMPEST"] = tempest
     app.config["SPOT_JANITOR"] = janitor
     alerts = AlertEngine(cfg)
     show_reporter = ShowReporter(cfg)
@@ -90,6 +93,7 @@ def create_app(config: Config | None = None) -> Flask:
 
     manager.start_enabled()
     modbus.start_enabled()
+    tempest.start_enabled()
     janitor.start()
     alerts.start()
     show_reporter.start()
@@ -101,6 +105,7 @@ def create_app(config: Config | None = None) -> Flask:
         alerts.stop()
         show_reporter.stop()
         modbus.shutdown()
+        tempest.shutdown()
         manager.shutdown()
         # Let an in-progress pass (an alert, a report callback) finish before the
         # database engine goes away.

@@ -2,7 +2,7 @@
 
 **Data acquisition, down to the last spot.**
 
-Current version: **1.9.0** — see [CHANGELOG.md](CHANGELOG.md). The running
+Current version: **1.12.0** — see [CHANGELOG.md](CHANGELOG.md). The running
 version is shown in the web UI footer, logged at startup, and stamped on every
 PDF report.
 
@@ -30,6 +30,9 @@ and lets you browse, query, graph, and export the data.
   - **Modbus** — Spot polls a Modbus TCP device (Function Code 3, Read
     Holding Registers) on a configurable interval and decodes one or more
     values per cycle. See [Modbus devices](#modbus-devices) below.
+  - **Tempest** — Spot listens for a WeatherFlow Tempest weather station's
+    UDP broadcasts and records the sensor values you choose, in the units
+    you choose. See [Tempest weather stations](#tempest-weather-stations).
   TCP/UDP ports are **auto-assigned** from the **6101–6199** range; Spot
   vibe-checks bindability before claiming one. The user can't pick a port.
 - **Event markers** — push a label string (`"Show Start"`, `"Fire Alarm"`)
@@ -276,6 +279,7 @@ Open `SPOT_WEB_PORT` plus the TCP/UDP monitor port range (6101–6199):
 sudo ufw allow 6100/tcp           # web UI / HTTP ingest
 sudo ufw allow 6101:6199/tcp      # TCP monitors (auto-assigned in this range)
 sudo ufw allow 6101:6199/udp      # UDP monitors (auto-assigned in this range)
+sudo ufw allow 50222/udp          # Tempest weather station broadcasts (if used)
 ```
 
 ### 9. Syslog
@@ -345,6 +349,7 @@ migration.
 | `/setup/units` | Setup → Units | Which units are sound levels (get Leq / L10 / L90, used for show start/end detection) |
 | `/setup/logging` | Setup → Logging & syslog | Syslog destination / transport / app name / facility, what to log, recent log |
 | `/modbus`, `/modbus/new`, `/modbus/<id>` | Setup → Modbus devices | Polled Modbus TCP sensors |
+| `/tempest`, `/tempest/new`, `/tempest/<id>` | Setup → Tempest weather stations | Tempest hubs heard over UDP; live view of what each is sending |
 | `/storage` | Setup → Storage | Database size and rows per monitor |
 | `/api/v1/…` | — | External API, see [docs/API.md](docs/API.md) |
 | `/api/ingest/<token>`, `/api/event/<token>` | — | Push readings / events in (see *Push data* below) |
@@ -806,6 +811,107 @@ their dashboards.
 3. The poller starts immediately if the device is enabled. **Poll now** on
    the device page does a one-shot read so you can confirm the wiring.
 
+### Tempest weather stations
+
+A [WeatherFlow Tempest](https://tempestwx.com) hub broadcasts every reading
+it gets from its sensors as JSON over UDP on the local network (port
+**50222**; the message formats are in the
+[Tempest UDP reference](https://apidocs.tempestwx.com/reference/tempest-udp-broadcast)).
+Spot's Tempest support is a **Tempest station** entity — one UDP port to
+listen on — plus Monitors of listener type `TEMPEST` that each record one
+value from those messages.
+
+#### Add a station
+
+**Setup → Tempest weather stations → New Tempest station**:
+
+| Field | Default | Notes |
+|-------|---------|-------|
+| UDP port | `50222` | The port the hub broadcasts on. If the hub is on another VLAN and your router forwards its packets to the Spot server, enter whatever destination port the router uses. Each station needs its own port; the 6101–6199 range and Spot's web port are refused. |
+| Accept only these serial numbers | blank | Comma-separated device (`ST-…`, `AR-…`, `SK-…`) and/or hub (`HB-…`) serials. A message is accepted when either its device or its hub serial is listed; blank accepts everything that arrives on the port. |
+
+Save, and the station page shows what is arriving: how many messages, when
+the last one came and from which address, which devices have been heard,
+and a table of **every value the hub can send with the latest reading** (in
+the hub's own metric units), refreshed every 5 seconds. Nothing is stored
+until a Monitor is bound, so this is the place to confirm packets are
+reaching the server before going further.
+
+#### Choose what to record
+
+Click **Add monitor** beside a value on the station page — the monitor form
+opens pre-filled — or create a Monitor by hand with listener type
+`TEMPEST`, pick the station and the **sensor value**, and choose **Store
+as**: the unit the readings are kept in, which becomes the monitor's unit.
+The hub sends metric; Spot converts on the way in:
+
+| Hub sends | Can be stored as |
+|-----------|------------------|
+| °C (air temperature, dew point) | °C, °F |
+| m/s (wind lull / average / gust, rapid wind) | m/s, mph, km/h, kn |
+| mb (station pressure) | mb, hPa, inHg |
+| mm (rain in the last minute) | mm, in |
+| km (lightning strike distance) | km, mi |
+
+The values available, by message:
+
+- **Tempest observation** (`obs_st`, every minute): wind lull / average /
+  gust / direction, station pressure, air temperature, relative humidity,
+  illuminance, UV index, solar radiation, rain in the last minute,
+  precipitation type (0 none, 1 rain, 2 hail, 3 both), lightning strike
+  count and average distance, battery, and a **calculated dew point**.
+- **Rapid wind** (`rapid_wind`, every 3 seconds): wind speed and direction.
+- **Lightning strike event** (`evt_strike`): strike distance and energy,
+  stored with the label *Lightning strike* so each one is also an event
+  marker on charts.
+- **Rain start event** (`evt_precip`): an event marker (*Rain started*)
+  with no number.
+- **AIR** and **SKY observations** (`obs_air`, `obs_sky`): the same kinds
+  of values for the older two-piece Smart Weather Station.
+- **Device status** (every minute): sensor battery voltage, sensor and hub
+  radio signal (RSSI), sensor uptime, sensor status flags.
+- **Hub status** (every 10 seconds): hub Wi-Fi signal (RSSI) and uptime.
+
+Each monitor is otherwise an ordinary Monitor: its own colour, location,
+category (the pre-filled form suggests *Weather*), rounding (1 decimal by
+default for converted values), retention, alerts, dashboard, reports and
+API access. Readings carry the hub's own timestamp when it is within 5
+minutes of the server clock, and the arrival time otherwise; a message
+that carries several observations (the hub catching up) files each at its
+own time. Monitors stop counting as stale after 3× their message interval
+(3 minutes for observations, 30 seconds for hub status); event monitors
+never do, since strikes and rain may be weeks apart.
+
+#### Forwarding from another VLAN
+
+The hub only broadcasts on its own subnet. If the Spot server is elsewhere,
+have the router forward the broadcasts to the server as unicast. On a
+MikroTik, for example (hub VLAN interface `vlan-iot`, Spot at
+`10.201.3.50`):
+
+```
+/ip firewall nat add chain=dstnat in-interface=vlan-iot protocol=udp dst-port=50222 \
+    action=dst-nat to-addresses=10.201.3.50 to-ports=50222
+```
+
+Forwarded packets arrive with the hub's address as the source, which the
+station page shows under *Last message*, and a different `to-ports` lets
+several hubs on different VLANs land on different stations. Messages from
+another device on the same port are told apart by serial number.
+
+#### Listener behaviour
+
+For each enabled station one daemon thread binds `0.0.0.0:<port>` and, per
+datagram: parses the JSON, checks the serial filter, decodes every value
+in the message, updates the live table, and stores a reading on each bound
+monitor whose value is present. Bound monitors are re-read from the
+database every 10 seconds and immediately after a change in the UI. A port
+that is already in use is refused on the form; a listener that fails to
+bind at start-up logs the error (category *Listeners, Modbus & Tempest*)
+and the station page shows it as *stopped*. Datagrams that aren't JSON are
+logged as warnings; messages from unlisted devices and unknown message
+types are counted as *ignored* and otherwise dropped.
+
 ### Reports
 
 `/reports` (the old `/overlay` URL redirects here) is where multi-monitor
@@ -891,9 +997,9 @@ end with `[src=<client IP>]`, so UI changes and API calls are attributable.
 | API requests | info | one line per `/api/v1` call: method, path, status, time, size, API key name, source IP (4xx as warning, 5xx as error); shows created / changed / deleted via the API |
 | Security | info | rejected or disabled API keys, refused cross-site form posts, ingest from outside `SPOT_INGEST_ALLOW` |
 | Data ingest | warning | malformed payloads; at *Debug* every accepted reading (busy!) |
-| Changes in the web UI | info | monitors, shows, Modbus devices, API keys, acknowledgements and settings created / changed / deleted |
+| Changes in the web UI | info | monitors, shows, Modbus devices, Tempest stations, API keys, acknowledgements and settings created / changed / deleted |
 | Show reports & webhooks | info | show report deliveries to callback URLs and their retries |
-| Listeners & Modbus | info | TCP/UDP listeners starting / stopping / failing to bind; Modbus read and decode errors |
+| Listeners, Modbus & Tempest | info | TCP/UDP and Tempest listeners starting / stopping / failing to bind; Modbus read and decode errors; Tempest datagrams that aren't JSON |
 | Exports | info | CSV and PDF downloads (which monitors, which range) |
 | System | info | start-up, database schema, retention purges |
 
@@ -907,7 +1013,7 @@ logging in to the server. It starts empty after a restart.
 Under the hood these are Python loggers under `spot.*` (`spot.alerts`,
 `spot.api.access`, `spot.api.v1`, `spot.security`, `spot.ingest`,
 `spot.api`, `spot.web`, `spot.shows`, `spot.notify`, `spot.listeners`,
-`spot.modbus`, `spot.data`, `spot.db`, `spot.janitor`); the category map is
+`spot.modbus`, `spot.tempest`, `spot.data`, `spot.db`, `spot.janitor`); the category map is
 in `app/logging_config.py`.
 
 ---
@@ -924,6 +1030,10 @@ Browser ──► Flask (web UI, /api/ingest, /api/event, /data/...)
                 ├── ModbusManager
                 │     └── ModbusPoller thread (per enabled Modbus device)
                 │           ↳ Reads FC3, dispatches to bound Monitors
+                │
+                ├── TempestManager
+                │     └── TempestListener thread (per enabled Tempest station)
+                │           ↳ Decodes hub UDP messages, dispatches to bound Monitors
                 │
                 ├── JanitorThread (single, periodic retention enforcement)
                 │
@@ -973,7 +1083,12 @@ CREATE SCHEMA spot AUTHORIZATION spot_user;
 ### Code layout notes
 
 - `app/workers.py` — `WorkerRegistry`, the one-thread-per-id bookkeeping
-  used by both the TCP/UDP `ListenerManager` and the `ModbusManager`.
+  used by the TCP/UDP `ListenerManager`, the `ModbusManager` and the
+  `TempestManager`.
+- `app/tempest.py` — the Tempest message catalogue (`FIELDS`: which index
+  of which message is which value, its unit and conversions), the decoder,
+  and the listener. To support a new hub message, add a `MessageType` and
+  its `Field`s there; the forms and station page pick them up.
 - `app/db.py` — to add a column to an existing table, append a line to
   `_ADDED_COLUMNS`; it is applied idempotently on every start.
 - `app/routes/web.py` — form handlers validate with `_form_str` /
