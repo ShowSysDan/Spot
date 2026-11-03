@@ -283,8 +283,9 @@
   // ---- Data gaps. A chart line drawn straight across a stretch with no
   // readings looks like a steady value; instead the line is broken there and
   // the stretch shaded. A gap is a pause much longer than the sensor's usual
-  // spacing: more than 5× the median interval, at least 3 buckets when the
-  // series is downsampled, and never under 30 s.
+  // spacing: more than 5× the median interval and 2× the 95th-percentile
+  // interval, at least 3 buckets when the series is downsampled, and never
+  // under 30 s.
   function findGaps(points, opts) {
     const o = Object.assign({ bucketMs: 0, start: null, end: null }, opts);
     const xs = points.map(p => p.x);
@@ -294,7 +295,13 @@
       for (let i = 1; i < xs.length; i++) d.push(xs[i] - xs[i - 1]);
       const sorted = [...d].sort((a, b) => a - b);
       const median = sorted[Math.floor(sorted.length / 2)];
-      const limit = Math.max(5 * median, 3 * o.bucketMs, 30e3);
+      // A sensor that sends in bursts (ten readings at once every five
+      // minutes) has a near-zero median spacing, which would mark every
+      // pause between bursts as an outage. The 95th-percentile spacing is
+      // the burst cadence there, while a real outage (a rare, long pause)
+      // stays above it.
+      const p95 = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))];
+      const limit = Math.max(5 * median, 2 * p95, 3 * o.bucketMs, 30e3);
       for (let i = 0; i < d.length; i++) if (d[i] > limit) gaps.push([xs[i], xs[i + 1]]);
       // Edges: nothing yet at the start of the window / nothing lately.
       if (o.start != null && xs[0] - o.start > limit) gaps.unshift([o.start, xs[0]]);
