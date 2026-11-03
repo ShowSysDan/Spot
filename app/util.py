@@ -180,8 +180,10 @@ def format_bytes(n: int | float | None) -> str:
     if n is None:
         return "—"
     n = float(n)
-    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
-        if n < 1024 or unit == "TiB":
-            return f"{n:.1f} {unit}" if unit != "B" else f"{int(n)} B"
+    if n < 1024:
+        return f"{int(n)} B"
+    for unit in ("KiB", "MiB", "GiB", "TiB"):
         n /= 1024
-    return f"{n:.1f} TiB"
+        if n < 1024 or unit == "TiB":
+            break
+    return f"{n:.1f} {unit}"

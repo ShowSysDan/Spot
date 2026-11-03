@@ -24,6 +24,11 @@ MAX_POINTS_CAP = 10_000
 PDF_MAX_POINTS = 4_000
 # Event markers returned per series request (most recent kept).
 MAX_EVENTS = 500
+# A request that doesn't ask for downsampling still never gets more raw
+# readings than this in one response; past it the series is bucketed as if
+# max_points had been given. Without it, a year of 1 Hz data for 50 monitors
+# would be loaded into memory at once.
+RAW_POINTS_LIMIT = 100_000
 
 
 def range_clause(mid: int, start: datetime, end: datetime):
@@ -46,34 +51,35 @@ def fetch_points(s: Session, mid: int, start: datetime, end: datetime,
     the range holds more than `max_points` readings they are averaged into
     fixed-width time buckets instead: {ts (bucket midpoint), value (avg),
     min, max, n}, and bucket_seconds says how wide each bucket is.
+    `max_points=None` means "raw if at all reasonable": RAW_POINTS_LIMIT.
     """
     where = range_clause(mid, start, end) & Reading.value.is_not(None)
-    if max_points:
-        # Only "more than max_points or not?" matters, so stop counting there
-        # instead of counting millions of rows.
-        probe = select(Reading.id).where(where).limit(max_points + 1).subquery()
-        n = s.execute(select(func.count()).select_from(probe)).scalar_one()
-        if n > max_points:
-            span = (end - start).total_seconds()
-            bucket = max(1, math.ceil(span / max_points))
-            b = bucket_expr(bucket).label("b")
-            rows = s.execute(
-                select(b, func.avg(Reading.value), func.min(Reading.value),
-                       func.max(Reading.value), func.count())
-                .where(where).group_by(b).order_by(b)
-            ).all()
-            half = bucket / 2
-            return [
-                {"ts": datetime.fromtimestamp(float(r[0]) + half, tz=timezone.utc),
-                 "value": float(r[1]), "min": float(r[2]), "max": float(r[3]),
-                 "n": int(r[4])}
-                for r in rows
-            ], bucket
+    max_points = max_points or RAW_POINTS_LIMIT
+    # Only "more than max_points or not?" matters, so stop counting there
+    # instead of counting millions of rows.
+    probe = select(Reading.id).where(where).limit(max_points + 1).subquery()
+    n = s.execute(select(func.count()).select_from(probe)).scalar_one()
+    if n <= max_points:
+        rows = s.execute(
+            select(Reading.ts, Reading.value, Reading.label)
+            .where(where).order_by(Reading.ts.asc())
+        ).all()
+        return [{"ts": r.ts, "value": r.value, "label": r.label} for r in rows], None
+    span = (end - start).total_seconds()
+    bucket = max(1, math.ceil(span / max_points))
+    b = bucket_expr(bucket).label("b")
     rows = s.execute(
-        select(Reading.ts, Reading.value, Reading.label)
-        .where(where).order_by(Reading.ts.asc())
+        select(b, func.avg(Reading.value), func.min(Reading.value),
+               func.max(Reading.value), func.count())
+        .where(where).group_by(b).order_by(b)
     ).all()
-    return [{"ts": r.ts, "value": r.value, "label": r.label} for r in rows], None
+    half = bucket / 2
+    return [
+        {"ts": datetime.fromtimestamp(float(r[0]) + half, tz=timezone.utc),
+         "value": float(r[1]), "min": float(r[2]), "max": float(r[3]),
+         "n": int(r[4])}
+        for r in rows
+    ], bucket
 
 
 def fetch_events(s: Session, mid: int, start: datetime, end: datetime,

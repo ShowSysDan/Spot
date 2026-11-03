@@ -102,13 +102,30 @@ _FONT = _register_fonts()
 _TAGLINE = "Data acquisition, down to the last spot."
 
 
+# A cell starting with one of these is run as a formula by Excel / LibreOffice
+# / Google Sheets. Labels arrive from the network, so a crafted one (e.g.
+# =HYPERLINK(...)) must reach the spreadsheet as plain text.
+_FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_text(v) -> str:
+    """Free text for a CSV cell, neutralised against formula injection by a
+    leading apostrophe (OWASP's recommendation; spreadsheets hide it)."""
+    if v is None:
+        return ""
+    text = str(v)
+    return "'" + text if text.startswith(_FORMULA_START) else text
+
+
 def iter_csv(rows, include_monitor: bool = False, chunk_rows: int = 2000):
     """Yield CSV text in chunks, timestamps in the server's local timezone
     (ISO-8601 with offset). Rows are (ts, value, label) or, with
     include_monitor, (ts, monitor_name, unit, value, label).
 
     Lines are buffered `chunk_rows` at a time so a streamed export never
-    holds more than one chunk in memory.
+    holds more than one chunk in memory. Text columns (monitor, unit,
+    label) are protected against spreadsheet formula injection; numbers
+    are written as-is.
     """
     buf = io.StringIO()
     w = csv.writer(buf)
@@ -118,8 +135,8 @@ def iter_csv(rows, include_monitor: bool = False, chunk_rows: int = 2000):
     for row in rows:
         ts, *lead, value, label = row
         local = to_local(ts)
-        w.writerow([local.isoformat() if local else "", *lead,
-                    "" if value is None else value, label or ""])
+        w.writerow([local.isoformat() if local else "", *(_csv_text(x) for x in lead),
+                    "" if value is None else value, _csv_text(label)])
         n += 1
         if n >= chunk_rows:
             yield buf.getvalue()

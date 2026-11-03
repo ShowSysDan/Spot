@@ -17,6 +17,7 @@ import logging
 import socket
 import struct
 import threading
+import time
 from typing import Optional
 
 from .config import Config
@@ -98,22 +99,37 @@ def parse_response(data: bytes, tid: int) -> list[int]:
     return list(struct.unpack(f">{byte_count // 2}H", data[9:9 + byte_count]))
 
 
-def _read_full_frame(sock: socket.socket) -> bytes:
-    """Read one complete Modbus TCP frame (MBAP header + body)."""
-    header = b""
-    while len(header) < 6:
-        chunk = sock.recv(6 - len(header))
-        if not chunk:
-            raise ModbusError("connection closed before header")
-        header += chunk
+# Largest MBAP "length" a Modbus TCP frame can carry (unit id + 253-byte PDU).
+MAX_MBAP_LENGTH = 254
+
+
+def _read_full_frame(sock: socket.socket, timeout: float) -> bytes:
+    """Read one complete Modbus TCP frame (MBAP header + body).
+
+    `timeout` bounds the whole read, not just each recv(), so a device that
+    trickles bytes can't hold the poller indefinitely; a header announcing
+    more than a Modbus frame can hold is refused rather than waited for.
+    """
+    deadline = time.monotonic() + timeout
+
+    def recv_exact(n: int, what: str) -> bytes:
+        buf = b""
+        while len(buf) < n:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise ModbusError(f"timed out reading {what}")
+            sock.settimeout(left)
+            chunk = sock.recv(n - len(buf))
+            if not chunk:
+                raise ModbusError(f"connection closed before {what}")
+            buf += chunk
+        return buf
+
+    header = recv_exact(6, "header")
     length = struct.unpack(">H", header[4:6])[0]
-    body = b""
-    while len(body) < length:
-        chunk = sock.recv(length - len(body))
-        if not chunk:
-            raise ModbusError("connection closed mid-frame")
-        body += chunk
-    return header + body
+    if not 2 <= length <= MAX_MBAP_LENGTH:
+        raise ModbusError(f"invalid frame length {length}")
+    return header + recv_exact(length, "end of frame")
 
 
 def read_holding_registers(host: str, port: int, slave: int, addr: int, qty: int,
@@ -124,7 +140,7 @@ def read_holding_registers(host: str, port: int, slave: int, addr: int, qty: int
     try:
         sock.connect((host, port))
         sock.sendall(build_read_holding(slave, addr, qty, tid))
-        resp = _read_full_frame(sock)
+        resp = _read_full_frame(sock, timeout)
     finally:
         try:
             sock.close()

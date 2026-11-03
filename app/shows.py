@@ -176,6 +176,7 @@ def deliver_show(cfg: Config, show_id: int, now: datetime | None = None,
     """
     now = now or datetime.now(timezone.utc)
     errors: list[str] = []
+    early = False  # before the report is due (a manual preview); set below
     try:
         with session_scope() as s:
             show = s.get(Show, show_id)
@@ -206,7 +207,6 @@ def deliver_show(cfg: Config, show_id: int, now: datetime | None = None,
     except Exception as e:  # never leave a show stuck without recording the attempt
         log.exception("show report build/send failed show_id=%d", show_id)
         errors.append(f"internal error: {e.__class__.__name__}: {e}")
-        early = False
 
     with session_scope() as s:
         show = s.get(Show, show_id)

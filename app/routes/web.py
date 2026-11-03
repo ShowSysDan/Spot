@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import logging
 import math
 import re
@@ -9,6 +10,7 @@ from urllib.parse import urlsplit
 from flask import (Blueprint, Response, abort, current_app, flash, jsonify, redirect,
                    render_template, request, url_for)
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 
 from ..db import session_scope
 from ..janitor import clear_monitor, effective_retention, purge_monitor
@@ -75,6 +77,10 @@ def _same_origin_posts():
     """
     if request.method in ("GET", "HEAD", "OPTIONS"):
         return None
+    # Modern browsers say outright where a request came from.
+    if request.headers.get("Sec-Fetch-Site", "").lower() == "cross-site":
+        security_log.warning("refused cross-site %s %s (Sec-Fetch-Site)", request.method, request.path)
+        abort(403, description="Cross-site form submissions are not allowed.")
     source = request.headers.get("Origin") or request.headers.get("Referer")
     if not source:
         return None
@@ -85,6 +91,69 @@ def _same_origin_posts():
 
 
 VALID_LISTENER_TYPES = ("http", "tcp", "udp", "modbus", "tempest")
+
+
+# ---------------------------------------------------------------------------
+# Form helpers
+# ---------------------------------------------------------------------------
+
+class _FormError(Exception):
+    """Validation failure: flashed to the user, who is sent back to the form."""
+
+
+def _form_view(fn):
+    """Form POST handler: a `_FormError` (failed validation) or a database
+    uniqueness clash (e.g. a name already taken, or two saves racing for one
+    port) is flashed and the user is sent back to the form, instead of a 500."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except _FormError as e:
+            flash(str(e), "error")
+        except IntegrityError as e:
+            log.warning("form save refused by database constraint path=%s: %s",
+                        request.path, one_line(str(e.orig) if e.orig else str(e))[:300])
+            flash("That clashes with something that already exists "
+                  "(names must be unique). Nothing was saved.", "error")
+        return redirect(request.url)
+    return wrapper
+
+
+def _form_str(name: str, default: str = "") -> str:
+    return (request.form.get(name) or default).strip()
+
+
+def _form_int(name: str, default: str | None, error: str) -> int | None:
+    """Integer field. A missing/empty field falls back to `default`; with no
+    default the field is optional and blank means None."""
+    raw = _form_str(name, default or "")
+    if raw == "":
+        if default is None:
+            return None
+        raise _FormError(error)  # whitespace-only value for a required field
+    try:
+        return int(raw)
+    except ValueError:
+        raise _FormError(error) from None
+
+
+def _form_float(name: str, error: str) -> float | None:
+    """Optional decimal field; blank means None."""
+    raw = _form_str(name)
+    if raw == "":
+        return None
+    try:
+        v = float(raw)
+    except ValueError:
+        raise _FormError(error) from None
+    _check(math.isfinite(v), error)
+    return v
+
+
+def _check(ok: bool, error: str) -> None:
+    if not ok:
+        raise _FormError(error)
 
 
 def _safe_next() -> str | None:
@@ -402,15 +471,8 @@ def _alert_action_form(aid: int | None):
                            placeholders=alert_actions.PLACEHOLDERS)
 
 
+@_form_view
 def _save_alert_action(aid: int | None):
-    try:
-        return _save_alert_action_checked(aid)
-    except _FormError as e:
-        flash(str(e), "error")
-        return redirect(request.url)
-
-
-def _save_alert_action_checked(aid: int | None):
     name = _form_str("name")[:120]
     protocol = _form_str("protocol", "http")
     kind = _form_str("kind") or None
@@ -585,50 +647,47 @@ def _form_ts(name: str, label: str) -> datetime:
         raise _FormError(f"{label} is not a valid date and time.") from None
 
 
+@_form_view
 def _save_show(sid: int | None):
-    try:
-        name = one_line(_form_str("name"))
-        _check(bool(name), "Name is required.")
-        starts_at = _form_ts("start", "Start")
-        ends_at = _form_ts("end", "End")
-        _check(ends_at > starts_at, "End must be after start.")
-        _check((ends_at - starts_at).total_seconds() <= MAX_SHOW_SECONDS,
-               "A show can be at most 7 days long.")
-        ids = [int(x) for x in request.form.getlist("ids") if x.isdigit()]
-        _check(bool(ids), "Pick at least one monitor.")
-        callback = _form_str("callback_url") or None
-        window = _form_int("detect_window_minutes", "15", "Search window must be a whole number of minutes.")
-        _check(1 <= window <= 60, "Search window must be 1–60 minutes.")
-        min_step = _form_float("detect_min_step", "Minimum step must be a number.") or 6.0
-        _check(0.5 <= min_step <= 60, "Minimum step must be 0.5–60 dB.")
-        ref = _form_int("detect_monitor_id", None, "Invalid reference monitor.")
-        problem = callback_url_problem(callback, current_app.config["SPOT"]) if callback else None
-        _check(problem is None, (problem or "").replace("callback_url", "Callback URL"))
-        with session_scope() as s:
-            show = Show(source="ui") if sid is None else _get_show_or_404(s, sid)
-            show.name = name[:200]
-            show.starts_at, show.ends_at = starts_at, ends_at
-            show.notes = _form_str("notes") or None
-            show.callback_url = callback
-            show.auto_detect = bool(request.form.get("auto_detect"))
-            show.detect_window_minutes = window
-            show.detect_min_step = min_step
-            show.detect_monitor_id = ref if ref in ids else None
-            show.monitors = list(s.scalars(select(Monitor).where(Monitor.id.in_(ids))))
-            # Any edit re-arms report delivery for after the show ends.
-            show.delivered_at = None
-            show.delivery_attempts = 0
-            show.delivery_status = None
-            show.next_attempt_at = None
-            s.add(show)
-            s.flush()
-            new_id = show.id
-            log.info("show %s: %s id=%d %s → %s monitors=%s",
-                     "created" if sid is None else "updated", show.name, show.id,
-                     starts_at.isoformat(), ends_at.isoformat(), ids)
-    except _FormError as e:
-        flash(str(e), "error")
-        return redirect(request.url)
+    name = one_line(_form_str("name"))
+    _check(bool(name), "Name is required.")
+    starts_at = _form_ts("start", "Start")
+    ends_at = _form_ts("end", "End")
+    _check(ends_at > starts_at, "End must be after start.")
+    _check((ends_at - starts_at).total_seconds() <= MAX_SHOW_SECONDS,
+           "A show can be at most 7 days long.")
+    ids = [int(x) for x in request.form.getlist("ids") if x.isdigit()]
+    _check(bool(ids), "Pick at least one monitor.")
+    callback = _form_str("callback_url") or None
+    window = _form_int("detect_window_minutes", "15", "Search window must be a whole number of minutes.")
+    _check(1 <= window <= 60, "Search window must be 1–60 minutes.")
+    min_step = _form_float("detect_min_step", "Minimum step must be a number.") or 6.0
+    _check(0.5 <= min_step <= 60, "Minimum step must be 0.5–60 dB.")
+    ref = _form_int("detect_monitor_id", None, "Invalid reference monitor.")
+    problem = callback_url_problem(callback, current_app.config["SPOT"]) if callback else None
+    _check(problem is None, (problem or "").replace("callback_url", "Callback URL"))
+    with session_scope() as s:
+        show = Show(source="ui") if sid is None else _get_show_or_404(s, sid)
+        show.name = name[:200]
+        show.starts_at, show.ends_at = starts_at, ends_at
+        show.notes = _form_str("notes") or None
+        show.callback_url = callback
+        show.auto_detect = bool(request.form.get("auto_detect"))
+        show.detect_window_minutes = window
+        show.detect_min_step = min_step
+        show.detect_monitor_id = ref if ref in ids else None
+        show.monitors = list(s.scalars(select(Monitor).where(Monitor.id.in_(ids))))
+        # Any edit re-arms report delivery for after the show ends.
+        show.delivered_at = None
+        show.delivery_attempts = 0
+        show.delivery_status = None
+        show.next_attempt_at = None
+        s.add(show)
+        s.flush()
+        new_id = show.id
+        log.info("show %s: %s id=%d %s → %s monitors=%s",
+                 "created" if sid is None else "updated", show.name, show.id,
+                 starts_at.isoformat(), ends_at.isoformat(), ids)
     flash("Show saved.", "success")
     return redirect(url_for("web.show_detail", sid=new_id))
 
@@ -1180,15 +1239,8 @@ def tempest_toggle(sid: int):
     return redirect(url_for("web.tempest_detail", sid=info["id"]))
 
 
+@_form_view
 def _save_tempest_station(sid: int | None):
-    try:
-        return _save_tempest_station_checked(sid)
-    except _FormError as e:
-        flash(str(e), "error")
-        return redirect(request.url)
-
-
-def _save_tempest_station_checked(sid: int | None):
     cfg = current_app.config["SPOT"]
     name = _form_str("name")[:120]
     description = _form_str("description") or None
@@ -1224,19 +1276,25 @@ def _save_tempest_station_checked(sid: int | None):
 
     fields = dict(name=name, description=description, port=port, serials=serials,
                   enabled=enabled)
-    with session_scope() as s:
-        if sid is None:
-            st = TempestStation(**fields)
-            s.add(st)
-            s.flush()
-        else:
-            st = get_tempest_station_or_404(s, sid)
-            for k, v in fields.items():
-                setattr(st, k, v)
-        info = tempest_station_view(st)
-        log.info("tempest station %s: %s id=%d port=%d serials=%s",
-                 "created" if sid is None else "updated", info["name"], info["id"],
-                 info["port"], info["serials"] or "any")
+    try:
+        with session_scope() as s:
+            if sid is None:
+                st = TempestStation(**fields)
+                s.add(st)
+                s.flush()
+            else:
+                st = get_tempest_station_or_404(s, sid)
+                for k, v in fields.items():
+                    setattr(st, k, v)
+            info = tempest_station_view(st)
+    except Exception:
+        # Nothing was saved: put the old listener back the way it was.
+        if old is not None and old["enabled"]:
+            _tempest().start_station(old["id"], old["name"], old["port"], old["serials"])
+        raise
+    log.info("tempest station %s: %s id=%d port=%d serials=%s",
+             "created" if sid is None else "updated", info["name"], info["id"],
+             info["port"], info["serials"] or "any")
     if info["enabled"]:
         _tempest().start_station(info["id"], info["name"], info["port"], info["serials"])
     flash("Tempest station saved.", "success")
@@ -1259,59 +1317,8 @@ def _validate_tempest_monitor(s, station_id: int | None, field_key: str | None,
     return ""
 
 
-# ---------------------------------------------------------------------------
-# Form helpers
-# ---------------------------------------------------------------------------
-
-class _FormError(Exception):
-    """Validation failure: flashed to the user, who is sent back to the form."""
-
-
-def _form_str(name: str, default: str = "") -> str:
-    return (request.form.get(name) or default).strip()
-
-
-def _form_int(name: str, default: str | None, error: str) -> int | None:
-    """Integer field. A missing/empty field falls back to `default`; with no
-    default the field is optional and blank means None."""
-    raw = _form_str(name, default or "")
-    if raw == "":
-        if default is None:
-            return None
-        raise _FormError(error)  # whitespace-only value for a required field
-    try:
-        return int(raw)
-    except ValueError:
-        raise _FormError(error) from None
-
-
-def _form_float(name: str, error: str) -> float | None:
-    """Optional decimal field; blank means None."""
-    raw = _form_str(name)
-    if raw == "":
-        return None
-    try:
-        v = float(raw)
-    except ValueError:
-        raise _FormError(error) from None
-    _check(math.isfinite(v), error)
-    return v
-
-
-def _check(ok: bool, error: str) -> None:
-    if not ok:
-        raise _FormError(error)
-
-
+@_form_view
 def _save_modbus_device(did: int | None):
-    try:
-        return _save_modbus_device_checked(did)
-    except _FormError as e:
-        flash(str(e), "error")
-        return redirect(request.url)
-
-
-def _save_modbus_device_checked(did: int | None):
     name = _form_str("name")
     description = _form_str("description") or None
     host = _form_str("host")
@@ -1424,15 +1431,8 @@ def _validate_modbus_monitor(s, device_id: int | None, address: int | None,
     return ""
 
 
+@_form_view
 def _save_monitor(mid: int | None):
-    try:
-        return _save_monitor_checked(mid)
-    except _FormError as e:
-        flash(str(e), "error")
-        return redirect(request.url)
-
-
-def _save_monitor_checked(mid: int | None):
     cfg = current_app.config["SPOT"]
     name = _form_str("name")
     description = _form_str("description") or None

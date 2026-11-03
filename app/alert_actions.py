@@ -45,6 +45,11 @@ log = logging.getLogger("spot.alerts")
 PROTOCOLS = ("http", "tcp", "udp")
 HTTP_METHODS = ("POST", "PUT", "GET")
 SEND_TIMEOUT = 5
+# Most sends waiting at once (new ones and retries). Sends are one at a
+# time and a dead device can take SEND_TIMEOUT each, so a flapping monitor
+# with many actions could otherwise queue work faster than it drains; past
+# the cap the oldest waiting retries are dropped (and logged) first.
+MAX_QUEUED_JOBS = 1000
 
 PLACEHOLDERS = ("state", "on", "monitor", "monitor_id", "location", "unit", "kind",
                 "alert_id", "value", "threshold", "message", "time")
@@ -215,9 +220,23 @@ class ActionDispatcher(threading.Thread):
             self._jobs = [j for j in self._jobs
                           if not (j.alert_id == ev.alert_id and j.action_id in ids)]
             self._jobs.extend(Job(now, aid, ev.action, ev.alert_id, ctx) for aid in ids)
+            self._trim()
             self._jobs.sort()
             self._cond.notify()
         return len(ids)
+
+    def _trim(self) -> None:
+        """Keep the queue under MAX_QUEUED_JOBS (caller holds the lock):
+        drop retries first, oldest first, then the oldest first sends."""
+        excess = len(self._jobs) - MAX_QUEUED_JOBS
+        if excess <= 0:
+            return
+        order = sorted(range(len(self._jobs)),
+                       key=lambda i: (self._jobs[i].attempt == 0, self._jobs[i].due))
+        drop = set(order[:excess])
+        self._jobs = [j for i, j in enumerate(self._jobs) if i not in drop]
+        log.error("alert action queue full (%d); dropped %d waiting send(s)",
+                  MAX_QUEUED_JOBS, excess)
 
     def run(self) -> None:
         while True:
@@ -260,6 +279,7 @@ class ActionDispatcher(threading.Thread):
             job.due = time.monotonic() + a.retry_delay_seconds
             with self._cond:
                 self._jobs.append(job)
+                self._trim()
                 self._jobs.sort()
                 self._cond.notify()
 

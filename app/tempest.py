@@ -43,6 +43,12 @@ MONITOR_CACHE_SECONDS = 10
 # with the arrival time, so a hub with a wrong clock can't file readings in
 # the past or the future.
 MAX_CLOCK_SKEW_SECONDS = 300
+# Most devices remembered per station for its page. Serial numbers come from
+# the network, so without a cap anything that can send UDP to the port could
+# grow this without limit; the least recently heard device is forgotten.
+MAX_DEVICES = 64
+# Longest serial number / hub id kept (real ones are like ST-00012345).
+MAX_SERIAL_CHARS = 32
 
 
 # ---------------------------------------------------------------------------
@@ -247,11 +253,14 @@ def _num(v: Any) -> float | None:
 
 
 def dew_point(temp_c: float, rh: float) -> float | None:
-    """Magnus formula; good to about 0.4 °C in ordinary conditions."""
-    if rh <= 0:
+    """Magnus formula; good to about 0.4 °C in ordinary conditions. None for
+    readings it can't apply to (a dead or garbled sensor)."""
+    if not 0 < rh <= 100 or not -100 < temp_c < 100:
         return None
     a, b = 17.62, 243.12
     gamma = math.log(rh / 100.0) + a * temp_c / (b + temp_c)
+    if gamma >= a:
+        return None
     return b * gamma / (a - gamma)
 
 
@@ -447,16 +456,28 @@ class TempestListener(threading.Thread):
                       mtype, self.station_name, message.get("serial_number"),
                       message.get("hub_sn"))
             return
+        known = mtype in MESSAGE_TYPE_MAP
         decoded = decode(message, now)
         with self._lock:
-            self.by_type[mtype] = self.by_type.get(mtype, 0) + 1
+            if not known:
+                # Counted, but not by name: the type is whatever the sender
+                # wrote, and per-name counters would grow without bound.
+                self.ignored += 1
+            else:
+                self.by_type[mtype] = self.by_type.get(mtype, 0) + 1
             serial = message.get("serial_number")
-            if isinstance(serial, str):
+            if known and isinstance(serial, str) and serial.strip():
+                serial = serial.strip()[:MAX_SERIAL_CHARS]
+                hub = message.get("hub_sn")
+                self.devices.pop(serial, None)  # re-insert: dict order = recency
                 self.devices[serial] = {"type": mtype, "last": now,
-                                        "hub": message.get("hub_sn")}
+                                        "hub": hub.strip()[:MAX_SERIAL_CHARS]
+                                        if isinstance(hub, str) else None}
+                while len(self.devices) > MAX_DEVICES:
+                    self.devices.pop(next(iter(self.devices)))
             for d in decoded:
                 self.latest[d.key] = (d.value, d.ts)
-        if mtype not in MESSAGE_TYPE_MAP:
+        if not known:
             log.debug("tempest: unknown message type %r station=%s", mtype, self.station_name)
             return
         if not decoded:

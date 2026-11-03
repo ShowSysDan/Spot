@@ -3,6 +3,101 @@
 All notable changes to Spot. The version number lives in `app/version.py`
 and is bumped with every change.
 
+## 1.13.0 — 2026-11-03
+
+Security and robustness review. **No action needed to upgrade**: no new
+tables or columns, no new required settings, `requirements.txt` and
+`spot.service` are unchanged. `git pull` and restart as usual.
+
+### Security
+- **Outbound HTTP could read local files.** The sender behind the alert
+  webhook, alert actions and show-report callbacks was built with Python's
+  default opener, which also handles `file://`, `ftp://` and `data:` URLs —
+  a `file:///…` URL was opened and reported as delivered. Outbound requests
+  now go through one http(s)-only sender (`notify._send`) that still never
+  follows redirects and now also never raises on protocol errors (a bad
+  HTTP status line used to escape as an exception).
+- **Request bodies are capped at 2 MiB** (HTTP 413 beyond that). Before,
+  any client could make the server buffer an arbitrarily large body.
+- **Event labels and single messages are capped at 8 KiB on every input
+  path** (HTTP ingest/event now match the TCP/UDP listeners' existing cap),
+  so a value regex never scans an unbounded string. Value regexes are now
+  compiled once per pattern instead of per message.
+- **Cross-site request guard** also refuses POSTs that the browser marks
+  `Sec-Fetch-Site: cross-site` (in addition to the Origin/Referer check).
+- **New optional `SPOT_ALLOWED_HOSTS`** (blank = off, the previous
+  behaviour): requests addressed to any other host name get 421, which
+  blocks DNS-rebinding pages from driving the login-less UI.
+- **Security headers**: `X-Content-Type-Options: nosniff` and
+  `Referrer-Policy: same-origin` everywhere, and `X-Frame-Options:
+  SAMEORIGIN` on every page except `/wall` and monitor dashboards (which
+  stay embeddable in signage players / portals). The flash-message cookie is
+  `HttpOnly; SameSite=Lax`.
+- **Placeholder secret key**: if `SPOT_SECRET_KEY` is blank, `dev-secret`
+  or `please-change-me`, Spot now uses a random key per run and logs a
+  warning, instead of signing cookies with a publicly known key. (The key
+  only signs flash messages, so nothing else changes.)
+- **CSV formula injection**: text columns (monitor, unit, label) starting
+  with `=`, `+`, `-`, `@`, tab or CR are written with a leading `'` so
+  spreadsheets show them instead of executing them. Labels come from the
+  network, e.g. `=HYPERLINK(…)` over UDP. Numeric columns are unchanged.
+- `SPOT_DB_SCHEMA` containing a double quote is refused at start-up (it is
+  quoted into DDL).
+
+### Fixed
+- **NaN / Infinity readings were accepted** (`nan`, `inf`, `{"value":
+  "NaN"}`, a float32 Modbus register holding NaN) and stored. One such row
+  made every JSON response containing it invalid (browsers reject bare
+  `NaN`), breaking that monitor's charts, and poisoned averages and alerts.
+  They are now refused as malformed (400 over HTTP, logged for TCP / UDP /
+  Modbus). JSON responses also turn any non-finite number into `null`, so
+  rows stored by older versions no longer break pages. To remove them:
+  `UPDATE spot.readings SET value = NULL WHERE value IN ('NaN', 'Infinity', '-Infinity') AND label IS NOT NULL;`
+  `DELETE FROM spot.readings WHERE value IN ('NaN', 'Infinity', '-Infinity');`
+  (use your `SPOT_DB_SCHEMA` in place of `spot`)
+- **Setup → Logging could fail with a server error** ("deque mutated
+  during iteration") when anything logged while the page was being built.
+  The recent-lines buffer is now copied under its lock.
+- **A dead TCP syslog collector stalled the whole application**: every log
+  line, from every thread, retried a 5-second connect while holding the
+  handler lock. After a failed connect Spot now waits 30 s before trying
+  again (counting lines in between as failed); *Send test message* always
+  tries immediately.
+- **Unbounded memory in Tempest listeners**: the station page's per-device
+  and per-message-type tables were keyed by whatever serial numbers and
+  `type` strings arrived over UDP. Unknown message types are now counted as
+  *ignored* (not by name) and at most 64 devices are remembered (least
+  recently heard dropped). An unexpected `type` could also stop the station
+  page's live refresh; it can't now. Dew point is no longer computed from
+  impossible humidity / temperature values.
+- **Unbounded alert-action queue**: at most 1,000 sends wait at once;
+  beyond that the oldest pending retries are dropped first, with an error
+  logged.
+- **Raw series requests had no size limit**: `/data/…/series`, `/recent`
+  and `/overlay` without `max_points` loaded every reading in range (up to a
+  year, 50 monitors) into memory. They now bucket past 100,000 readings, as
+  if `max_points` had been given. Spot's own pages always pass `max_points`,
+  so they are unaffected; `/api/v1` already capped this.
+- **Modbus reads**: a response header announcing more than a Modbus frame
+  can hold is refused, and the device timeout now bounds the whole read,
+  so a device trickling bytes can't hold its poller indefinitely.
+- **Saving a monitor, Modbus device or Tempest station with a name already
+  in use** gave a server error; it now says so on the form. A failed
+  Tempest station save no longer leaves the station's listener stopped.
+- `/api/event/<token>` with a JSON body that isn't an object (e.g. `[1]`)
+  gave a server error; it now returns 400.
+- Storage page with a mixed-case or punctuated `SPOT_DB_SCHEMA` failed to
+  look up table sizes (unquoted identifiers).
+- Multipart callback headers strip quotes / control characters from field
+  and file names (defence in depth; names were already sanitised).
+
+### Changed (internal)
+- Form POST handlers in `routes/web.py` share one `@_form_view` decorator
+  instead of four copies of a `_save_x` / `_save_x_checked` wrapper pair.
+- `queries.fetch_points`, `notify` senders, `util.format_bytes` and
+  `shows.deliver_show` rewritten without the accreted special cases;
+  results are unchanged.
+
 ## 1.12.0 — 2026-11-03
 
 ### Added

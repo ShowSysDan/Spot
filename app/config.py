@@ -45,6 +45,11 @@ class Config:
     syslog_tag: str = "spot"
     # IANA zone for everything people see (24-hour). Storage stays UTC.
     timezone: str = "America/New_York"
+    # Optional: host names (as typed in the browser's address bar, without
+    # the port) the web UI answers to. Blank = any. Setting it blocks DNS
+    # rebinding, where a web page on another site gets a browser to talk to
+    # Spot under that site's own name.
+    allowed_hosts: tuple[str, ...] = ()
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -55,13 +60,17 @@ class Config:
         default_ret = int(default_ret_raw) if default_ret_raw else None
         if default_ret is not None and default_ret < 1:
             default_ret = None
+        schema = os.getenv("SPOT_DB_SCHEMA", "spot")
+        # The schema name is quoted into DDL ("…"); refuse what would break out.
+        if not schema or '"' in schema or "\x00" in schema or len(schema) > 63:
+            raise ValueError("SPOT_DB_SCHEMA must be 1-63 characters with no double quote")
         return cls(
             db_host=os.getenv("SPOT_DB_HOST", "127.0.0.1"),
             db_port=int(os.getenv("SPOT_DB_PORT", "5432")),
             db_name=os.getenv("SPOT_DB_NAME", "shared"),
             db_user=os.getenv("SPOT_DB_USER", "spot_user"),
             db_password=os.getenv("SPOT_DB_PASSWORD", ""),
-            db_schema=os.getenv("SPOT_DB_SCHEMA", "spot"),
+            db_schema=schema,
             web_host=os.getenv("SPOT_WEB_HOST", "0.0.0.0"),
             web_port=int(os.getenv("SPOT_WEB_PORT", "6100")),
             syslog_address=os.getenv("SPOT_SYSLOG_ADDRESS", "/dev/log"),
@@ -78,6 +87,7 @@ class Config:
             timezone=os.getenv("SPOT_TIMEZONE", "America/New_York").strip() or "America/New_York",
             syslog_protocol=(os.getenv("SPOT_SYSLOG_PROTOCOL", "udp").strip().lower() or "udp"),
             syslog_tag=(os.getenv("SPOT_SYSLOG_APP_NAME", "spot").strip() or "spot"),
+            allowed_hosts=tuple(h.lower() for h in _csv(os.getenv("SPOT_ALLOWED_HOSTS", ""))),
         )
 
     @property

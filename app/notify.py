@@ -6,6 +6,7 @@ raising, so a dead endpoint can never stall the thread that called it.
 """
 from __future__ import annotations
 
+import http.client
 import ipaddress
 import json
 import logging
@@ -13,6 +14,7 @@ import socket
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 
 from .config import Config
 from .version import __version__
@@ -68,25 +70,55 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-_opener = urllib.request.build_opener(_NoRedirect)
+def _build_opener() -> urllib.request.OpenerDirector:
+    """An opener that speaks http(s) only.
+
+    `urllib.request.build_opener()` also installs file://, ftp:// and data:
+    handlers, which would let a crafted URL read local files from the
+    server. Building the OpenerDirector by hand keeps them out entirely.
+    """
+    opener = urllib.request.OpenerDirector()
+    for handler in (urllib.request.ProxyHandler(), urllib.request.UnknownHandler(),
+                    urllib.request.HTTPHandler(), urllib.request.HTTPSHandler(),
+                    urllib.request.HTTPDefaultErrorHandler(), _NoRedirect(),
+                    urllib.request.HTTPErrorProcessor()):
+        opener.add_handler(handler)
+    return opener
+
+
+_opener = _build_opener()
+_ALLOWED_SCHEMES = ("http", "https")
+
+
+def _send(url: str, method: str, body: bytes | None, headers: dict[str, str],
+          timeout: float, what: str | None) -> tuple[int | None, str | None]:
+    """Send one request. Returns (status, error): error is None on a 2xx
+    response; status is None when no response arrived at all. Never raises.
+    Failures are logged as `what` (None: the caller logs them itself)."""
+    def fail(status: int | None, err: str) -> tuple[int | None, str]:
+        if what:
+            log.error("%s failed url=%s err=%s", what, url, err)
+        return status, err
+
+    if urllib.parse.urlsplit(url).scheme.lower() not in _ALLOWED_SCHEMES:
+        return fail(None, "only http:// and https:// URLs are allowed")
+    headers = {"User-Agent": f"Spot/{__version__}", **headers}
+    req = urllib.request.Request(url, data=body, method=method, headers=headers)
+    try:
+        with _opener.open(req, timeout=timeout) as resp:
+            resp.read(65536)  # drain a little so keep-alive peers are happy; bounded
+            return resp.status, None
+    except urllib.error.HTTPError as e:
+        e.close()
+        return fail(e.code, f"HTTP {e.code}")
+    except (OSError, ValueError, http.client.HTTPException) as e:
+        return fail(None, str(e) or e.__class__.__name__)
 
 
 def post_json(url: str, payload: dict, timeout: float = HTTP_TIMEOUT) -> str | None:
     """POST `payload` as JSON. Returns None on a 2xx response, else an error."""
-    req = urllib.request.Request(
-        url, data=json.dumps(payload, default=str).encode("utf-8"), method="POST",
-        headers={"Content-Type": "application/json", "User-Agent": f"Spot/{__version__}"},
-    )
-    try:
-        with _opener.open(req, timeout=timeout) as resp:
-            resp.read(65536)
-    except urllib.error.HTTPError as e:
-        log.error("webhook failed url=%s status=%s", url, e.code)
-        return f"HTTP {e.code}"
-    except (OSError, ValueError) as e:
-        log.error("webhook failed url=%s err=%s", url, e)
-        return str(e) or e.__class__.__name__
-    return None
+    body = json.dumps(payload, default=str).encode("utf-8")
+    return _send(url, "POST", body, {"Content-Type": "application/json"}, timeout, "webhook")[1]
 
 
 def http_request(url: str, method: str, body: bytes | None,
@@ -96,20 +128,17 @@ def http_request(url: str, method: str, body: bytes | None,
 
     A body starting with { or [ is sent as JSON, anything else as text.
     """
-    headers = {"User-Agent": f"Spot/{__version__}"}
+    headers = {}
     if body:
         json_like = body.lstrip()[:1] in (b"{", b"[")
         headers["Content-Type"] = ("application/json" if json_like
                                    else "text/plain; charset=utf-8")
-    req = urllib.request.Request(url, data=body, method=method, headers=headers)
-    try:
-        with _opener.open(req, timeout=timeout) as resp:
-            resp.read(65536)
-            return resp.status, None
-    except urllib.error.HTTPError as e:
-        return e.code, f"HTTP {e.code}"
-    except (OSError, ValueError) as e:
-        return None, str(e) or e.__class__.__name__
+    return _send(url, method, body, headers, timeout, None)  # alert_actions logs
+
+
+def _header_value(text: str) -> str:
+    """A string safe inside a quoted multipart header parameter."""
+    return "".join(c for c in text if c >= " " and c not in '"\\\x7f')
 
 
 def post_multipart(url: str, fields: dict[str, str],
@@ -119,30 +148,18 @@ def post_multipart(url: str, fields: dict[str, str],
 
     Returns None on a 2xx response, else an error message.
     """
-    import uuid
     boundary = f"spot-{uuid.uuid4().hex}"
     parts: list[bytes] = []
     for name, value in fields.items():
         parts.append(
-            f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n'
+            f'--{boundary}\r\nContent-Disposition: form-data; name="{_header_value(name)}"\r\n'
             f"Content-Type: text/plain; charset=utf-8\r\n\r\n".encode() + value.encode() + b"\r\n")
     for field, filename, data, mime in files:
         parts.append(
-            f'--{boundary}\r\nContent-Disposition: form-data; name="{field}"; '
-            f'filename="{filename}"\r\nContent-Type: {mime}\r\n\r\n'.encode() + data + b"\r\n")
+            f'--{boundary}\r\nContent-Disposition: form-data; name="{_header_value(field)}"; '
+            f'filename="{_header_value(filename)}"\r\nContent-Type: {_header_value(mime)}\r\n\r\n'
+            .encode() + data + b"\r\n")
     parts.append(f"--{boundary}--\r\n".encode())
-    req = urllib.request.Request(
-        url, data=b"".join(parts), method="POST",
-        headers={"Content-Type": f"multipart/form-data; boundary={boundary}",
-                 "User-Agent": f"Spot/{__version__}"},
-    )
-    try:
-        with _opener.open(req, timeout=timeout) as resp:
-            resp.read(65536)
-    except urllib.error.HTTPError as e:
-        log.error("multipart POST failed url=%s status=%s", url, e.code)
-        return f"HTTP {e.code}"
-    except (OSError, ValueError) as e:
-        log.error("multipart POST failed url=%s err=%s", url, e)
-        return str(e) or e.__class__.__name__
-    return None
+    return _send(url, "POST", b"".join(parts),
+                 {"Content-Type": f"multipart/form-data; boundary={boundary}"},
+                 timeout, "multipart POST")[1]

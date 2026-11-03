@@ -2,7 +2,7 @@
 
 **Data acquisition, down to the last spot.**
 
-Current version: **1.12.0** — see [CHANGELOG.md](CHANGELOG.md). The running
+Current version: **1.13.0** — see [CHANGELOG.md](CHANGELOG.md). The running
 version is shown in the web UI footer, logged at startup, and stamped on every
 PDF report.
 
@@ -220,6 +220,7 @@ The syslog settings and per-category levels can also be changed live on
 | `SPOT_ALERT_WEBHOOK_URL` | Optional URL that receives alert JSON |
 | `SPOT_ALERT_INTERVAL_SECONDS` | How often alerts are evaluated (default `15`, min `5`) |
 | `SPOT_CALLBACK_ALLOW` | Optional. Hosts / CIDR ranges show-report callbacks may go to, e.g. `321theater.internal,10.20.0.0/16`; blank = any except link-local / reserved |
+| `SPOT_ALLOWED_HOSTS` | Optional. Host names / IPs the web UI and APIs answer to (as typed in the address bar, without port), e.g. `spot.internal,10.20.1.5`; blank = any. See [Security notes](#security-notes) |
 
 ### 6. Smoke-test (foreground)
 
@@ -716,7 +717,11 @@ Common parameters:
 
 Limits: a single request can cover at most **366 days**; `overlay` accepts at
 most 50 ids; series responses include at most the 500 most recent event
-markers. Malformed timestamps or integers return **400** with a message
+markers; a series requested without `max_points` is still bucketed once it
+would exceed 100,000 raw readings (so one request can't load a year of 1 Hz
+data into memory). CSV text columns that start with `=`, `+`, `-`, `@`, tab
+or carriage return get a leading `'` so spreadsheets show them as text
+instead of running them as formulas. Malformed timestamps or integers return **400** with a message
 (they used to return 500). CSV exports are streamed straight from the
 database, so a long export uses the same memory as a short one; PDF charts are
 drawn from at most 4,000 bucketed points, while their stats always use every
@@ -1055,6 +1060,44 @@ Browser ──► Flask (web UI, /api/ingest, /api/event, /data/...)
 
 ---
 
+## Security notes
+
+Spot's web UI has **no login**: anyone who can reach the web port can
+change monitors, alert actions, Modbus devices and settings. Run it on a
+trusted network (or behind a reverse proxy that adds authentication) and
+firewall the web port and the listener ports to the hosts that need them.
+Within that model Spot defends against what a *browser* or a *network
+sender* can do:
+
+- **Cross-site requests** — form posts whose `Origin` / `Referer` names
+  another site, or that the browser marks `Sec-Fetch-Site: cross-site`, are
+  refused (403), so a web page elsewhere can't drive an operator's browser.
+- **DNS rebinding** — set `SPOT_ALLOWED_HOSTS` to the names and IPs people
+  and sensors use for Spot; requests addressed to any other name get 421.
+  Blank (the default) accepts any name, as before.
+- **Clickjacking** — every page except the wall display and monitor
+  dashboards sends `X-Frame-Options: SAMEORIGIN`; all responses send
+  `X-Content-Type-Options: nosniff` and `Referrer-Policy: same-origin`.
+- **Outbound requests** (alert webhook, alert actions, show-report
+  callbacks) only ever use `http://` / `https://` and never follow
+  redirects; callback URLs may not point at link-local / cloud-metadata
+  addresses (`SPOT_CALLBACK_ALLOW` narrows them further).
+- **Untrusted input** — request bodies are capped at 2 MiB; a reading or
+  event label at 8 KiB on every input path; NaN / Infinity values are
+  refused; Tempest and TCP listeners keep bounded state per sender; CSV
+  exports neutralise spreadsheet formulas; Modbus responses are size- and
+  time-checked.
+- **Secrets** — API keys are stored as SHA-256 hashes. If
+  `SPOT_SECRET_KEY` is blank or a placeholder, Spot uses a random key per
+  run (it only signs flash messages) and logs a warning.
+
+Things to keep in mind: a monitor's *value regex* is run on every incoming
+message, so only use simple patterns (input is capped at 8 KiB per message);
+alert actions and Modbus devices can be pointed at any host by anyone with
+UI access, by design.
+
+---
+
 ## Development
 
 ```bash
@@ -1091,9 +1134,12 @@ CREATE SCHEMA spot AUTHORIZATION spot_user;
   its `Field`s there; the forms and station page pick them up.
 - `app/db.py` — to add a column to an existing table, append a line to
   `_ADDED_COLUMNS`; it is applied idempotently on every start.
-- `app/routes/web.py` — form handlers validate with `_form_str` /
-  `_form_int` / `_check`, which raise `_FormError`; the wrapper flashes the
-  message and sends the user back to the form.
+- `app/routes/web.py` — form handlers are decorated with `@_form_view`
+  and validate with `_form_str` / `_form_int` / `_check`, which raise
+  `_FormError`; the decorator flashes the message (or a friendly one for a
+  duplicate name) and sends the user back to the form.
+- `app/notify.py` — every outbound HTTP request goes through `_send()`,
+  which only speaks http(s), never follows redirects and never raises.
 - `app/exports.py` — `_build_report()` lays out both PDF reports.
 
 ### Versioning
