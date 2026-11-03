@@ -3,6 +3,20 @@
 All notable changes to Spot. The version number lives in `app/version.py`
 and is bumped with every change.
 
+## 1.13.2 — 2026-11-03
+
+**No action needed to upgrade**: front-end only. `git pull` and restart as usual.
+
+### Fixed
+- **Charts showed "no data" across the whole window for sensors that send
+  in bursts** (several readings at once every few minutes). Gap detection
+  used the median spacing between readings, which is near zero for bursty
+  data, so every pause between bursts was shaded as an outage and the line
+  was broken into invisible single points. It now also allows for the
+  95th-percentile spacing, so the burst cadence counts as normal while a
+  real outage (a rare, long pause) is still shaded. Only raw, un-averaged
+  ranges were affected; averaged long ranges (24 h+) looked mostly fine.
+
 ## 1.13.1 — 2026-11-03
 
 Charts stay readable when a monitor has lots of events. **No action needed
