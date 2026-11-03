@@ -3,6 +3,31 @@
 All notable changes to Spot. The version number lives in `app/version.py`
 and is bumped with every change.
 
+## 1.13.3 — 2026-11-03
+
+**No action needed to upgrade**: no schema change. `git pull` and restart as
+usual. Optionally clean up duplicates already stored (see below).
+
+### Fixed
+- **Repeated readings were stored once per copy.** A sender that posts the
+  same reading several times with its own `ts` (seen: every wind reading
+  arriving 10 times with the identical timestamp) filled the database with
+  copies, inflated sample counts, and made the charts' gap detection see
+  long silences between bursts. `/ingest` now treats a reading with the same
+  monitor, timestamp, value and label as one already stored as a repeat and
+  returns the existing reading's id instead of adding another. Readings
+  without a sender timestamp are unaffected (each gets the server's time).
+
+To remove duplicates already stored (keeps the first copy of each):
+
+```sql
+DELETE FROM spot.readings a USING spot.readings b
+WHERE a.monitor_id = b.monitor_id AND a.ts = b.ts
+  AND a.value IS NOT DISTINCT FROM b.value
+  AND a.label IS NOT DISTINCT FROM b.label
+  AND a.id > b.id;
+```
+
 ## 1.13.2 — 2026-11-03
 
 **No action needed to upgrade**: front-end only. `git pull` and restart as usual.
