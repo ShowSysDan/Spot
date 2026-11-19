@@ -79,6 +79,7 @@
     <p class="muted" id="hint">Select at least one monitor to preview.</p>
 
     <div class="chart-wrap"><canvas id="chart"></canvas></div>
+    <p class="muted" id="bucket-note"></p>
 
     <table class="grid" id="summary" hidden>
       <thead><tr><th>Monitor</th><th>Unit</th><th class="num">Samples</th>
@@ -177,19 +178,11 @@
       scales[id] = { type: 'linear', position: i % 2 === 0 ? 'left' : 'right',
                      title: { display: true, text: m.unit }, grid: { drawOnChartArea: i === 0 } };
     });
-    // Break each line where its own data stops; shade gaps only for a single
-    // monitor (with several, one monitor's gap isn't everyone's).
-    const series = j.monitors.map(m => {
-      const pts = m.points.map(pt => ({ x: new Date(pt.ts).valueOf(), y: pt.value }));
-      const gaps = Spot.findGaps(pts, { bucketMs: (m.bucket_seconds || 0) * 1000 });
-      return { pts: Spot.breakAtGaps(pts, gaps), gaps };
-    });
-    const datasets = j.monitors.map((m, i) => ({
-      label: `${m.name} (${m.unit})`,
-      data: series[i].pts,
-      borderColor: m.color || COLORS[i % COLORS.length], borderWidth: 1.3, pointRadius: 0, pointHitRadius: 6,
-      tension: 0, yAxisID: axisFor[m.unit],
-    }));
+    // Lines break where their own data stops; downsampled monitors also get
+    // their min/max band so short peaks stay visible. Gaps are shaded only for
+    // a single monitor (with several, one monitor's gap isn't everyone's).
+    const ov = Spot.overlayDatasets(j.monitors, axisFor, COLORS);
+    const datasets = ov.datasets;
     // Destroy the old chart before building a new one so canvases/listeners don't leak.
     if (chart) chart.destroy();
     const det = j.detection;
@@ -198,13 +191,17 @@
       type: 'line', data: { datasets },
       options: { animation: false, parsing: false, normalized: true, scales,
                  interaction: { mode: 'nearest', axis: 'x', intersect: false },
-                 plugins: { legend: { position: 'bottom' },
-                   spotGaps: { gaps: series.length === 1 ? series[0].gaps : [] },
+                 plugins: { legend: ov.legend, tooltip: ov.tooltip,
+                   spotGaps: { gaps: ov.gaps.length === 1 ? ov.gaps[0] : [] },
                    spotRange: det ? { start: ms(j.range_start), end: ms(j.range_end),
                                       scheduledStart: ms(det.scheduled_start), scheduledEnd: ms(det.scheduled_end),
                                       startLabel: det.start_detected ? 'detected start' : 'start',
                                       endLabel: det.end_detected ? 'detected end' : 'end' } : {} } },
     });
+    const secs = [...new Set(j.monitors.map(m => m.bucket_seconds).filter(Boolean))].sort((a, b) => a - b);
+    document.getElementById('bucket-note').textContent = secs.length
+      ? `Long range: lines are ${secs.map(Spot.fmtDuration).join(' / ')} averages; the shaded band behind each line is its min–max, so short peaks still show. Statistics and exports use every reading.`
+      : '';
     const info = document.getElementById('detect-info');
     info.hidden = !det;
     info.textContent = det ? Spot.describeDetection(det) + '. Statistics, PDF and CSV cover the actual range.' : '';
