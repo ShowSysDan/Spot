@@ -3,6 +3,27 @@
 All notable changes to Spot. The version number lives in `app/version.py`
 and is bumped with every change.
 
+## 1.15.0 — 2026-11-19
+
+**No action needed to upgrade**: no schema change. `git pull` and restart as
+usual.
+
+### Added
+- **Event markers on the Reports page, with a switch.** The Reports preview
+  now shows the selected monitors' event markers (label-only readings), as
+  the monitor pages do. A new **Event markers** checkbox turns them off for
+  both the preview and the PDF; the choice is kept in the page link
+  (`&events=0`).
+
+### Fixed
+- **PDF report charts buried under event lines.** A monitor that tags many
+  readings (seen: a wind meter posting its gust direction as a label,
+  hundreds of times a night) drew one full-height dashed line per event, on
+  top of the data, turning the chart into a grey block. When there are more
+  events than the chart has room for, the PDF now draws short ticks along
+  the top edge with a count, as the web charts do; a handful of events
+  still get labelled dashed lines, now behind the data instead of over it.
+
 ## 1.14.1 — 2026-11-19
 
 **No action needed to upgrade**: no schema change. `git pull` and restart as

@@ -229,9 +229,24 @@ def render_report_chart_png(start: datetime, end: datetime, monitors: list[dict]
             ax.plot(px, ys, color=m["color"], linewidth=0.9, zorder=2.5 + depth,
                     **_sparse_markers(xs))
         ax.set_ylabel(_mpl_text(unit))
-        for ts, _label in events:
-            ax.axvline(naive_local(ts), color=_MUTED_HEX, linestyle=(0, (3, 2)), linewidth=0.7, zorder=4)
-    _label_events(axes[0], start, end, events)
+    # A few events get full-height dashed lines behind the data. More than
+    # the chart has room for (a sensor that tags every reading) would bury
+    # it, so they collapse to short ticks along the top edge with a count,
+    # as on the web charts.
+    if len(events) > width_in * 10:
+        top = axes[0]
+        top.vlines([naive_local(ts) for ts, _ in events], 0.975, 1.0,
+                   transform=top.get_xaxis_transform(), color=_MUTED_HEX,
+                   linewidth=0.5, alpha=0.7, zorder=4)
+        top.annotate(f"{len(events):,} events", xy=(1.0, 0.975), xycoords="axes fraction",
+                     xytext=(-3, -2), textcoords="offset points", fontsize=6.5,
+                     color=_MUTED_HEX, va="top", ha="right")
+    else:
+        for ax in axes:
+            for ts, _label in events:
+                ax.axvline(naive_local(ts), color=_MUTED_HEX, linestyle=(0, (3, 2)),
+                           linewidth=0.7, zorder=1.2)
+        _label_events(axes[0], start, end, events)
     _time_axis(axes[-1], start, end)
     fig.tight_layout(pad=0.3, h_pad=0.8)
     buf = io.BytesIO()

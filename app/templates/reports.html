@@ -63,6 +63,9 @@
           <option value="15" selected>±15 min</option><option value="20">±20 min</option><option value="30">±30 min</option>
         </select>
       </label>
+      <label class="detect-toggle" title="Mark label-only readings (events) on the chart and in the PDF. Turn off for a sensor that tags every reading.">
+        <input type="checkbox" id="show-events" checked> Event markers
+      </label>
     </div>
     <p class="detect-info" id="detect-info" hidden></p>
     <div class="chips" id="presets" role="group" aria-label="Quick ranges">
@@ -131,10 +134,14 @@
   const detectWin = document.getElementById('detect-window');
   if (qp.get('detect') === '1') detectBox.checked = true;
   if (qp.get('window_minutes')) detectWin.value = qp.get('window_minutes');
+  const eventsBox = document.getElementById('show-events');
+  if (qp.get('events') === '0') eventsBox.checked = false;
+  eventsBox.addEventListener('change', () => selectedIds().length && run());
   function rangeParams() {
     const p = new URLSearchParams({ ids: selectedIds().join(','),
       start: Spot.toIso(form.start.value), end: Spot.toIso(form.end.value) });
     if (detectBox.checked) { p.set('detect', '1'); p.set('window_minutes', detectWin.value); }
+    if (!eventsBox.checked) p.set('events', '0');
     const colors = selectedIds().filter(id => picked[id]).map(id => `${id}:${picked[id].slice(1)}`);
     if (colors.length) p.set('colors', colors.join(','));
     return p;
@@ -170,6 +177,7 @@
     const seq = ++runSeq;  // only the newest preview may draw
     const p = rangeParams();
     p.set('max_points', '2000');
+    if (eventsBox.checked) p.set('events', '1');
     p.set('summary', '1');
     const r = await fetch(`/data/overlay?${p}`);
     if (!r.ok) { document.getElementById('hint').hidden = false;
@@ -197,12 +205,19 @@
     // Destroy the old chart before building a new one so canvases/listeners don't leak.
     if (chart) chart.destroy();
     const det = j.detection;
+    // Event markers from every monitor, duplicates (same time and label) dropped.
+    const seenEv = new Set(), events = [];
+    j.monitors.forEach(m => (m.events || []).forEach(e => {
+      const k = `${e.ts}|${e.label}`;
+      if (!seenEv.has(k)) { seenEv.add(k); events.push({ x: new Date(e.ts).valueOf(), label: e.label }); }
+    }));
+    events.sort((a, b) => a.x - b.x);  // the marker plugin expects time order
     const ms = iso => new Date(iso).valueOf();
     chart = new Chart(document.getElementById('chart'), {
       type: 'line', data: { datasets },
       options: { animation: false, parsing: false, normalized: true, scales,
                  interaction: { mode: 'nearest', axis: 'x', intersect: false },
-                 plugins: { legend: ov.legend, tooltip: ov.tooltip,
+                 plugins: { legend: ov.legend, tooltip: ov.tooltip, spotEvents: { events },
                    spotGaps: { gaps: ov.gaps.length === 1 ? ov.gaps[0] : [] },
                    spotRange: det ? { start: ms(j.range_start), end: ms(j.range_end),
                                       scheduledStart: ms(det.scheduled_start), scheduledEnd: ms(det.scheduled_end),
