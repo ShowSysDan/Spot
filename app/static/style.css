@@ -265,6 +265,11 @@ tr.is-alerting td { background: rgba(248, 81, 73, 0.07); }
 .all-clear { display: flex; align-items: center; gap: 0.5rem; color: var(--ok); }
 .fresh-dot.ok-dot { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
 
+.swatch-input { width: 16px; height: 16px; padding: 0; border: 0; border-radius: 3px; background: none; cursor: pointer;
+  margin-right: 0.4rem; vertical-align: middle; appearance: none; -webkit-appearance: none; }
+.swatch-input::-webkit-color-swatch-wrapper { padding: 0; }
+.swatch-input::-webkit-color-swatch { border: 1px solid var(--border); border-radius: 3px; }
+.swatch-input::-moz-color-swatch { border: 1px solid var(--border); border-radius: 3px; }
 .swatch.big { width: 14px; height: 14px; border-radius: 3px; margin-right: 0.55rem; vertical-align: middle; }
 .form fieldset.group { border: 1px solid var(--border); border-radius: 6px; padding: 0.85rem 1rem; display: grid; gap: 0.9rem; }
 .form fieldset.group legend { padding: 0 0.4rem; color: var(--muted); }

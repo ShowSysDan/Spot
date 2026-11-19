@@ -3,6 +3,19 @@
 All notable changes to Spot. The version number lives in `app/version.py`
 and is bumped with every change.
 
+## 1.14.0 — 2026-11-19
+
+**No action needed to upgrade**: no schema change. `git pull` and restart as
+usual.
+
+### Added
+- **Pick line colours on the Reports page.** The colour square beside each
+  monitor in the summary table is now a colour picker. The choice applies to
+  that report's chart and its PDF and is kept in the page link
+  (`&colors=<id>:<rrggbb>,…`), so a bookmarked or shared report keeps its
+  colours. **Reset colours** goes back to each monitor's own colour, which is
+  still set on the monitor's edit page and is not changed from Reports.
+
 ## 1.13.5 — 2026-11-19
 
 **No action needed to upgrade**: no schema change. `git pull` and restart as

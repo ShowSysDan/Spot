@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from flask import Blueprint, Response, abort, jsonify, request, stream_with_context
 from sqlalchemy import func, select, true
@@ -218,6 +219,22 @@ def export_csv(mid: int):
     return _stream_csv(stmt, False, _filename(name, start, end, "csv"))
 
 
+def _apply_colors(monitors: list[dict]) -> None:
+    """Per-report colour overrides: ?colors=<id>:<rrggbb>,… (no leading #).
+
+    They change this chart or PDF only; a monitor's own colour is set on its
+    edit page. Anything malformed is ignored.
+    """
+    chosen = {}
+    for part in (request.args.get("colors") or "").split(","):
+        mid, _, hx = part.partition(":")
+        if mid.isdigit() and re.fullmatch(r"[0-9a-fA-F]{6}", hx):
+            chosen[int(mid)] = f"#{hx.lower()}"
+    for m in monitors:
+        if m["id"] in chosen:
+            m["color"] = chosen[m["id"]]
+
+
 @bp.route("/overlay")
 def overlay():
     """Series for multiple monitors over a range. ?ids=1,2,3&start=...&end=...
@@ -239,6 +256,7 @@ def overlay():
         out = collect_overlay(s, ids, c_start, c_end, max_points_arg(),
                               with_summary=bool(request.args.get("summary")), extended=True,
                               summary_range=(r_start, r_end))
+    _apply_colors(out)
     for m in out:
         # Bucketed points keep their min/max: the chart draws them as a band
         # so peaks the averaged line flattens still show.
@@ -260,6 +278,7 @@ def overlay_export_pdf():
         start, end, detection = resolve_range(s, ids, start, end, detect_arg())
         monitors = collect_overlay(s, ids, start, end, PDF_MAX_POINTS,
                                    with_summary=True, extended=True, with_events=True)
+    _apply_colors(monitors)
     body = render_overlay_pdf(start, end, monitors, extra_meta=pdf_meta(detection))
     fname = _filename("report", start, end, "pdf")
     log.info("export pdf report monitors=%s range=%s..%s detect=%s bytes=%d",
