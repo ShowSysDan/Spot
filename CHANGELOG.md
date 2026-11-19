@@ -3,6 +3,21 @@
 All notable changes to Spot. The version number lives in `app/version.py`
 and is bumped with every change.
 
+## 1.13.4 — 2026-11-19
+
+**No action needed to upgrade**: no schema change. `git pull` and restart as
+usual.
+
+### Fixed
+- **Reports and show charts hid short peaks.** Over a long range the chart
+  line is drawn from bucket averages, so a brief spike was flattened: a
+  single 30.6 mph gust inside a 20-second bucket drew as about 21 while the
+  summary table (computed from every reading) correctly said Max 30.6. Each
+  downsampled monitor now also gets its min/max band behind the line, as the
+  monitor dashboard and query pages already had, so the chart reaches the
+  same peaks as the table. The tooltip shows the bucket's average, min and
+  max, and a note under the Reports chart says how wide the buckets are.
+
 ## 1.13.3 — 2026-11-03
 
 **No action needed to upgrade**: no schema change. `git pull` and restart as

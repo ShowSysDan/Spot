@@ -108,15 +108,13 @@ Spot.busy(document.querySelector('.chart-wrap'), async function () {
     scales[id] = { position: i % 2 ? 'right' : 'left', title: { display: true, text: m.unit },
                    grid: { drawOnChartArea: i === 0 } };
   });
+  const ov = Spot.overlayDatasets(j.monitors, axisFor);
   new Chart(document.getElementById('chart'), {
     type: 'line',
-    data: { datasets: j.monitors.map(m => ({ label: `${m.name} (${m.unit})`, borderColor: m.color, borderWidth: 1.3,
-      pointRadius: 0, pointHitRadius: 6, yAxisID: axisFor[m.unit],
-      data: (pts => Spot.breakAtGaps(pts, Spot.findGaps(pts, { bucketMs: (m.bucket_seconds || 0) * 1000 })))(
-        m.points.map(pt => ({ x: new Date(pt.ts).valueOf(), y: pt.value }))) })) },
+    data: { datasets: ov.datasets },
     options: { animation: false, parsing: false, normalized: true, scales,
                interaction: { mode: 'nearest', axis: 'x', intersect: false },
-               plugins: { legend: { position: 'bottom' },
+               plugins: { legend: ov.legend, tooltip: ov.tooltip,
                  spotRange: j.detection ? {
                    start: new Date(j.range_start).valueOf(), end: new Date(j.range_end).valueOf(),
                    scheduledStart: new Date(j.detection.scheduled_start).valueOf(),

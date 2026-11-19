@@ -317,6 +317,56 @@
     for (const p of points) { out.push(p); if (starts.has(p.x)) out.push({ x: p.x + 1, y: null }); }
     return out;
   }
+  // Datasets for a multi-monitor overlay chart (Reports, show pages). A long
+  // range comes back as bucket averages, and an average hides short peaks: a
+  // one-reading 30 mph gust inside a 20-second bucket draws as ~21. So each
+  // downsampled monitor also gets its min/max band, shaded behind the line,
+  // and the chart's peaks match the Min/Max in the summary table.
+  // monitors: [{name, unit, color, points, bucket_seconds}], axisFor: {unit: axis id}.
+  // Returns { datasets, gaps (per monitor), legend, tooltip } for the chart options.
+  function overlayDatasets(monitors, axisFor, colors) {
+    const datasets = [], gaps = [];
+    monitors.forEach((m, i) => {
+      const color = m.color || (colors || [])[i % ((colors || []).length || 1)];
+      const bucketed = !!m.bucket_seconds;
+      const xs = m.points.map(pt => new Date(pt.ts).valueOf());
+      const g = findGaps(xs.map(x => ({ x })), { bucketMs: (m.bucket_seconds || 0) * 1000 });
+      gaps.push(g);
+      const xy = key => breakAtGaps(m.points.map((pt, k) => ({ x: xs[k], y: pt[key], lo: pt.min, hi: pt.max })), g);
+      const line = datasets.length;
+      datasets.push({ label: `${m.name} (${m.unit})`, data: xy('value'), borderColor: color, backgroundColor: color,
+                      borderWidth: 1.3, pointRadius: 0, pointHitRadius: 6, tension: 0, order: 0,
+                      yAxisID: axisFor[m.unit], spotBucketed: bucketed });
+      if (!bucketed) return;
+      // A thin outline as well as the fill: a one-bucket spike is under a
+      // pixel wide, and a fill that narrow all but vanishes.
+      const band = { borderWidth: 1, borderColor: alpha(color, 0.5), pointRadius: 0, pointHitRadius: 0, tension: 0, order: 1,
+                     yAxisID: axisFor[m.unit], spotBandOf: line };
+      datasets.push(Object.assign({ label: `${m.name} min`, data: xy('min'), fill: false }, band));
+      datasets.push(Object.assign({ label: `${m.name} max`, data: xy('max'), fill: '-1',
+                                    backgroundColor: alpha(color, 0.3) }, band));
+    });
+    const isBand = d => d.spotBandOf !== undefined;
+    const legend = {
+      position: 'bottom',
+      labels: { filter: (item, data) => !isBand(data.datasets[item.datasetIndex]) },
+      // Hiding a monitor hides its band with it.
+      onClick(_e, item, lg) {
+        const ch = lg.chart, i = item.datasetIndex, show = !ch.isDatasetVisible(i);
+        ch.data.datasets.forEach((d, k) => { if (k === i || d.spotBandOf === i) ch.setDatasetVisibility(k, show); });
+        ch.update();
+      },
+    };
+    const tooltip = {
+      filter: it => !isBand(it.dataset),
+      callbacks: { label(it) {
+        const r = it.raw || {}, base = `${it.dataset.label}: ${fmtValue(r.y)}`;
+        return it.dataset.spotBucketed && r.lo != null && r.hi != null
+          ? `${base} avg (min ${fmtValue(r.lo)}, max ${fmtValue(r.hi)})` : base;
+      } },
+    };
+    return { datasets, gaps, legend, tooltip, bucketed: datasets.some(d => d.spotBucketed) };
+  }
   // Chart.js plugin: hatch the gaps. options.plugins.spotGaps = { gaps: [[a, b], …] }
   const gapsPlugin = {
     id: 'spotGaps',
@@ -639,6 +689,6 @@
     });
   });
 
-  window.Spot = { busy, download, toast, rangeWords, findGaps, breakAtGaps, cssVar, describeDetection, TZ, wall, fromWall, fmtDateTime, fmtTime, zoneName, fmtInt, alpha, escapeHtml, fmtValue, timeAgo, fmtDuration, toLocalInput, toIso,
+  window.Spot = { busy, download, toast, rangeWords, findGaps, breakAtGaps, overlayDatasets, cssVar, describeDetection, TZ, wall, fromWall, fmtDateTime, fmtTime, zoneName, fmtInt, alpha, escapeHtml, fmtValue, timeAgo, fmtDuration, toLocalInput, toIso,
                   presetRange, bindPresets, store, sparkline, poller };
 })();
