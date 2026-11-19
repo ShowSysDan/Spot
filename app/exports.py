@@ -20,6 +20,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.dates as mdates
 from matplotlib import font_manager
+from matplotlib.colors import to_rgba
 from matplotlib.figure import Figure
 
 from . import glossary
@@ -182,8 +183,8 @@ def render_report_chart_png(start: datetime, end: datetime, monitors: list[dict]
                             width_in: float, height_in: float) -> bytes:
     """One panel per unit, sharing the time axis; event markers as dashed
     lines labelled along the top. Monitors are {name, unit, color, points};
-    a lone monitor with downsampled points also gets its min/max band and
-    shaded data gaps. Sized to the exact space it fills on the page.
+    downsampled points also get their min/max band, so brief peaks the
+    averaged line flattens still show; a lone monitor gets shaded data gaps. Sized to the exact space it fills on the page.
 
     Uses the OO matplotlib API (no pyplot state), so it is safe under
     gunicorn threaded workers.
@@ -207,10 +208,15 @@ def render_report_chart_png(start: datetime, end: datetime, monitors: list[dict]
             gaps = _gap_after([p["ts"] for p in pts])
             if single:
                 _shade_gaps(ax, xs, gaps)
-                if pts and "min" in pts[0]:
-                    bx, lo, hi = _split_at_gaps(xs, [p["min"] for p in pts],
-                                                [p["max"] for p in pts], gaps=gaps)
-                    ax.fill_between(bx, lo, hi, color=m["color"], alpha=0.18, linewidth=0)
+            if pts and "min" in pts[0]:
+                # The line is bucket averages, which flatten a brief spike.
+                # The band carries the real extremes; it needs an outline
+                # because a one-bucket spike is too narrow for a fill alone
+                # to show.
+                bx, lo, hi = _split_at_gaps(xs, [p["min"] for p in pts],
+                                            [p["max"] for p in pts], gaps=gaps)
+                ax.fill_between(bx, lo, hi, facecolor=to_rgba(m["color"], 0.3),
+                                edgecolor=to_rgba(m["color"], 0.55), linewidth=0.5)
             px, ys = _split_at_gaps(xs, [p["value"] for p in pts], gaps=gaps)
             ax.plot(px, ys, color=m["color"], linewidth=0.9, **_sparse_markers(xs))
         ax.set_ylabel(_mpl_text(unit))

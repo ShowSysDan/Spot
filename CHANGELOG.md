@@ -3,6 +3,22 @@
 All notable changes to Spot. The version number lives in `app/version.py`
 and is bumped with every change.
 
+## 1.13.5 — 2026-11-19
+
+**No action needed to upgrade**: no schema change. `git pull` and restart as
+usual.
+
+### Fixed
+- **1.13.4's peak fix did not take effect.** The Reports and show charts
+  were meant to draw each monitor's min/max band, but `/data/overlay`
+  dropped the bucket min/max before sending the points, so the page had
+  nothing to draw. It now sends them.
+- **PDF report charts hid short peaks too.** The PDF did draw a min/max
+  band, but as a faint fill with no outline, and a spike one bucket wide is
+  too narrow for that to show: a 30.6 mph gust appeared to stop at about 25.
+  The band now has an outline and a stronger fill, and is drawn for every
+  monitor in the report rather than only when one is selected.
+
 ## 1.13.4 — 2026-11-19
 
 **No action needed to upgrade**: no schema change. `git pull` and restart as

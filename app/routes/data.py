@@ -240,7 +240,11 @@ def overlay():
                               with_summary=bool(request.args.get("summary")), extended=True,
                               summary_range=(r_start, r_end))
     for m in out:
-        m["points"] = [{"ts": p["ts"].isoformat(), "value": p["value"]} for p in m["points"]]
+        # Bucketed points keep their min/max: the chart draws them as a band
+        # so peaks the averaged line flattens still show.
+        m["points"] = [{"ts": p["ts"].isoformat(), "value": p["value"],
+                        **({"min": p["min"], "max": p["max"]} if "min" in p else {})}
+                       for p in m["points"]]
     return jsonify({"start": c_start.isoformat(), "end": c_end.isoformat(),
                     "range_start": r_start.isoformat(), "range_end": r_end.isoformat(),
                     "detection": detection, "monitors": out})
