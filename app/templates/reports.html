@@ -88,6 +88,8 @@
         <th class="num acoustic" title="Level exceeded 90% of the time">L90</th><th class="num">Events</th></tr></thead>
       <tbody></tbody>
     </table>
+    <p class="muted" id="color-note"><span id="color-hint" hidden>Click a colour square to change that line in this report and its PDF.</span>
+      <button type="button" class="link" id="reset-colors" hidden>Reset colours</button></p>
     <div id="summary-legend" hidden>
       {% set legend_keys = ['count', 'min', 'max', 'avg', 'leq', 'l10', 'l90', 'events'] %}
       {% include '_stat_legend.html' %}
@@ -102,11 +104,18 @@
   const COLORS = ['#58a6ff', '#f85149', '#56d364', '#bc8cff', '#e3b341', '#39c5cf', '#ff7b72', '#ec6cb9'];
   const selectedIds = () => boxes.filter(b => b.checked).map(b => b.value);
   let chart = null;
+  // Colours picked on this page: {monitorId: '#rrggbb'}. They apply to this
+  // report (preview, PDF, link) only, not to the monitor itself.
+  const picked = {};
 
   // Deep links: /reports?ids=1,2&start=ISO&end=ISO (used by "Report this window").
   const qp = new URLSearchParams(location.search);
   const want = new Set((qp.get('ids') || '').split(',').filter(Boolean));
   boxes.forEach(b => (b.checked = want.has(b.value)));
+  (qp.get('colors') || '').split(',').forEach(part => {
+    const [id, hex] = part.split(':');
+    if (/^\d+$/.test(id) && /^[0-9a-f]{6}$/i.test(hex || '')) picked[id] = `#${hex.toLowerCase()}`;
+  });
   if (qp.get('start') && qp.get('end')) {
     form.start.value = Spot.toLocalInput(new Date(qp.get('start')));
     form.end.value = Spot.toLocalInput(new Date(qp.get('end')));
@@ -126,6 +135,8 @@
     const p = new URLSearchParams({ ids: selectedIds().join(','),
       start: Spot.toIso(form.start.value), end: Spot.toIso(form.end.value) });
     if (detectBox.checked) { p.set('detect', '1'); p.set('window_minutes', detectWin.value); }
+    const colors = selectedIds().filter(id => picked[id]).map(id => `${id}:${picked[id].slice(1)}`);
+    if (colors.length) p.set('colors', colors.join(','));
     return p;
   }
   [detectBox, detectWin].forEach(el => el.addEventListener('change', () => selectedIds().length && run()));
@@ -210,7 +221,8 @@
     tbody.innerHTML = j.monitors.map((m, i) => {
       const s = m.summary || {};
       const f = v => Spot.escapeHtml(Spot.fmtValue(v));
-      return `<tr><td><span class="swatch" style="background:${Spot.escapeHtml(m.color || COLORS[i % COLORS.length])}"></span>
+      const c = Spot.escapeHtml(m.color || COLORS[i % COLORS.length]);
+      return `<tr><td><input type="color" class="swatch-input" data-id="${m.id}" value="${c}" title="Change this line's colour in the report" aria-label="Colour for ${Spot.escapeHtml(m.name)}">
         <a href="/monitors/${m.id}">${Spot.escapeHtml(m.name)}</a></td><td>${Spot.escapeHtml(m.unit)}</td>
         <td class="num">${Spot.fmtInt(s.count)}</td><td class="num">${f(s.min)}</td>
         <td class="num">${f(s.max)}</td><td class="num">${f(s.avg)}</td>
@@ -221,11 +233,24 @@
     const acoustic = j.monitors.some(m => m.summary && 'leq' in m.summary);
     document.querySelectorAll('#summary .acoustic, #summary-legend .acoustic').forEach(c => (c.hidden = !acoustic));
     document.getElementById('summary').hidden = false;
+    document.getElementById('reset-colors').hidden = !Object.keys(picked).length;
+    document.getElementById('color-hint').hidden = false;
     document.getElementById('summary-legend').hidden = false;
     history.replaceState(null, '', `?${rangeParams()}`);
   }
 
   form.addEventListener('submit', e => { e.preventDefault(); run(); });
+  // 'change' fires once the colour picker closes, so dragging around in it
+  // doesn't reload the chart for every shade.
+  document.querySelector('#summary tbody').addEventListener('change', e => {
+    if (!e.target.matches('.swatch-input')) return;
+    picked[e.target.dataset.id] = e.target.value;
+    run();
+  });
+  document.getElementById('reset-colors').addEventListener('click', () => {
+    Object.keys(picked).forEach(k => delete picked[k]);
+    run();
+  });
   document.getElementById('btn-pdf').addEventListener('click', () => {
     if (selectedIds().length) Spot.download(`/data/overlay/export.pdf?${rangeParams()}`, document.getElementById('btn-pdf'), 'PDF report');
   });
