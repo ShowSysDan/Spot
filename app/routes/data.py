@@ -240,7 +240,8 @@ def overlay():
     """Series for multiple monitors over a range. ?ids=1,2,3&start=...&end=...
 
     Optional ?max_points=N downsamples each series; ?summary=1 adds exact
-    min/max/avg/count per monitor.
+    min/max/avg/count per monitor; ?events=1 adds each monitor's event
+    markers (label-only readings).
     """
     ids = parse_ids()
     if not ids:
@@ -255,9 +256,12 @@ def overlay():
         c_start, c_end = start - pad, end + pad
         out = collect_overlay(s, ids, c_start, c_end, max_points_arg(),
                               with_summary=bool(request.args.get("summary")), extended=True,
-                              summary_range=(r_start, r_end))
+                              summary_range=(r_start, r_end),
+                              with_events=request.args.get("events") == "1")
     _apply_colors(out)
     for m in out:
+        if "events" in m:
+            m["events"] = [{"ts": e["ts"].isoformat(), "label": e["label"]} for e in m["events"]]
         # Bucketed points keep their min/max: the chart draws them as a band
         # so peaks the averaged line flattens still show.
         m["points"] = [{"ts": p["ts"].isoformat(), "value": p["value"],
@@ -276,8 +280,11 @@ def overlay_export_pdf():
     start, end = parse_range()
     with session_scope() as s:
         start, end, detection = resolve_range(s, ids, start, end, detect_arg())
+        # ?events=0 leaves the event markers off the chart (a sensor that
+        # tags every reading would otherwise bury it in lines).
         monitors = collect_overlay(s, ids, start, end, PDF_MAX_POINTS,
-                                   with_summary=True, extended=True, with_events=True)
+                                   with_summary=True, extended=True,
+                                   with_events=request.args.get("events") != "0")
     _apply_colors(monitors)
     body = render_overlay_pdf(start, end, monitors, extra_meta=pdf_meta(detection))
     fname = _filename("report", start, end, "pdf")
