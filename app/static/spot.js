@@ -326,6 +326,24 @@
   // Returns { datasets, gaps (per monitor), legend, tooltip } for the chart options.
   function overlayDatasets(monitors, axisFor, colors) {
     const datasets = [], gaps = [];
+    // Draw order: the monitor that sits highest on the chart goes to the back
+    // and the lowest to the front, so a big series can't cover a small one.
+    // "Highest" is the average position within the unit's own axis range, so
+    // monitors on different axes compare by where they appear, not by number.
+    const span = {};
+    monitors.forEach(m => m.points.forEach(pt => {
+      const r = span[m.unit] || (span[m.unit] = [Infinity, -Infinity]);
+      r[0] = Math.min(r[0], pt.min ?? pt.value); r[1] = Math.max(r[1], pt.max ?? pt.value);
+    }));
+    const height = monitors.map(m => {
+      if (!m.points.length) return 0;
+      const [lo, hi] = span[m.unit], mean = m.points.reduce((a, pt) => a + pt.value, 0) / m.points.length;
+      return hi > lo ? (mean - lo) / (hi - lo) : 0;
+    });
+    // layer[i]: 0 = front (lowest) … n-1 = back (highest); ties keep list order.
+    const layer = [];
+    monitors.map((_, i) => i).sort((a, b) => height[a] - height[b] || a - b).forEach((i, k) => (layer[i] = k));
+    const n = monitors.length;
     monitors.forEach((m, i) => {
       const color = m.color || (colors || [])[i % ((colors || []).length || 1)];
       const bucketed = !!m.bucket_seconds;
@@ -335,12 +353,12 @@
       const xy = key => breakAtGaps(m.points.map((pt, k) => ({ x: xs[k], y: pt[key], lo: pt.min, hi: pt.max })), g);
       const line = datasets.length;
       datasets.push({ label: `${m.name} (${m.unit})`, data: xy('value'), borderColor: color, backgroundColor: color,
-                      borderWidth: 1.3, pointRadius: 0, pointHitRadius: 6, tension: 0, order: 0,
+                      borderWidth: 1.3, pointRadius: 0, pointHitRadius: 6, tension: 0, order: layer[i],
                       yAxisID: axisFor[m.unit], spotBucketed: bucketed });
       if (!bucketed) return;
       // A thin outline as well as the fill: a one-bucket spike is under a
       // pixel wide, and a fill that narrow all but vanishes.
-      const band = { borderWidth: 1, borderColor: alpha(color, 0.5), pointRadius: 0, pointHitRadius: 0, tension: 0, order: 1,
+      const band = { borderWidth: 1, borderColor: alpha(color, 0.5), pointRadius: 0, pointHitRadius: 0, tension: 0, order: n + layer[i],
                      yAxisID: axisFor[m.unit], spotBandOf: line };
       datasets.push(Object.assign({ label: `${m.name} min`, data: xy('min'), fill: false }, band));
       datasets.push(Object.assign({ label: `${m.name} max`, data: xy('max'), fill: '-1',
