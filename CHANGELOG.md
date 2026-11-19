@@ -3,6 +3,19 @@
 All notable changes to Spot. The version number lives in `app/version.py`
 and is bumped with every change.
 
+## 1.14.1 — 2026-11-19
+
+**No action needed to upgrade**: no schema change. `git pull` and restart as
+usual.
+
+### Changed
+- **Report charts layer their lines by height.** With several monitors on
+  one chart, the one that sits highest is drawn at the back and the lowest
+  in front, so a large series no longer covers a small one. This applies to
+  the Reports and show charts and to PDF reports. Order is decided by each
+  monitor's average over the range, so two lines that cross can still
+  overlap where the usually-lower one spikes.
+
 ## 1.14.0 — 2026-11-19
 
 **No action needed to upgrade**: no schema change. `git pull` and restart as

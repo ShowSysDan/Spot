@@ -202,7 +202,14 @@ def render_report_chart_png(start: datetime, end: datetime, monitors: list[dict]
     single = len(monitors) == 1
     for ax, unit in zip(axes, units):
         _style_axes(ax)
-        for m in (m for m in monitors if m["unit"] == unit):
+        # Highest series at the back, lowest in front, so a big one can't cover
+        # a small one. All bands sit behind all lines.
+        panel = [m for m in monitors if m["unit"] == unit]
+        mean = lambda m: (sum(p["value"] for p in m["points"]) / len(m["points"])
+                          if m["points"] else float("-inf"))
+        back_first = sorted(panel, key=mean, reverse=True)
+        for m in panel:
+            depth = back_first.index(m) / (len(panel) or 1)   # 0 = back … <1 = front
             pts = m["points"]
             xs = [naive_local(p["ts"]) for p in pts]
             gaps = _gap_after([p["ts"] for p in pts])
@@ -216,12 +223,14 @@ def render_report_chart_png(start: datetime, end: datetime, monitors: list[dict]
                 bx, lo, hi = _split_at_gaps(xs, [p["min"] for p in pts],
                                             [p["max"] for p in pts], gaps=gaps)
                 ax.fill_between(bx, lo, hi, facecolor=to_rgba(m["color"], 0.3),
-                                edgecolor=to_rgba(m["color"], 0.55), linewidth=0.5)
+                                edgecolor=to_rgba(m["color"], 0.55), linewidth=0.5,
+                                zorder=1.5 + depth)
             px, ys = _split_at_gaps(xs, [p["value"] for p in pts], gaps=gaps)
-            ax.plot(px, ys, color=m["color"], linewidth=0.9, **_sparse_markers(xs))
+            ax.plot(px, ys, color=m["color"], linewidth=0.9, zorder=2.5 + depth,
+                    **_sparse_markers(xs))
         ax.set_ylabel(_mpl_text(unit))
         for ts, _label in events:
-            ax.axvline(naive_local(ts), color=_MUTED_HEX, linestyle=(0, (3, 2)), linewidth=0.7)
+            ax.axvline(naive_local(ts), color=_MUTED_HEX, linestyle=(0, (3, 2)), linewidth=0.7, zorder=4)
     _label_events(axes[0], start, end, events)
     _time_axis(axes[-1], start, end)
     fig.tight_layout(pad=0.3, h_pad=0.8)
